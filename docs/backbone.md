@@ -551,7 +551,13 @@ Lo que no se sacrifica nunca: una llamada real que cambia el plan mientras el ve
 
 Un canal, tres mensajes fijos al día: a las 13:00, a las 20:00 y a las 02:00, cada uno dice en una línea qué ha terminado y qué le bloquea. Nada de reuniones. Los merges a `main` van directos, sin PR, pero con `make check` verde.
 
-**Regla de git: antes de tocar nada, `git pull`.** Cuatro personas, dos días y un solo repo: el estado del código cambia cada hora. Antes de empezar cualquier cambio, y antes de cada commit, se trae `origin` (`git pull --rebase --autostash origin <rama>`) para trabajar sobre lo último y no pisar a nadie. Un commit hecho sobre una copia de hace tres horas es un conflicto seguro a las dos de la mañana. Esto vale también para las sesiones de Claude Code: primero `pull`, luego cambios.
+**Regla de git: commit de lo tuyo, `pull`, y solo entonces tocar nada.** Cuatro personas, dos días y un solo repo: el estado del código cambia cada hora. El orden es siempre el mismo:
+
+1. `git add -A && git commit -m "wip: ..."` de lo que tengas a medias, aunque no esté terminado. Un commit WIP no molesta a nadie y nunca se pierde; un fichero sin commitear sí.
+2. `git pull --rebase origin <rama>` para traer lo último. Si hay conflicto, se resuelve ahí, con tu trabajo ya a salvo en un commit.
+3. Trabajar, y antes de cada push repetir los pasos 1 y 2.
+
+Nunca `git stash` ni `--autostash` como rutina: no borran nada, pero un stash que no reaplica limpio a las dos de la mañana es media hora perdida. Esto vale también para las sesiones de Claude Code: primero commit de lo que haya, luego `pull`, luego cambios.
 
 ---
 
