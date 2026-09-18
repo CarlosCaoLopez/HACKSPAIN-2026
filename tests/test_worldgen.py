@@ -70,6 +70,22 @@ async def test_teardown_sin_escenario_solo_mata_entidades():
     assert len(fake.commands) == 1
 
 
+async def test_ningun_fill_se_pasa_del_limite(scenario):
+    """Vanilla rechaza un `/fill` de más de 32768 bloques, y desde RCON el error
+    se pierde: el mundo sale a medias sin que nada falle. Pasó de verdad — el
+    valle entero iba en un comando y el terreno no se construyó nunca."""
+    fake = FakeRcon()
+    await build(scenario, fake)
+    for _, cmd in fake.commands:
+        if not cmd.startswith("fill "):
+            continue
+        _, x1, y1, z1, x2, y2, z2, *_ = cmd.split()
+        volumen = (
+            (int(x2) - int(x1) + 1) * (int(y2) - int(y1) + 1) * (int(z2) - int(z1) + 1)
+        )
+        assert volumen <= 32768, f"{volumen} bloques: {cmd}"
+
+
 def test_los_fill_de_limpieza_respetan_el_limite(scenario):
     """Un `/fill` de más de 32768 bloques lo rechaza el servidor."""
     for cmd in scar_commands(scenario):

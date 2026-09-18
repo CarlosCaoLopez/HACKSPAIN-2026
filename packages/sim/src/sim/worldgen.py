@@ -16,6 +16,9 @@ La secuencia fija:
 7. Por cada grupo de civiles, aldeanos con `NoAI:1b`.
 """
 
+import math
+import random
+
 from contracts.scenario import Scenario
 from contracts.world import POI, Unit
 from sim.rcon import LOW, Rcon
@@ -27,12 +30,29 @@ GROUND_Y = 64
 """El valle es plano. Un terreno con relieve obligaría a un heightmap por celda y
 a que `movement` interpolara también en y; para lo que la demo necesita, no paga."""
 
-RIDGE_Y = 78
-"""La cresta que separa los dos pueblos. Alta para que se lea desde arriba y para
-que justifique que la carretera la rodee en vez de cruzarla."""
+FOUNDATION_Y = 40
+"""Hasta dónde baja el cimiento. Sin él la meseta queda al aire allí donde el
+terreno original era más bajo —o era mar— y el valle se ve flotando."""
 
-MARGIN = 60
-"""Bloques de valle alrededor de lo más extremo del escenario."""
+RIDGE_Y = 73
+"""La cresta que separa los dos pueblos. Alta para que se lea desde arriba y para
+que justifique que la carretera la rodee en vez de cruzarla, pero no tanto como
+para taparlos: con el valle a 301 bloques, un muro de 14 se comía media vista."""
+
+MARGIN = 58
+"""Bloques alrededor de lo más extremo del escenario. La franja exterior se
+convierte en las laderas que cierran el valle."""
+
+RIM = 40
+"""Ancho del anillo de cerros del borde. Por dentro, todo plano: es donde el
+simulador pinta. Por fuera, relieve que tapa la costura con el mundo natural.
+
+La regla que decide qué puede tener relieve: **solo lo que el simulador nunca
+pinta**. Carreteras, plataformas de POI y celdas de incendio se renderizan a una
+altura fija, así que un cerro ahí dejaría el fuego enterrado dentro."""
+
+TREES = ["oak", "oak", "birch", "spruce", "oak_bees_0002"]
+"""Features de vanilla: árboles de verdad, no cajas de `fill`."""
 
 ROAD_BLOCK = "gray_concrete"
 ROAD_WIDTH = 3
@@ -62,6 +82,7 @@ async def build(scenario: Scenario, rcon: Rcon) -> None:
     await rcon.send_many(gamerule_commands(), LOW)
     await rcon.send_many(terrain_commands(scenario), LOW)
     await rcon.send_many(road_commands(scenario), LOW)
+    await rcon.send_many(scenery_commands(scenario), LOW)
     for poi in scenario.pois:
         await rcon.send_many(poi_commands(poi), LOW)
     for unit in scenario.units:
@@ -83,7 +104,8 @@ async def teardown(rcon: Rcon, scenario: Scenario | None = None) -> None:
 
 
 MAX_FILL_BLOCKS = 32768
-"""Límite de `/fill` por comando en vanilla. Por encima, lo rechaza."""
+"""Límite de `/fill` por comando en vanilla. Por encima lo rechaza, y desde RCON
+el error se pierde: el mundo sale a medias sin que nada falle."""
 
 SCAR_BLOCKS = {"netherrack": GROUND_BLOCK, "coal_block": GROUND_BLOCK, "fire": "air"}
 """Lo que pinta el hazard y con qué se deshace."""
@@ -95,16 +117,11 @@ SCAR_Y = (GROUND_Y - 2, RIDGE_Y + 4)
 def scar_commands(scenario: Scenario) -> list[str]:
     """`fill ... replace` por losas, respetando el límite de bloques por comando."""
     x1, z1, x2, z2 = bounds(scenario)
-    side = int(MAX_FILL_BLOCKS ** 0.5)  # losa cuadrada de un bloque de alto
     out = []
-    for y in range(SCAR_Y[0], SCAR_Y[1] + 1):
-        for x in range(x1, x2 + 1, side):
-            for z in range(z1, z2 + 1, side):
-                xe, ze = min(x + side - 1, x2), min(z + side - 1, z2)
-                for block, replacement in SCAR_BLOCKS.items():
-                    out.append(
-                        f"fill {x} {y} {z} {xe} {y} {ze} {replacement} replace {block}"
-                    )
+    for block, replacement in SCAR_BLOCKS.items():
+        out += tiled_fill(
+            x1, SCAR_Y[0], z1, x2, SCAR_Y[1], z2, replacement, f" replace {block}"
+        )
     return out
 
 
@@ -147,39 +164,136 @@ def forceload_commands(scenario: Scenario) -> list[str]:
     return out
 
 
+def tiled_fill(
+    x1: int, y1: int, z1: int, x2: int, y2: int, z2: int, block: str, extra: str = ""
+) -> list[str]:
+    """`fill` troceado para no pasar de `MAX_FILL_BLOCKS`.
+
+    Vanilla rechaza en silencio —desde RCON, con un error que nadie lee— cualquier
+    `fill` de más de 32768 bloques. El valle entero son 72541 solo en la capa de
+    hierba, así que sin trocear **el terreno no se construye** y lo que queda es
+    el mundo natural con las carreteras pintadas encima.
+    """
+    height = max(y2 - y1 + 1, 1)
+    side = max(int((MAX_FILL_BLOCKS / height) ** 0.5), 1)
+    out = []
+    for x in range(x1, x2 + 1, side):
+        for z in range(z1, z2 + 1, side):
+            out.append(
+                f"fill {x} {y1} {z} "
+                + f"{min(x + side - 1, x2)} {y2} {min(z + side - 1, z2)} {block}{extra}"
+            )
+    return out
+
+
 def terrain_commands(scenario: Scenario) -> list[str]:
     """El valle plano, el aire por encima, y la cresta entre los dos pueblos."""
     x1, z1, x2, z2 = bounds(scenario)
-    out = [
-        f"fill {x1} {GROUND_Y - 4} {z1} {x2} {GROUND_Y - 1} {z2} stone",
-        f"fill {x1} {GROUND_Y} {z1} {x2} {GROUND_Y} {z2} {GROUND_BLOCK}",
-        f"fill {x1} {GROUND_Y + 1} {z1} {x2} {RIDGE_Y + 6} {z2} air",
-    ]
+    out = tiled_fill(x1, FOUNDATION_Y, z1, x2, GROUND_Y - 1, z2, "stone")
+    out += tiled_fill(x1, GROUND_Y, z1, x2, GROUND_Y, z2, GROUND_BLOCK)
+    out += tiled_fill(x1, GROUND_Y + 1, z1, x2, RIDGE_Y + 8, z2, "air")
+    out.extend(_rim(scenario))
     out.extend(_ridge(scenario))
     return out
+
+
+def _rim(scenario: Scenario) -> list[str]:
+    """El anillo de cerros que cierra el valle y esconde el corte con el mundo
+    natural. Sube hacia fuera en peldaños, así que desde dentro se lee como
+    laderas y desde arriba no tapa nada del escenario."""
+    x1, z1, x2, z2 = bounds(scenario)
+    rng = random.Random(scenario.seed)
+    steps, band = 10, 4
+    out: list[str] = []
+    for step in range(steps):
+        inset = int(RIM * (steps - 1 - step) / steps)
+        # sube despacio y no muy alto: un anillo alto encierra y tapa el escenario
+        top = GROUND_Y + 1 + int(12 * (step + 1) / steps)
+        ax1, az1, ax2, az2 = x1 + inset, z1 + inset, x2 - inset, z2 - inset
+        for a, b, c, d in [
+            (ax1, az1, ax2, az1 + band),
+            (ax1, az2 - band, ax2, az2),
+            (ax1, az1, ax1 + band, az2),
+            (ax2 - band, az1, ax2, az2),
+        ]:
+            # el ruido sembrado rompe la terraza: sin él se lee como bancal
+            jitter = rng.choice([-2, -1, 0, 0, 1, 2, 3])
+            out += tiled_fill(a, GROUND_Y + 1, b, c, top + jitter, d, RIDGE_BLOCK)
+            out += tiled_fill(a, top + jitter, b, c, top + jitter, d, GROUND_BLOCK)
+    return out
+
+
+def scenery_commands(scenario: Scenario) -> list[str]:
+    """Árboles y flores del propio Minecraft, lejos de carreteras y POIs.
+
+    `place feature` genera vegetación vanilla: variada y creíble, imposible de
+    imitar con `fill`. Va sembrado por `scenario.seed`, así que el valle es el
+    mismo en los doce runs del domingo.
+    """
+    x1, z1, x2, z2 = bounds(scenario)
+    rng = random.Random(scenario.seed + 1)
+    ocupado = [(w.x, w.z) for w in scenario.waypoints] + [(p.x, p.z) for p in scenario.pois]
+    roads = {(w.id): (w.x, w.z) for w in scenario.waypoints}
+
+    out = []
+    for _ in range(420):
+        x = rng.randint(x1 + RIM, x2 - RIM)
+        z = rng.randint(z1 + RIM, z2 - RIM)
+        if any(abs(x - px) < 26 and abs(z - pz) < 26 for px, pz in ocupado):
+            continue
+        if _near_road(x, z, scenario, roads):
+            continue
+        feature = rng.choice(TREES) if rng.random() < 0.72 else "flower_default"
+        out.append(f"place feature minecraft:{feature} {x} {GROUND_Y + 1} {z}")
+    return out
+
+
+def _near_road(x: int, z: int, scenario: Scenario, roads: dict) -> bool:
+    """Distancia punto-segmento contra cada carretera. Un árbol en mitad del
+    asfalto tapa justo lo que el jurado tiene que ver moverse."""
+    for road in scenario.roads:
+        (ax, az), (bx, bz) = roads[road.a], roads[road.b]
+        dx, dz = bx - ax, bz - az
+        length2 = dx * dx + dz * dz or 1
+        t = max(0.0, min(1.0, ((x - ax) * dx + (z - az) * dz) / length2))
+        if math.dist((x, z), (ax + dx * t, az + dz * t)) < 14:
+            return True
+    return False
+
+
+RIDGE_STEPS = 7
+"""Peldaños de la ladera. Con tres se lee como un muro; con siete, como un cerro."""
 
 
 def _ridge(scenario: Scenario) -> list[str]:
     """La cresta: entre los dos pueblos, si el escenario tiene dos.
 
-    Escalonada, porque un muro vertical de piedra se lee como un error y una
-    ladera en tres peldaños se lee como una cresta.
+    En muchos peldaños estrechos y coronada de hierba. Una caja de piedra de tres
+    escalones se lee como un edificio mal hecho, que es justo la impresión que no
+    queremos dar con Minecraft delante de un jurado.
     """
     villages = [p for p in scenario.pois if p.kind == "village"]
     if len(villages) < 2:
         return []
     a, b = sorted(villages, key=lambda p: p.z)[:2]
     middle = int((a.z + b.z) / 2)
-    _, _, x2, _ = bounds(scenario)
-    east = int(min(a.x, b.x)) - 40  # nace al oeste de los pueblos y va al este
+    x1, _, x2, _ = bounds(scenario)
+    west = int((x1 + min(a.x, b.x)) / 2)  # nace en mitad del valle y muere al este
 
-    out = []
-    for step, (half, top) in enumerate(
-        [(30, GROUND_Y + 4), (20, GROUND_Y + 9), (10, RIDGE_Y)]
-    ):
-        out.append(
-            f"fill {east} {GROUND_Y + 1} {middle - half} "
-            + f"{x2} {top} {middle + half} {RIDGE_BLOCK}"
+    out: list[str] = []
+    base_half, rise = 34, RIDGE_Y - GROUND_Y
+    for step in range(RIDGE_STEPS):
+        ratio = step / (RIDGE_STEPS - 1)
+        half = max(int(base_half * (1 - ratio)), 2)
+        top = GROUND_Y + max(int(rise * (ratio + 1 / RIDGE_STEPS)), 1)
+        # la punta de cada peldaño se retranquea también por el oeste, para que la
+        # ladera baje hacia el valle en vez de acabar en un tajo
+        start = west + int((x2 - west) * ratio * 0.25)
+        out += tiled_fill(
+            start, GROUND_Y + 1, middle - half, x2, top, middle + half, RIDGE_BLOCK
+        )
+        out += tiled_fill(
+            start, top, middle - half, x2, top, middle + half, GROUND_BLOCK
         )
     return out
 
@@ -227,6 +341,11 @@ def poi_commands(poi: POI) -> list[str]:
         + f"{x + size - 1} {GROUND_Y + height - 1} {z + size - 1} air",
         # un faro de luz para localizarlo de noche y en la grabación
         f"setblock {x} {GROUND_Y + height + 1} {z} sea_lantern",
+        # cartel flotante: se lee a distancia y a través de bloques. Es lo que
+        # hace el mapa navegable, y en la grabación identifica cada sitio sin voz.
+        f"summon armor_stand {x} {GROUND_Y + height + 3} {z} "
+        + f'{{Tags:["{VELA_TAG}","label"],Marker:1b,Invisible:1b,NoGravity:1b,'
+        + f'CustomNameVisible:1b,CustomName:\'{{"text":"{poi.name}"}}\'}}',
     ]
 
 

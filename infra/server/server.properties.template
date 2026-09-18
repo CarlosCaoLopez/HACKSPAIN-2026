@@ -9,3 +9,6 @@ rcon.password=__RCON_PASSWORD__
 view-distance=24
 simulation-distance=4
 spawn-protection=0
+level-type=minecraft:flat
+level-name=world
+generator-settings={"biome"\:"minecraft\:plains","lakes"\:false,"features"\:false,"layers"\:[{"block"\:"minecraft\:bedrock","height"\:1},{"block"\:"minecraft\:stone","height"\:127},{"block"\:"minecraft\:grass_block","height"\:1}]}
