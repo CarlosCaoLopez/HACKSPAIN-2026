@@ -98,8 +98,9 @@ Renombrar, cambiar un tipo o hacer obligatorio un campo necesita a los cuatro. B
 
 ## Convenciones
 
-- **Antes de tocar nada, `git pull --rebase --autostash origin <rama>`**, y otra vez antes de
-  cada commit. Cuatro personas cambian el repo cada hora; se trabaja siempre sobre lo último.
+- **Antes de tocar nada: commit de lo que haya sin commitear (aunque sea `wip:`), y luego
+  `git pull --rebase origin <rama>`.** Nunca `stash` ni `--autostash` como rutina. Cuatro
+  personas cambian el repo cada hora; se trabaja siempre sobre lo último y con lo propio a salvo.
 - **Ids con prefijo**: `unit_truck1`, `poi_pueblo_a`, `wp_sur_03`, `cell_14_22`, `task_evac_a`.
 - **Coordenadas siempre del mundo Minecraft** (x, z, con y implícita). El core nunca piensa en píxeles.
 - **`t_sim`, segundos flotantes, es el tiempo del dominio.** `t_wall` solo depura y mide latencia real.
