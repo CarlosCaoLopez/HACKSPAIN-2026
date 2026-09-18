@@ -70,6 +70,8 @@ class CallResult(BaseModel):
     transcript: str
     facts: CallFacts | None
     audio_url: str | None = None
+    health_score: float | None = None  # Humalike `analyze`, 0..1, al colgar
+    analysis: dict | None = None  # hallazgos de `analyze`, para el bonus de aprendizaje
 
 
 class Fact(BaseModel):

@@ -51,7 +51,10 @@ class EventType(StrEnum):
     CALL_REQUESTED = "call.requested"
     CALL_STARTED = "call.started"
     CALL_TRANSCRIPT_PARTIAL = "call.transcript.partial"
+    CALL_AFFECT = "call.affect"  # Humalike: emoción del interlocutor durante la llamada
     CALL_ENDED = "call.ended"
+    CALL_SIGNAL_REQUESTED = "call.signal.requested"  # core → voice: algo que decir en vivo
+    CALL_SIGNAL_SENT = "call.signal.sent"  # voice → HappyRobot lo ha recibido
 
     PLAN_DIVERGENCE = "plan.divergence"
     PLAN_REPLAN_STARTED = "plan.replan.started"
@@ -166,6 +169,34 @@ class TranscriptPartial(BaseModel):
     text: str
 
 
+class Emotion(BaseModel):
+    type: str  # "fear", "frustration", "relief"...
+    intensity: float  # 0..1
+
+
+class CallAffect(BaseModel):
+    """Lo que Humalike lee del interlocutor en mitad de la llamada. Solo dashboard."""
+
+    call_id: str
+    emotions: list[Emotion] = []
+    risk: float | None = None  # riesgo de que la siguiente frase aterrice mal
+
+
+class SignalRequested(BaseModel):
+    """El core pide que el agente diga algo en vivo. `payload` lleva `kind`
+    (`unit_dispatched`, `coach`...) y sus campos; voice lo redacta y lo manda."""
+
+    call_id: str
+    key: str  # "unit_dispatched" | "coach"
+    payload: dict = {}
+
+
+class SignalSent(BaseModel):
+    call_id: str
+    key: str
+    signal_id: str
+
+
 # --- Payloads: plan.* ------------------------------------------------------
 
 
@@ -241,7 +272,10 @@ PAYLOAD_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.CALL_REQUESTED: CallRequest,
     EventType.CALL_STARTED: CallStarted,
     EventType.CALL_TRANSCRIPT_PARTIAL: TranscriptPartial,
+    EventType.CALL_AFFECT: CallAffect,
     EventType.CALL_ENDED: CallResult,
+    EventType.CALL_SIGNAL_REQUESTED: SignalRequested,
+    EventType.CALL_SIGNAL_SENT: SignalSent,
     EventType.PLAN_DIVERGENCE: DivergenceReport,
     EventType.PLAN_REPLAN_STARTED: ReplanStarted,
     EventType.PLAN_POLICY_EMITTED: Policy,
