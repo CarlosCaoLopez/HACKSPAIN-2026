@@ -18,10 +18,11 @@
 | Razonamiento | Modelo frontera de razonamiento vía API | Genera política y prioridades, nunca la asignación final |
 | Asignación | `scipy.optimize.linear_sum_assignment` | Determinista, instantánea, explicable |
 | Mundo | Paper 1.21 + RCON (`mcrcon`) | `/tp`, `/fill`, `/setblock`. Sin pathfinding, sin bots |
-| Telefonía saliente | HappyRobot | Requisito del reto e integración por webhook |
-| Telefonía entrante | humalike | Persona preocupada llamando al sistema |
+| Telefonía | HappyRobot | Requisito del reto e integración por webhook + humalike por encima para hacerlo mas humano |
 | Dashboard | Vite + React + TypeScript + Tailwind | Único sitio donde hay TS |
 | Gestión de deps | `uv` (Python) + `pnpm` (dashboard) | Instalación en segundos, lockfile reproducible |
+HappyRobot es la infraestructura de voz y ejecución agéntica:
+Es el motor de telefonía y acciones. Se encarga de levantar llamadas telefónicas reales a redes celulares (SIP/PSTN), procesar el audio bidireccional con baja latencia, conectar herramientas (APIs, dispatchers, bases de datos) y ejecutar flujos de trabajo.
 
 ### Las tres reglas que no se rompen
 
@@ -264,7 +265,6 @@ Posiciones de cámara preconfiguradas con `/tp @s x y z yaw pitch` guardadas en 
 
 ## La capa de telefonía
 
-**HappyRobot ejecuta hacia fuera, humalike conversa hacia dentro.** Son dos direcciones distintas del mismo producto y conviene que el pitch las nombre por separado.
 
 ### HappyRobot: el sistema llama
 
@@ -282,9 +282,10 @@ Para el retorno, el asistente se configura con un webhook que se dispara en los 
 
 ### humalike: el ciudadano llama
 
-Human-Like se presenta como plataforma de agentes de empresa con memoria compartida entre canales de voz, SMS, email y chat, donde cada conversación escribe en una capa de memoria común y el contexto se comparte en tiempo real, con soporte de clave propia de proveedor LLM en planes enterprise ([human-like.ai](https://human-like.ai/)).
+Humalike es la infraestructura de comportamiento e inteligencia social:
+Es una capa middleware de behavioral infrastructure. No se encarga del transporte telefónico ni de la lógica de negocio; se enfoca en cómo se comunica el agente: turn-taking (saber cuándo interrumpir o cuándo callar), detección de tono emocional, ritmo adaptativo y gestión de la conversación en tiempo real.(https://docs.humalike.com/)
 
-1. **El vecino del minuto 3:30.** Uno de vosotros llama, o humalike hace de vecino asustado. La conversación es natural, desordenada, con información parcial y contradictoria. Eso es exactamente lo que el enunciado describe cuando dice que llegan cien mensajes y solo tres cambian algo.
+1. **El vecino del minuto 3:30.** Uno de vosotros llama La conversación es natural, desordenada, con información parcial y contradictoria. Eso es exactamente lo que el enunciado describe cuando dice que llegan cien mensajes y solo tres cambian algo.
 2. **Veinte llamadas simultáneas.** Lanzad un lote de llamadas entrantes sintéticas mientras la demo corre. El dashboard muestra 20 conversaciones y el sistema descarta 17. Ese contraste es la demostración visual de *Qué información importa*.
 
 ### De la transcripción al hecho
