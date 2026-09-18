@@ -211,14 +211,21 @@ def _weighted_cost(base: float, state: WorldState, task: Task, policy: Policy) -
 
 
 def cost_matrix(
-    state: WorldState, policy: Policy, graph: RoadGraph
+    state: WorldState,
+    policy: Policy,
+    graph: RoadGraph,
+    vetoes: set[tuple[str, str]] | None = None,
 ) -> tuple[list[list[float]], list[Unit], list[Task], list[list[list[str]]]]:
     """Filas = unidades activas, columnas = tareas abiertas. Puro, inspeccionable.
 
     Devuelve además las rutas resueltas por par (para no recalcular en `solve` ni en
-    `apply_hard_constraints`). Ruta vacía = par ya infactible."""
+    `apply_hard_constraints`). Ruta vacía = par ya infactible.
+
+    `vetoes` son pares (unit_id, task_id) que un `veto_assignment` humano ha puesto a
+    coste infinito: el mismo tratamiento que una capacidad que no cuadra."""
     units = _active_units(state)
     tasks = _open_tasks(state)
+    vetoes = vetoes or set()
     matrix: list[list[float]] = []
     routes: list[list[list[str]]] = []
 
@@ -227,6 +234,10 @@ def cost_matrix(
         row_routes: list[list[str]] = []
         u_wp = _unit_waypoint(unit, graph)
         for task in tasks:
+            if (unit.id, task.id) in vetoes:
+                row.append(INFEASIBLE)
+                row_routes.append([])
+                continue
             if task.required_capability not in unit.capabilities:
                 row.append(INFEASIBLE)
                 row_routes.append([])
@@ -335,16 +346,21 @@ def build_context(
     return PlanContext(assumptions=assumptions, world_seq=state.seq)
 
 
-def solve(state: WorldState, policy: Policy, graph: RoadGraph | None = None) -> Plan:
+def solve(
+    state: WorldState,
+    policy: Policy,
+    graph: RoadGraph | None = None,
+    vetoes: set[tuple[str, str]] | None = None,
+) -> Plan:
     """El plan óptimo bajo esos pesos. Lo que no se pudo cubrir sale en
     `unassigned_tasks`, y se muestra: un hueco visible es información.
 
     `graph` lo inyecta `loop.py` desde el escenario; si falta, se cae a un grafo vacío
     y la asignación degrada a lo que permita el estado (la demo nunca se queda sin
-    plan)."""
+    plan). `vetoes` son los pares vetados por un humano (coste infinito)."""
     live_graph = (graph or RoadGraph({}, {})).with_cuts(state)
 
-    matrix, units, tasks, routes = cost_matrix(state, policy, live_graph)
+    matrix, units, tasks, routes = cost_matrix(state, policy, live_graph, vetoes)
     apply_hard_constraints(matrix, state, policy, live_graph, units, tasks, routes)
 
     assignments: list[Assignment] = []
