@@ -174,3 +174,21 @@ def test_tone_for_accepts_spanish_and_english():
     assert tone_for([{"type": "frustración", "intensity": 0.7}]) == ("firm", "normal")
     assert tone_for([{"type": "relief", "intensity": 0.9}]) == ("calm", "normal")
     assert tone_for([{"type": "anxiety", "intensity": 0.3}]) == ("calm", "normal")
+
+
+async def test_signal_sent_carries_latency_and_causes(client, journal, fakes):
+    _, live = fakes
+    await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
+    mon = humanlike.MONITORS["sess_1"]
+    await mon.on_signal_requested(
+        "unit_dispatched", {"unit": "camión 2", "route": "pista norte", "eta_s": 40}, [42]
+    )
+    sent = next(
+        e
+        for e in journal
+        if e.type == EventType.CALL_SIGNAL_SENT and e.payload["key"] == "unit_dispatched"
+    )
+    assert sent.causes == [42]
+    assert sent.payload["refined"] is True
+    assert 0 <= sent.payload["latency_ms"] < 1500
+    assert sent.payload["message"] == live.signals[-1]["message"]
