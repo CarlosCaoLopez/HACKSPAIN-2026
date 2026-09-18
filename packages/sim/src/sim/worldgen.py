@@ -43,13 +43,15 @@ MARGIN = 58
 """Bloques alrededor de lo más extremo del escenario. La franja exterior se
 convierte en las laderas que cierran el valle."""
 
-RIM = 40
-"""Ancho del anillo de cerros del borde. Por dentro, todo plano: es donde el
-simulador pinta. Por fuera, relieve que tapa la costura con el mundo natural.
+RIM = 30
+"""Franja de borde sin vegetación. Ya no lleva cerros: el mundo base es superplano
+a la misma altura que el valle, así que no hay costura que tapar. Un anillo de
+`fill` concéntricos se leía como bancales de cultivo y dejaba un corte recto donde
+terminaba — peor el remedio que la enfermedad.
 
-La regla que decide qué puede tener relieve: **solo lo que el simulador nunca
-pinta**. Carreteras, plataformas de POI y celdas de incendio se renderizan a una
-altura fija, así que un cerro ahí dejaría el fuego enterrado dentro."""
+La regla que decide qué puede tener relieve sigue en pie: **solo lo que el
+simulador nunca pinta**. Carreteras, plataformas de POI y celdas de incendio se
+renderizan a una altura fija, así que un cerro ahí dejaría el fuego enterrado."""
 
 TREES = ["oak", "oak", "birch", "spruce", "oak_bees_0002"]
 """Features de vanilla: árboles de verdad, no cajas de `fill`."""
@@ -192,34 +194,7 @@ def terrain_commands(scenario: Scenario) -> list[str]:
     out = tiled_fill(x1, FOUNDATION_Y, z1, x2, GROUND_Y - 1, z2, "stone")
     out += tiled_fill(x1, GROUND_Y, z1, x2, GROUND_Y, z2, GROUND_BLOCK)
     out += tiled_fill(x1, GROUND_Y + 1, z1, x2, RIDGE_Y + 8, z2, "air")
-    out.extend(_rim(scenario))
     out.extend(_ridge(scenario))
-    return out
-
-
-def _rim(scenario: Scenario) -> list[str]:
-    """El anillo de cerros que cierra el valle y esconde el corte con el mundo
-    natural. Sube hacia fuera en peldaños, así que desde dentro se lee como
-    laderas y desde arriba no tapa nada del escenario."""
-    x1, z1, x2, z2 = bounds(scenario)
-    rng = random.Random(scenario.seed)
-    steps, band = 10, 4
-    out: list[str] = []
-    for step in range(steps):
-        inset = int(RIM * (steps - 1 - step) / steps)
-        # sube despacio y no muy alto: un anillo alto encierra y tapa el escenario
-        top = GROUND_Y + 1 + int(12 * (step + 1) / steps)
-        ax1, az1, ax2, az2 = x1 + inset, z1 + inset, x2 - inset, z2 - inset
-        for a, b, c, d in [
-            (ax1, az1, ax2, az1 + band),
-            (ax1, az2 - band, ax2, az2),
-            (ax1, az1, ax1 + band, az2),
-            (ax2 - band, az1, ax2, az2),
-        ]:
-            # el ruido sembrado rompe la terraza: sin él se lee como bancal
-            jitter = rng.choice([-2, -1, 0, 0, 1, 2, 3])
-            out += tiled_fill(a, GROUND_Y + 1, b, c, top + jitter, d, RIDGE_BLOCK)
-            out += tiled_fill(a, top + jitter, b, c, top + jitter, d, GROUND_BLOCK)
     return out
 
 
@@ -261,16 +236,12 @@ def _near_road(x: int, z: int, scenario: Scenario, roads: dict) -> bool:
     return False
 
 
-RIDGE_STEPS = 7
-"""Peldaños de la ladera. Con tres se lee como un muro; con siete, como un cerro."""
-
-
 def _ridge(scenario: Scenario) -> list[str]:
-    """La cresta: entre los dos pueblos, si el escenario tiene dos.
+    """La cresta entre los dos pueblos, como perfil por columnas.
 
-    En muchos peldaños estrechos y coronada de hierba. Una caja de piedra de tres
-    escalones se lee como un edificio mal hecho, que es justo la impresión que no
-    queremos dar con Minecraft delante de un jurado.
+    Una caja de `fill` escalonados se lee como zigurat. Aquí cada columna saca su
+    altura de un coseno a lo ancho por otro a lo largo, más ruido sembrado, que es
+    lo que rompe la simetría y la hace pasar por terreno.
     """
     villages = [p for p in scenario.pois if p.kind == "village"]
     if len(villages) < 2:
@@ -278,23 +249,27 @@ def _ridge(scenario: Scenario) -> list[str]:
     a, b = sorted(villages, key=lambda p: p.z)[:2]
     middle = int((a.z + b.z) / 2)
     x1, _, x2, _ = bounds(scenario)
-    west = int((x1 + min(a.x, b.x)) / 2)  # nace en mitad del valle y muere al este
+    west, east = int((x1 + min(a.x, b.x)) / 2), x2 - RIM
+    half, rise = 30, RIDGE_Y - GROUND_Y
+    rng = random.Random(scenario.seed + 2)
+    step = 3
 
     out: list[str] = []
-    base_half, rise = 34, RIDGE_Y - GROUND_Y
-    for step in range(RIDGE_STEPS):
-        ratio = step / (RIDGE_STEPS - 1)
-        half = max(int(base_half * (1 - ratio)), 2)
-        top = GROUND_Y + max(int(rise * (ratio + 1 / RIDGE_STEPS)), 1)
-        # la punta de cada peldaño se retranquea también por el oeste, para que la
-        # ladera baje hacia el valle en vez de acabar en un tajo
-        start = west + int((x2 - west) * ratio * 0.25)
-        out += tiled_fill(
-            start, GROUND_Y + 1, middle - half, x2, top, middle + half, RIDGE_BLOCK
-        )
-        out += tiled_fill(
-            start, top, middle - half, x2, top, middle + half, GROUND_BLOCK
-        )
+    for x in range(west, east + 1, step):
+        along = math.sin(math.pi * (x - west) / max(east - west, 1))
+        for z in range(middle - half, middle + half + 1, step):
+            across = math.cos(math.pi * (z - middle) / (2 * half))
+            height = int(rise * along * across ** 1.7 + rng.uniform(-1.2, 1.2))
+            if height < 1:
+                continue
+            top = GROUND_Y + height
+            out.append(
+                f"fill {x} {GROUND_Y + 1} {z} "
+                + f"{x + step - 1} {top - 1} {z + step - 1} {RIDGE_BLOCK}"
+            )
+            out.append(
+                f"fill {x} {top} {z} {x + step - 1} {top} {z + step - 1} {GROUND_BLOCK}"
+            )
     return out
 
 

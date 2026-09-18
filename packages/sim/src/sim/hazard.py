@@ -46,11 +46,17 @@ SECONDS_PER_MINUTE = 60.0
 probabilidad por segundo multiplica el ritmo por sesenta: el mapa entero arde en
 90 segundos."""
 
-NEIGHBOURS = [(dx, dz) for dx in (-1, 0, 1) for dz in (-1, 0, 1) if (dx, dz) != (0, 0)]
-"""Ocho vecinas. Con cuatro el frente avanza en rombo y desde arriba canta."""
+NEIGHBOURS_8 = [
+    (dx, dz) for dx in (-1, 0, 1) for dz in (-1, 0, 1) if (dx, dz) != (0, 0)
+]
+"""Ocho vecinas, para un frente que avanza por el aire. Con cuatro sale en rombo."""
+
+NEIGHBOURS_4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+"""Cuatro: lo que sigue una red de tendidos, no un frente."""
 
 IGNITABLE: frozenset[CellState] = frozenset({"intact", "at_risk"})
-"""Lo que todavía puede arder. `at_risk` incluido: es una marca para el planner."""
+"""Lo que todavía puede caer. `at_risk` incluido: es una marca para el planner,
+no un estado del que una celda ya no pueda verse afectada."""
 
 
 class CellChange(BaseModel):
@@ -107,25 +113,36 @@ def wind_vector(bearing_deg: float) -> tuple[float, float]:
     return math.sin(towards), -math.cos(towards)
 
 
-class Wildfire:
-    """`fill netherrack` + `fill fire` encima, más humo. `burnt` es `coal_block`,
-    que deja una cicatriz negra vista desde arriba."""
+
+class CellularHazard:
+    """La maquinaria que comparten los autómatas: rejilla dispersa, temporizadores,
+    orden estable y el azar en instancia propia.
+
+    Las subclases solo dicen en qué se diferencian: hacia qué vecinas se propaga,
+    con qué tasa, cómo se llaman sus estados y cómo se pintan.
+    """
+
+    ACTIVE: CellState = "burning"
+    TERMINAL: CellState | None = None
+    DURATION: float | None = None
+    NEIGHBOURS = NEIGHBOURS_8
 
     def __init__(self, spec: HazardSpec, seed: int) -> None:
         self.spec = spec
         self.wind = spec.wind
         self.ground_y = 64
         """Altura del render. Mientras el mapa sea plano vale una constante; con
-        el valle real esto pide un heightmap por celda."""
+        relieve esto pediría un heightmap por celda."""
 
         self._rng = random.Random(seed)
         self._origin = parse_cell(spec.origin_cell)
         self._state: dict[str, CellState] = {}
-        self._burning_for: dict[str, float] = {}
+        self._active_for: dict[str, float] = {}
         self._pending: list[CellChange] = []
 
-        # La ignición del minuto 00:00 sale en el primer `tick`, no se pierde.
-        self._pending.append(self._ignite(spec.origin_cell))
+        # El primer `tick` devuelve la ignición: no se pierde por haber ocurrido
+        # en el constructor.
+        self._pending.append(self._activate(spec.origin_cell))
         self._pending.extend(self._mark_at_risk())
 
     # --- la interfaz ---
@@ -133,33 +150,33 @@ class Wildfire:
     def tick(self, dt: float) -> list[CellChange]:
         changes, self._pending = self._pending, []
 
-        for cid in sorted(self._burning_for):
-            self._burning_for[cid] += dt
-            if self._burning_for[cid] >= BURN_DURATION_S:
-                self._state[cid] = "burnt"
-                del self._burning_for[cid]
-                changes.append(self._change(cid, "burnt"))
+        if self.DURATION is not None and self.TERMINAL is not None:
+            for cid in sorted(self._active_for):
+                self._active_for[cid] += dt
+                if self._active_for[cid] >= self.DURATION:
+                    self._state[cid] = self.TERMINAL
+                    del self._active_for[cid]
+                    changes.append(self._change(cid, self.TERMINAL))
 
         # Orden estable: un dict recorrido al azar rompe el determinismo aunque
         # el RNG esté bien sembrado.
-        for cid in sorted(self._burning_for):
+        for cid in sorted(self._active_for):
             for neighbour, rate in self._spread_from(cid):
                 if self._rng.random() < _probability(rate, dt):
-                    changes.append(self._ignite(neighbour))
+                    changes.append(self._activate(neighbour))
 
         changes.extend(self._mark_at_risk())
         return changes
 
     def cells_at_risk(self, horizon_s: float) -> list[str]:
-        """Las que probablemente ardan dentro de ese horizonte, de más a menos.
+        """Las que probablemente caigan dentro de ese horizonte, de más a menos.
 
-        Es lo que el core necesita para priorizar: evacuar antes de que llegue el
+        Es lo que el core necesita para priorizar: actuar antes de que llegue el
         frente, no cuando ya ha llegado.
         """
         risk: dict[str, float] = {}
-        for cid in self._burning_for:
+        for cid in self._active_for:
             for neighbour, rate in self._spread_from(cid):
-                # Probabilidad de que al menos una vecina ardiendo la encienda.
                 probability = _probability(rate, horizon_s)
                 survives = (1 - probability) * (1 - risk.get(neighbour, 0.0))
                 risk[neighbour] = 1 - survives
@@ -168,6 +185,102 @@ class Wildfire:
     def set_wind(self, wind: Wind) -> None:
         """Cambiar el viento es cambiar un vector en memoria."""
         self.wind = wind
+
+    def render_commands(self, change: CellChange) -> list[str]:
+        raise NotImplementedError
+
+    # --- consultas ---
+
+    def bounds(self, cid: str) -> tuple[int, int, int, int]:
+        """(x1, z1, x2, z2) en bloques del mundo. Para `/fill`, inclusive."""
+        cx, cz = parse_cell(cid)
+        size = self.spec.cell_size
+        return cx * size, cz * size, cx * size + size - 1, cz * size + size - 1
+
+    def state_of(self, cid: str) -> CellState:
+        return self._state.get(cid, "intact")
+
+    @property
+    def active(self) -> list[str]:
+        return sorted(self._active_for)
+
+    # --- lo que cambia por subclase ---
+
+    def _rate(self, dx: int, dz: int, distance: float) -> float:
+        """Celdas por minuto hacia esa vecina, antes de dividir por distancia."""
+        raise NotImplementedError
+
+    # --- interno ---
+
+    def _spread_from(self, cid: str) -> list[tuple[str, float]]:
+        """Vecinas candidatas, con su **tasa** por segundo.
+
+        Devuelve tasa y no probabilidad a propósito: `_probability` la convierte
+        al intervalo que haga falta. Con probabilidades directas, un horizonte
+        largo las satura todas a 1 y `cells_at_risk` pierde el orden justo cuando
+        más falta hace.
+        """
+        cx, cz = parse_cell(cid)
+        out = []
+        for dx, dz in self.NEIGHBOURS:
+            neighbour = cell_id(cx + dx, cz + dz)
+            if self.state_of(neighbour) not in IGNITABLE or self._too_far(
+                cx + dx, cz + dz
+            ):
+                continue
+            distance = math.hypot(dx, dz)
+            rate = self._rate(dx, dz, distance)
+            out.append(
+                (neighbour, max(0.0, rate) / distance / SECONDS_PER_MINUTE)
+            )
+        return out
+
+    @property
+    def _fuel(self) -> float:
+        """Uniforme mientras no haya terreno. Con el mapa real, por celda."""
+        return 1.0
+
+    def _too_far(self, cx: int, cz: int) -> bool:
+        return math.dist((cx, cz), self._origin) > MAX_RADIUS_CELLS
+
+    def _activate(self, cid: str) -> CellChange:
+        self._state[cid] = self.ACTIVE
+        self._active_for[cid] = 0.0
+        return self._change(cid, self.ACTIVE)
+
+    def _mark_at_risk(self) -> list[CellChange]:
+        changes: list[CellChange] = []
+        horizon = self.DURATION or 60.0
+        for cid in self.cells_at_risk(horizon):
+            if self.state_of(cid) == "intact":
+                self._state[cid] = "at_risk"
+                changes.append(self._change(cid, "at_risk"))
+        return changes
+
+    def _change(self, cid: str, state: CellState) -> CellChange:
+        return CellChange(cell_id=cid, state=state, hazard=self.spec.kind)
+
+
+class Wildfire(CellularHazard):
+    """`fill netherrack` + `fill fire` encima. `burnt` es `coal_block`, que deja
+    una cicatriz negra vista desde arriba."""
+
+    ACTIVE: CellState = "burning"
+    TERMINAL: CellState = "burnt"
+    DURATION = BURN_DURATION_S
+    NEIGHBOURS = NEIGHBOURS_8
+
+    def _rate(self, dx: int, dz: int, distance: float) -> float:
+        wind_x, wind_z = wind_vector(self.wind.bearing_deg)
+        cosine = (dx * wind_x + dz * wind_z) / distance
+        # Celdas por minuto: base isótropa más el empuje del viento, que solo
+        # suma a favor.
+        return (self.spec.base_spread + self.wind.speed * max(0.0, cosine)) * self._fuel
+
+    @property
+    def burning(self) -> list[str]:
+        """Alias histórico de `active`: lo usan el runner y los tests."""
+        return self.active
 
     def render_commands(self, change: CellChange) -> list[str]:
         x1, z1, x2, z2 = self.bounds(change.cell_id)
@@ -183,78 +296,6 @@ class Wildfire:
                 f"fill {x1} {y} {z1} {x2} {y} {z2} coal_block",
             ]
         return []  # `intact` y `at_risk` son estado del modelo, no se pintan
-
-    # --- consultas ---
-
-    def bounds(self, cid: str) -> tuple[int, int, int, int]:
-        """(x1, z1, x2, z2) en bloques del mundo. Para `/fill`, inclusive."""
-        cx, cz = parse_cell(cid)
-        size = self.spec.cell_size
-        return cx * size, cz * size, cx * size + size - 1, cz * size + size - 1
-
-    def state_of(self, cid: str) -> CellState:
-        return self._state.get(cid, "intact")
-
-    @property
-    def burning(self) -> list[str]:
-        return sorted(self._burning_for)
-
-    # --- interno ---
-
-    def _spread_from(self, cid: str) -> list[tuple[str, float]]:
-        """Vecinas candidatas de una celda ardiendo, con su **tasa** por segundo.
-
-        Devuelve tasa y no probabilidad a propósito: `_probability` la convierte
-        al intervalo que haga falta. Con probabilidades directas, un horizonte
-        largo las satura todas a 1 y `cells_at_risk` pierde el orden justo
-        cuando más falta hace.
-        """
-        cx, cz = parse_cell(cid)
-        wind_x, wind_z = wind_vector(self.wind.bearing_deg)
-
-        out = []
-        for dx, dz in NEIGHBOURS:
-            neighbour = cell_id(cx + dx, cz + dz)
-            # `at_risk` sigue siendo combustible: es una marca para el planner,
-            # no un estado del que una celda ya no pueda arder.
-            if self.state_of(neighbour) not in IGNITABLE or self._too_far(
-                cx + dx, cz + dz
-            ):
-                continue
-            distance = math.hypot(dx, dz)
-            cosine = (dx * wind_x + dz * wind_z) / distance
-            # Celdas por minuto: base isótropa más el empuje del viento, que solo
-            # suma a favor. La diagonal está más lejos y avanza proporcionalmente
-            # más despacio.
-            rate = self.spec.base_spread + self.wind.speed * max(0.0, cosine)
-            out.append(
-                (neighbour, rate * self._fuel / distance / SECONDS_PER_MINUTE)
-            )
-        return out
-
-    @property
-    def _fuel(self) -> float:
-        """Uniforme mientras no haya terreno. Con el mapa real, por celda."""
-        return 1.0
-
-    def _too_far(self, cx: int, cz: int) -> bool:
-        return math.dist((cx, cz), self._origin) > MAX_RADIUS_CELLS
-
-    def _ignite(self, cid: str) -> CellChange:
-        self._state[cid] = "burning"
-        self._burning_for[cid] = 0.0
-        return self._change(cid, "burning")
-
-    def _mark_at_risk(self) -> list[CellChange]:
-        changes: list[CellChange] = []
-        for cid in self.cells_at_risk(BURN_DURATION_S):
-            if self.state_of(cid) == "intact":
-                self._state[cid] = "at_risk"
-                changes.append(self._change(cid, "at_risk"))
-        return changes
-
-    def _change(self, cid: str, state: CellState) -> CellChange:
-        return CellChange(cell_id=cid, state=state, hazard=self.spec.kind)
 
 
 class Flood:
@@ -276,23 +317,38 @@ class Flood:
         raise NotImplementedError
 
 
-class Blackout:
-    """Pendiente: es el segundo escenario, `blackout_grid`. Ver H8."""
+class Blackout(CellularHazard):
+    """El apagón se propaga por la red, no por el aire.
 
-    def __init__(self, spec: HazardSpec, seed: int) -> None:
-        raise NotImplementedError("Blackout llega con el segundo escenario; ver H8")
+    Dos diferencias con el fuego que se ven en pantalla: avanza **solo en cruz**,
+    porque sigue tendidos y no un frente, lo que dibuja una mancha dendrítica en
+    vez de redonda; y **no se apaga solo**, porque una celda sin luz sigue sin luz
+    y sigue arrastrando a sus vecinas. Por eso no tiene estado terminal.
 
-    def tick(self, dt: float) -> list[CellChange]:
-        raise NotImplementedError
+    El viento le da igual. `set_wind` se acepta y se ignora: el YAML del escenario
+    lo pone a velocidad cero y así queda documentado en los dos sitios.
+    """
 
-    def cells_at_risk(self, horizon_s: float) -> list[str]:
-        raise NotImplementedError
+    ACTIVE: CellState = "dark"
+    TERMINAL = None
+    DURATION = None
+    NEIGHBOURS = NEIGHBOURS_4
 
-    def set_wind(self, wind: Wind) -> None:
-        raise NotImplementedError
+    def _rate(self, dx: int, dz: int, distance: float) -> float:
+        return self.spec.base_spread * self._fuel
+
+    @property
+    def dark(self) -> list[str]:
+        return self.active
 
     def render_commands(self, change: CellChange) -> list[str]:
-        raise NotImplementedError
+        x1, z1, x2, z2 = self.bounds(change.cell_id)
+        if change.state == "dark":
+            return [
+                f"fill {x1} {self.ground_y} {z1} {x2} {self.ground_y} {z2} "
+                + "polished_blackstone"
+            ]
+        return []
 
 
 HAZARDS = {"wildfire": Wildfire, "flood": Flood, "blackout": Blackout}

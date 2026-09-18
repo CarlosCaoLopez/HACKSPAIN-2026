@@ -168,7 +168,65 @@ def test_build_hazard_falla_con_un_kind_inventado():
         build_hazard(spec(kind="meteorito"), 1)
 
 
-@pytest.mark.parametrize("clase", [Flood, Blackout])
-def test_los_otros_dos_declaran_que_no_estan(clase):
+def test_flood_declara_que_no_esta():
+    """`Flood` no entra en la demo: ninguno de los dos escenarios lo usa."""
     with pytest.raises(NotImplementedError, match="H8"):
-        clase(spec(), 1)
+        Flood(spec(), 1)
+
+
+# --- Blackout: el segundo escenario ---
+
+APAGON = {"kind": "blackout", "base_spread": 0.9,
+          "wind": Wind(bearing_deg=0, speed=0.0)}
+
+
+def test_blackout_se_propaga_en_cruz_no_en_diagonal():
+    """Sigue tendidos, no un frente por el aire. La mancha sale dendrítica."""
+    b = Blackout(spec(**APAGON), seed=3)
+    for _ in range(200):
+        b.tick(1.0)
+    ox, oz = parse_cell("cell_14_22")
+    for cid in b.dark:
+        cx, cz = parse_cell(cid)
+        # con vecindad en cruz, cada celda se alcanza por pasos cardinales
+        assert abs(cx - ox) + abs(cz - oz) >= max(abs(cx - ox), abs(cz - oz))
+    assert len(b.dark) > 5, "tiene que haberse extendido"
+
+
+def test_una_celda_a_oscuras_no_vuelve_a_encenderse():
+    """No hay estado terminal: sin luz sigue sin luz, y sigue arrastrando."""
+    b = Blackout(spec(**APAGON), seed=4)
+    for _ in range(300):
+        b.tick(1.0)
+    assert all(b.state_of(c) == "dark" for c in b.dark)
+    assert "burnt" not in {b.state_of(c) for c in b.dark}
+
+
+def test_el_viento_no_afecta_al_apagon():
+    a = Blackout(spec(**APAGON), seed=5)
+    otro = Blackout(spec(**APAGON), seed=5)
+    otro.set_wind(Wind(bearing_deg=90, speed=5.0))
+    izq = [c.cell_id for _ in range(60) for c in a.tick(1.0)]
+    der = [c.cell_id for _ in range(60) for c in otro.tick(1.0)]
+    assert izq == der
+
+
+def test_blackout_es_determinista():
+    uno = [c.cell_id for _ in range(80) for c in Blackout(spec(**APAGON), 7).tick(1.0)]
+    dos = [c.cell_id for _ in range(80) for c in Blackout(spec(**APAGON), 7).tick(1.0)]
+    assert uno == dos
+
+
+def test_render_del_apagon():
+    b = Blackout(spec(**APAGON), seed=1)
+    cmds = b.render_commands(
+        CellChange(cell_id="cell_1_2", state="dark", hazard="blackout")
+    )
+    assert cmds == ["fill 4 64 8 7 64 11 polished_blackstone"]
+    assert b.render_commands(
+        CellChange(cell_id="cell_1_2", state="at_risk", hazard="blackout")
+    ) == []
+
+
+def test_build_hazard_devuelve_blackout():
+    assert isinstance(build_hazard(spec(**APAGON), 1), Blackout)
