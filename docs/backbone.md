@@ -332,7 +332,7 @@ vela/
 │  │     ├─ calls.py           # CallRequest, CallResult, CallFacts
 │  │     ├─ factkeys.py        # claves de hecho y sus tipos
 │  │     └─ bus.py             # publish / subscribe / journal
-│  ├─ sim/                     # P2
+│  ├─ sim/                     # Luis
 │  │  └─ src/sim/
 │  │     ├─ rcon.py            # cliente, cola, reintentos
 │  │     ├─ worldgen.py        # arranque idempotente del mundo
@@ -342,7 +342,7 @@ vela/
 │  │     ├─ injects.py
 │  │     ├─ scenario.py        # loader del YAML
 │  │     └─ runner.py          # el tick loop
-│  ├─ core/                    # P1
+│  ├─ core/                    # Carlos · belief/ingest de Hugo
 │  │  └─ src/core/
 │  │     ├─ belief.py          # eventos → WorldState
 │  │     ├─ ingest.py          # fenic: extract, classify, join
@@ -353,7 +353,7 @@ vela/
 │  │     ├─ memory.py          # reglas aprendidas entre runs
 │  │     ├─ prompts/
 │  │     └─ loop.py
-│  ├─ voice/                   # P3
+│  ├─ voice/                   # Hugo entrante · Carlos saliente
 │  │  └─ src/voice/
 │  │     ├─ happyrobot.py      # disparar workflows
 │  │     ├─ humanlike.py       # entrantes
@@ -366,12 +366,12 @@ vela/
 │        ├─ replay.py
 │        └─ score.py           # métricas de un run
 ├─ apps/
-│  ├─ gateway/                 # P4 backend · FastAPI, monta todo
+│  ├─ gateway/                 # Nacho backend · FastAPI, monta todo
 │  │  └─ src/gateway/
 │  │     ├─ main.py
 │  │     ├─ ws.py              # el canal al dashboard
 │  │     └─ control.py         # pausa, override, inject manual
-│  └─ dashboard/               # P4 · Vite + React + TS + Tailwind
+│  └─ dashboard/               # Nacho · Vite + React + TS + Tailwind
 │     └─ src/
 │        ├─ App.tsx
 │        ├─ types.ts           # GENERADO desde contracts, no a mano
@@ -410,26 +410,47 @@ vela/
 
 ## Reparto de trabajo
 
-| Rol | Persona | Carpetas | También le toca |
+Dos parejas, dos dominios. **Hugo y Carlos** llevan la parte agéntica (percepción → decisión →
+voz); **Luis y Nacho** llevan la simulación y su cara (mundo → gateway → dashboard). Dentro de cada
+pareja el trabajo se subdivide por fichero para no romper la regla de *un fichero, un dueño*.
+
+### Las dos parejas
+
+| Pareja | Dominio | Paquetes | El corte |
 | --- | --- | --- | --- |
-| Cerebro | P1 | `packages/core`, `packages/journal` | Explicar el motor de decisión a los ingenieros |
-| Mundo | P2 | `packages/sim`, `infra`, `scenarios` | Mover la cámara durante la demo |
-| Voz | P3 | `packages/voice`, workflows en HappyRobot y Humanlike | Hacer de vecino en la llamada |
-| Cara | P4 | `apps/gateway`, `apps/dashboard`, `scripts/demo.py` | Narrar el pitch y montar la landing |
+| **Hugo + Carlos** | Agéntico | `packages/core`, `packages/journal`, `packages/voice` | Hugo la oreja (lo que entra y se hace estado), Carlos el cerebro y la boca (lo que decide y sale) |
+| **Luis + Nacho** | Simulación + cara | `packages/sim`, `infra`, `scenarios`, `apps/gateway`, `apps/dashboard`, `scripts` | Luis el mundo (Minecraft, física, injects, cámara), Nacho la cara (gateway, WS, dashboard, demo) |
+
+### Dueño por fichero
+
+| Persona | Ficheros | Cadena | También le toca |
+| --- | --- | --- | --- |
+| **Hugo** · percepción + voz entrante | `voice/humanlike.py`, `voice/webhooks.py`, `voice/synthetic.py`, `voice/fake.py`, `core/ingest.py`, `core/belief.py` | Llamada entra → transcripción → `semantic.extract` → hechos → `WorldState` | Hacer de vecino en la llamada (Humanlike entrante) |
+| **Carlos** · decisión + voz saliente | `core/planner.py`, `core/solver.py`, `core/verifiers.py`, `core/divergence.py`, `core/memory.py`, `core/loop.py`, `core/prompts/`, `journal/**`, `voice/happyrobot.py` | `WorldState` → divergencia → `Policy` → `Plan` → verificación → `action.*` → llamada saliente | Explicar el motor de decisión al jurado |
+| **Luis** · mundo | `sim/**` (`rcon`, `worldgen`, `graph`, `movement`, `hazard`, `injects`, `scenario`, `runner`), `infra/**`, `scenarios/*.yaml` | Estado del modelo → RCON → mundo renderizado + injects | Mover la cámara durante la demo |
+| **Nacho** · cara | `apps/gateway/**` (`main`, `ws`, `control`), `apps/dashboard/**`, `scripts/demo.py`, `scripts/gen_ts_types.py` | Bus → WS → paneles del dashboard | Narrar el pitch y montar la landing |
+
+`contracts/**` no es de nadie: se toca solo en la ventana de contrato con los cuatro mirando.
+`fixtures/**` es de quien lo genera. `voice/webhooks.py` es de Hugo aunque enrute también el
+callback saliente de HappyRobot: si Carlos necesita tocar una ruta, se la pide.
+
+**Correspondencia con los roles P1–P4 del resto de docs y de `CLAUDE.md`:** P1 Cerebro = Carlos
+(con `belief`/`ingest` de Hugo) · P2 Mundo = Luis · P3 Voz = Hugo (entrante) + Carlos (saliente) ·
+P4 Cara = Nacho. La pareja agéntica es P1+P3; la de simulación, P2+P4.
 
 ### Cronograma
 
-| Bloque | P1 Cerebro | P2 Mundo | P3 Voz | P4 Cara |
+| Bloque | Hugo · percepción + voz-in | Carlos · decisión + voz-out | Luis · mundo | Nacho · cara |
 | --- | --- | --- | --- | --- |
 | Vie 18–20 | **Los cuatro: cerrar `contracts/` y el guion de la demo en una pizarra. Nada de código hasta que esté.** | | | |
-| Vie 20–00 | `belief.py` + `WorldState` sobre eventos falsos | Paper arriba, RCON respondiendo, mapa a mano | Cuentas, números comprados, primera llamada de prueba | Gateway + WS + esqueleto de paneles |
-| Sáb 00–02 | `solver.py` con pesos fijos, sin LLM | `goto` moviendo un armor stand | Workflow `evacuation_order` disparado por curl | Mapa pintando posiciones del mock |
-| Sáb 09–13 | `planner.py` + prompts + `verifiers.py` | Autómata de fuego renderizando | Webhook de fin de llamada entrando al bus | Panel *qué ha cambiado* + cola de prioridad |
+| Vie 20–00 | `belief.py` + `WorldState` sobre eventos falsos · comprar número entrante | Cuentas + número saliente, primera llamada de prueba (HappyRobot) | Paper arriba, RCON respondiendo, mapa a mano | Gateway + WS + esqueleto de paneles |
+| Sáb 00–02 | `ingest.py` (fenic `extract`) sobre una transcripción de ejemplo | `solver.py` con pesos fijos, sin LLM · workflow `evacuation_order` por curl | `goto` moviendo un armor stand | Mapa pintando posiciones del mock |
+| Sáb 09–13 | `humanlike.py` + `webhooks` entrante conectados al bus | `planner.py` + prompts + `verifiers.py` · webhook de fin de llamada al bus | Autómata de fuego renderizando | Panel *qué ha cambiado* + cola de prioridad |
 | Sáb 13–14 | **Integración 1: el sistema decide y mueve unidades de punta a punta. Grabar `run_golden.jsonl`.** | | | |
-| Sáb 14–18 | `divergence.py` + bucle de replan | Injects: viento, corte, avería | Humanlike entrante + `semantic.extract` a hechos | Banner REPLAN, log de acciones, panel de llamadas |
+| Sáb 14–18 | Humanlike entrante real → `semantic.extract` a hechos → `belief` | `divergence.py` + bucle de replan | Injects: viento, corte, avería | Banner REPLAN, log de acciones, panel de llamadas |
 | Sáb 18–20 | **Integración 2: ensayo completo con llamada real. Cronometrar colgar → giro.** | | | |
-| Sáb 20–00 | `memory.py`: reglas entre runs | Segundo escenario, `blackout_grid` | Llamadas sintéticas en lote | Gráfica de divergencia + métricas finales |
-| Dom 00–02 | Correr 12 runs seguidos para el run 1 vs run 12 | Posiciones de cámara y macros | Plan B `--mock-calls` probado | Landing con los números del pitch |
+| Sáb 20–00 | `synthetic.py`: llamadas sintéticas en lote | `memory.py`: reglas entre runs | Segundo escenario, `blackout_grid` | Gráfica de divergencia + métricas finales |
+| Dom 00–02 | Plan B `--mock-calls` (`fake.py`) probado · ayuda a los 12 runs | Correr 12 runs seguidos para el run 1 vs run 12 | Posiciones de cámara y macros | Landing con los números del pitch |
 | Dom 09–11 | **Congelación de código.** Solo se arreglan cosas rotas. | | | |
 | Dom 11–13 | Ensayo, ensayo, ensayo. Mínimo seis pasadas completas con reloj. | | | |
 
