@@ -1,4 +1,4 @@
-"""`voice` · P3 · telefonía. HappyRobot hacia fuera, Humanlike hacia dentro.
+"""`voice` · P3 · telefonía. HappyRobot hacia fuera, humalike hacia dentro.
 
 P3 nunca toca el estado: solo emite `world.fact.asserted`. La traducción de
 `CallFacts` a `Fact` es suya, con el mapa de claves que le da P1

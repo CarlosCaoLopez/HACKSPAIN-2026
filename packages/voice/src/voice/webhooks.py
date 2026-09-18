@@ -24,8 +24,8 @@ async def happyrobot_call(
     raise NotImplementedError
 
 
-@router.post("/humanlike/call")
-async def humanlike_call(
+@router.post("/humalike/call")
+async def humalike_call(
     request: Request, x_vela_token: str = Header(default="")
 ) -> dict:
     """Llamada entrante terminada. Transcripción completa → `semantic.extract` →

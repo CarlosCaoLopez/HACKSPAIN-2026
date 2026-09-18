@@ -1,7 +1,7 @@
 [project]
 name = "voice"
 version = "0.1.0"
-description = "P3 · telefonía: HappyRobot saliente, Humanlike entrante."
+description = "P3 · telefonía: HappyRobot saliente, humalike entrante."
 requires-python = "==3.12.*"
 dependencies = [
     "contracts",

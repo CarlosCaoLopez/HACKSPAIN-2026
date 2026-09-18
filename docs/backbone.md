@@ -19,7 +19,7 @@
 | Asignación | `scipy.optimize.linear_sum_assignment` | Determinista, instantánea, explicable |
 | Mundo | Paper 1.21 + RCON (`mcrcon`) | `/tp`, `/fill`, `/setblock`. Sin pathfinding, sin bots |
 | Telefonía saliente | HappyRobot | Requisito del reto e integración por webhook |
-| Telefonía entrante | Humanlike | Persona preocupada llamando al sistema |
+| Telefonía entrante | humalike | Persona preocupada llamando al sistema |
 | Dashboard | Vite + React + TypeScript + Tailwind | Único sitio donde hay TS |
 | Gestión de deps | `uv` (Python) + `pnpm` (dashboard) | Instalación en segundos, lockfile reproducible |
 
@@ -73,7 +73,7 @@ El incendio es un autómata celular sobre una rejilla de 4×4 bloques. Cada tick
 | 01:45 | — | El jurado confirma y cuelga | Tarjeta pasa a *completada* |
 | 02:30 | **Inject 1: el viento gira 90°** | Detector de divergencia dispara | Banner rojo REPLAN con el motivo |
 | 02:35 | Unidades dan media vuelta | Nueva política, nueva asignación | Flechas cambian de destino |
-| 03:30 | **Inject 2: llamada entrante** | Un vecino (Humanlike) llama asustado desde el pueblo B | Transcripción en vivo en el panel |
+| 03:30 | **Inject 2: llamada entrante** | Un vecino (humalike) llama asustado desde el pueblo B | Transcripción en vivo en el panel |
 | 04:10 | La llamada cuelga | `semantic.extract` saca los hechos, se asertan, el verificador falla, replan | REPLAN + las unidades giran |
 | 05:00 | Pueblo B evacuado por la ruta sur | Marcador de objetivo cumplido | Métricas finales |
 
@@ -81,8 +81,8 @@ El incendio es un autómata celular sobre una rejilla de 4×4 bloques. Cada tick
 
 El vecino llama y dice algo como: *"estoy en el molino viejo, la pista del sur está cortada por un árbol y hay tres personas en la casa de al lado que no pueden andar"*.
 
-1. **Durante la llamada** no pasa nada en el mundo. Humanlike conversa; nosotros solo guardamos audio y transcripción parcial. Resistid la tentación de actuar en streaming: añade latencia y modos de fallo, y en escenario no se aprecia.
-2. **Al colgar**, Humanlike dispara su webhook a `POST /webhooks/humanlike/call-ended` con la transcripción completa.
+1. **Durante la llamada** no pasa nada en el mundo. humalike conversa; nosotros solo guardamos audio y transcripción parcial. Resistid la tentación de actuar en streaming: añade latencia y modos de fallo, y en escenario no se aprecia.
+2. **Al colgar**, humalike dispara su webhook a `POST /webhooks/humalike/call-ended` con la transcripción completa.
 3. El `voice` package la mete en un DataFrame de `fenic` de una fila y aplica `semantic.extract(CallFacts)`, donde `CallFacts` es un modelo Pydantic con campos `location_hint`, `road_blocked`, `people_immobile`, `confidence`. Esto tarda entre 1 y 2 segundos y devuelve tipos, no texto.
 4. Cada campo no nulo se publica como un evento `world.fact.asserted` con su procedencia (`source: call:hl_8821`). El Core marca la arista `wp_sur_03 → wp_sur_04` como `cut` y crea una tarea `rescue` con 3 personas inmóviles en el molino.
 5. El **detector de divergencia** compara el mundo que el plan vigente daba por supuesto contra el mundo actual. La ruta de evacuación asignada ya no es transitable, así que la divergencia supera el umbral y además el verificador de rutas devuelve infactible. Se interrumpe el plan.
@@ -105,7 +105,7 @@ Presupuesto de latencia de colgado a giro: 1,5 s de extracción + 0,3 s de plann
 flowchart LR
   MC[Paper server<br/>RCON] <--> SIM[sim<br/>mundo + injects]
   SIM -->|world.*| BUS((bus + journal))
-  VOICE[voice<br/>HappyRobot / Humanlike] -->|call.*| BUS
+  VOICE[voice<br/>HappyRobot / humalike] -->|call.*| BUS
   BUS --> CORE[core<br/>belief · planner · solver]
   CORE -->|action.*| SIM
   CORE -->|action.call| VOICE
@@ -264,7 +264,7 @@ Posiciones de cámara preconfiguradas con `/tp @s x y z yaw pitch` guardadas en 
 
 ## La capa de telefonía
 
-**HappyRobot ejecuta hacia fuera, Humanlike conversa hacia dentro.** Son dos direcciones distintas del mismo producto y conviene que el pitch las nombre por separado.
+**HappyRobot ejecuta hacia fuera, humalike conversa hacia dentro.** Son dos direcciones distintas del mismo producto y conviene que el pitch las nombre por separado.
 
 ### HappyRobot: el sistema llama
 
@@ -280,11 +280,11 @@ El Core dispara con un POST cuyo cuerpo lleva siempre los mismos campos: `to`, `
 
 Para el retorno, el asistente se configura con un webhook que se dispara en los eventos de inicio, fin y fallo de llamada, con una carga cuya estructura incluye `type` (`start` o `end`), `call.id`, y un `call.metadata.custom` de tipo libre ([docs](https://docs.happyrobot.ai/details/phone_calling)). **Meted vuestro `task_id` en `metadata.custom`**: es lo que os permite casar la llamada con la tarea sin mantener estado en la plataforma.
 
-### Humanlike: el ciudadano llama
+### humalike: el ciudadano llama
 
 Human-Like se presenta como plataforma de agentes de empresa con memoria compartida entre canales de voz, SMS, email y chat, donde cada conversación escribe en una capa de memoria común y el contexto se comparte en tiempo real, con soporte de clave propia de proveedor LLM en planes enterprise ([human-like.ai](https://human-like.ai/)).
 
-1. **El vecino del minuto 3:30.** Uno de vosotros llama, o Humanlike hace de vecino asustado. La conversación es natural, desordenada, con información parcial y contradictoria. Eso es exactamente lo que el enunciado describe cuando dice que llegan cien mensajes y solo tres cambian algo.
+1. **El vecino del minuto 3:30.** Uno de vosotros llama, o humalike hace de vecino asustado. La conversación es natural, desordenada, con información parcial y contradictoria. Eso es exactamente lo que el enunciado describe cuando dice que llegan cien mensajes y solo tres cambian algo.
 2. **Veinte llamadas simultáneas.** Lanzad un lote de llamadas entrantes sintéticas mientras la demo corre. El dashboard muestra 20 conversaciones y el sistema descarta 17. Ese contraste es la demostración visual de *Qué información importa*.
 
 ### De la transcripción al hecho
@@ -356,7 +356,7 @@ vela/
 │  ├─ voice/                   # Hugo entrante · Carlos saliente
 │  │  └─ src/voice/
 │  │     ├─ happyrobot.py      # disparar workflows
-│  │     ├─ humanlike.py       # entrantes
+│  │     ├─ humalike.py       # entrantes
 │  │     ├─ webhooks.py        # routers FastAPI
 │  │     ├─ fake.py            # mock para trabajar en paralelo
 │  │     └─ synthetic.py       # generador de ruido de llamadas
@@ -425,7 +425,7 @@ pareja el trabajo se subdivide por fichero para no romper la regla de *un ficher
 
 | Persona | Ficheros | Cadena | También le toca |
 | --- | --- | --- | --- |
-| **Hugo** · percepción + voz entrante | `voice/humanlike.py`, `voice/webhooks.py`, `voice/synthetic.py`, `voice/fake.py`, `core/ingest.py`, `core/belief.py` | Llamada entra → transcripción → `semantic.extract` → hechos → `WorldState` | Hacer de vecino en la llamada (Humanlike entrante) |
+| **Hugo** · percepción + voz entrante | `voice/humalike.py`, `voice/webhooks.py`, `voice/synthetic.py`, `voice/fake.py`, `core/ingest.py`, `core/belief.py` | Llamada entra → transcripción → `semantic.extract` → hechos → `WorldState` | Hacer de vecino en la llamada (humalike entrante) |
 | **Carlos** · decisión + voz saliente | `core/planner.py`, `core/solver.py`, `core/verifiers.py`, `core/divergence.py`, `core/memory.py`, `core/loop.py`, `core/prompts/`, `journal/**`, `voice/happyrobot.py` | `WorldState` → divergencia → `Policy` → `Plan` → verificación → `action.*` → llamada saliente | Explicar el motor de decisión al jurado |
 | **Luis** · mundo | `sim/**` (`rcon`, `worldgen`, `graph`, `movement`, `hazard`, `injects`, `scenario`, `runner`), `infra/**`, `scenarios/*.yaml` | Estado del modelo → RCON → mundo renderizado + injects | Mover la cámara durante la demo |
 | **Nacho** · cara | `apps/gateway/**` (`main`, `ws`, `control`), `apps/dashboard/**`, `scripts/demo.py`, `scripts/gen_ts_types.py` | Bus → WS → paneles del dashboard | Narrar el pitch y montar la landing |
@@ -445,9 +445,9 @@ P4 Cara = Nacho. La pareja agéntica es P1+P3; la de simulación, P2+P4.
 | Vie 18–20 | **Los cuatro: cerrar `contracts/` y el guion de la demo en una pizarra. Nada de código hasta que esté.** | | | |
 | Vie 20–00 | `belief.py` + `WorldState` sobre eventos falsos · comprar número entrante | Cuentas + número saliente, primera llamada de prueba (HappyRobot) | Paper arriba, RCON respondiendo, mapa a mano | Gateway + WS + esqueleto de paneles |
 | Sáb 00–02 | `ingest.py` (fenic `extract`) sobre una transcripción de ejemplo | `solver.py` con pesos fijos, sin LLM · workflow `evacuation_order` por curl | `goto` moviendo un armor stand | Mapa pintando posiciones del mock |
-| Sáb 09–13 | `humanlike.py` + `webhooks` entrante conectados al bus | `planner.py` + prompts + `verifiers.py` · webhook de fin de llamada al bus | Autómata de fuego renderizando | Panel *qué ha cambiado* + cola de prioridad |
+| Sáb 09–13 | `humalike.py` + `webhooks` entrante conectados al bus | `planner.py` + prompts + `verifiers.py` · webhook de fin de llamada al bus | Autómata de fuego renderizando | Panel *qué ha cambiado* + cola de prioridad |
 | Sáb 13–14 | **Integración 1: el sistema decide y mueve unidades de punta a punta. Grabar `run_golden.jsonl`.** | | | |
-| Sáb 14–18 | Humanlike entrante real → `semantic.extract` a hechos → `belief` | `divergence.py` + bucle de replan | Injects: viento, corte, avería | Banner REPLAN, log de acciones, panel de llamadas |
+| Sáb 14–18 | humalike entrante real → `semantic.extract` a hechos → `belief` | `divergence.py` + bucle de replan | Injects: viento, corte, avería | Banner REPLAN, log de acciones, panel de llamadas |
 | Sáb 18–20 | **Integración 2: ensayo completo con llamada real. Cronometrar colgar → giro.** | | | |
 | Sáb 20–00 | `synthetic.py`: llamadas sintéticas en lote | `memory.py`: reglas entre runs | Segundo escenario, `blackout_grid` | Gráfica de divergencia + métricas finales |
 | Dom 00–02 | Plan B `--mock-calls` (`fake.py`) probado · ayuda a los 12 runs | Correr 12 runs seguidos para el run 1 vs run 12 | Posiciones de cámara y macros | Landing con los números del pitch |

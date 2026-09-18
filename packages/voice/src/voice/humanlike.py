@@ -1,4 +1,4 @@
-"""Humanlike: el ciudadano llama.
+"""humalike: el ciudadano llama.
 
 Durante la llamada no pasa nada en el mundo: guardamos audio y transcripción
 parcial. Resistid la tentación de actuar en streaming — añade latencia y modos de

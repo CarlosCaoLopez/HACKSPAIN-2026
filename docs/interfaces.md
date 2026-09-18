@@ -394,7 +394,7 @@ class VoiceGateway:
     async def extract(self, transcript: str) -> CallFacts | None
     def to_facts(self, cf: CallFacts, t_sim: float, call_id: str) -> list[Fact]
 
-router: APIRouter    # /webhooks/happyrobot/call, /webhooks/humanlike/call
+router: APIRouter    # /webhooks/happyrobot/call, /webhooks/humalike/call
 ```
 
 `place_call` devuelve en cuanto la plataforma acepta, no cuando la llamada termina. El resultado llega por evento. Nadie espera a una llamada de forma bloqueante.
@@ -427,7 +427,7 @@ P4 decide el orden de arranque y apaga limpio. Expone `POST /control/*` y es el 
 | `POST /control/override` | P4 | La intervención humana, ver abajo |
 | `POST /control/pause` | P4 | Congela el tick, para explicar algo en el pitch |
 | `POST /webhooks/happyrobot/call` | P3 | Eventos de inicio, fin y fallo |
-| `POST /webhooks/humanlike/call` | P3 | Llamada entrante terminada |
+| `POST /webhooks/humalike/call` | P3 | Llamada entrante terminada |
 | `GET /api/runs` | P4 | Runs pasados con su puntuación, para el run 1 vs run 12 |
 | `WS /ws` | P4 | El chorro de eventos |
 
@@ -502,7 +502,7 @@ RCON_PASSWORD=
 ANTHROPIC_API_KEY=                  # P1 (planner) y P3 (fenic)
 HAPPYROBOT_API_KEY=                 # P3
 HAPPYROBOT_HOOK_EVACUATION=         # P3, la URL del incoming hook
-HUMANLIKE_API_KEY=                  # P3
+humalike_API_KEY=                  # P3
 WEBHOOK_SHARED_TOKEN=               # P3 y P4
 JUDGE_PHONE=                        # P3, se cambia en el último minuto
 VELA_MODE=demo|dev|replay           # P4
