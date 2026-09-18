@@ -9,6 +9,7 @@ dependencies = [
     "numpy>=2",
     "fenic>=0.1",
     "anthropic>=0.40",
+    "openai>=3",
 ]
 
 [tool.uv.sources]
