@@ -22,6 +22,7 @@ y lo enseña en un dashboard.
 | Servidor | FastAPI + uvicorn, **un solo proceso** | API, webhooks y WS del dashboard juntos |
 | Bus | `asyncio` in-process + journal JSONL | Sin infra externa |
 | Ingesta | Typedef `fenic` | `semantic.extract` / `classify` / `join` |
+| Política (planner) | **GPT-5.6 Luna** (OpenAI), SDK `openai`, `OPENAI_API_KEY` | La única llamada LLM por replan. **No Anthropic** (decisión de Carlos, H3) |
 | Asignación | `scipy.optimize.linear_sum_assignment` | Determinista y explicable |
 | Mundo | Paper 1.21 + RCON (`mcrcon`) | Solo `/tp`, `/fill`, `/setblock`. Sin bots ni pathfinding |
 | Voz | HappyRobot (saliente) + humalike (entrante) | |
@@ -29,6 +30,10 @@ y lo enseña en un dashboard.
 | Deps | `uv` (Python) + `pnpm` (dashboard) | |
 
 Nada de Node en el servidor: mineflayer se descartó al descartar los agentes LLM dentro de Minecraft.
+
+Dos proveedores LLM conviven a propósito: el **planner** (`packages/core`, política) usa **OpenAI
+GPT-5.6 Luna**; la **ingesta** (`fenic`, P3) sigue en **Anthropic**. No unificar: es intencional.
+El modelo del planner se cambia solo en la constante `MODEL` de `packages/core/src/core/planner.py`.
 
 ## Invariantes que no se rompen
 

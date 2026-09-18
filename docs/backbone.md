@@ -70,8 +70,8 @@ El incendio es un autómata celular sobre una rejilla de 4×4 bloques. Cada tick
 | 00:15 | Fuego avanza con viento O→E | Planner emite política: civiles a sotavento antes que estructuras | Cola de prioridades con su justificación |
 | 00:25 | — | Solver asigna: camión 1 al frente, camión 2 a retén, ambulancia al hospital | Tres flechas de asignación en el mapa |
 | 00:30 | Camiones arrancan | RCON interpola por la carretera | Unidades moviéndose |
-| 01:00 | — | Actuador: HappyRobot llama al móvil del jurado con la orden de evacuación del pueblo A | Tarjeta de llamada en curso, con el audio en directo |
-| 01:45 | — | El jurado confirma y cuelga | Tarjeta pasa a *completada* |
+| 01:00 | — | Llamamos al agente (HappyRobot); en la misma llamada nos dicta la orden de evacuación del pueblo A | Tarjeta de llamada en curso, con el audio en directo |
+| 01:45 | — | Confirmamos la orden y colgamos | Tarjeta pasa a *completada* |
 | 02:30 | **Inject 1: el viento gira 90°** | Detector de divergencia dispara | Banner rojo REPLAN con el motivo |
 | 02:35 | Unidades dan media vuelta | Nueva política, nueva asignación | Flechas cambian de destino |
 | 03:30 | **Inject 2: llamada entrante** | Un vecino (humalike) llama asustado desde el pueblo B | Transcripción en vivo en el panel |
@@ -94,7 +94,7 @@ Presupuesto de latencia de colgado a giro: 1,5 s de extracción + 0,3 s de plann
 
 ### Quién hace de quién
 
-**Vosotros hacéis de ciudadano preocupado** llamando al sistema, y **el sistema llama al jurado** haciendo de coordinador de emergencias. Las dos direcciones se ven en la misma demo y son dos productos distintos: recibir el pico y ejecutar la respuesta.
+**Vosotros hacéis de ciudadano preocupado** cuando llamáis al agente para darle información del terreno, y **hacéis de responsable de intervención** cuando llamáis al agente y él, como coordinador de emergencias, os dicta en esa misma llamada la orden de evacuación que ha decidido el Core. Las dos se ven en la misma demo y son dos productos distintos: recibir el pico de información y ejecutar la respuesta.
 
 ---
 
@@ -155,7 +155,7 @@ La segunda pieza es Typedef. `fenic` se describe como una capa de construcción 
 | --- | --- | --- | --- |
 | 0 · Estado | `WorldState` tipado: unidades, celdas, rutas, tareas, civiles | Pydantic | Sí |
 | 1 · Ingesta | Texto sucio a hechos tipados con procedencia y confianza | `fenic.semantic.extract` / `classify` | No, pero acotado por esquema |
-| 2 · Política | Pesos de objetivo y restricciones duras para esta situación | Modelo de razonamiento frontera | No |
+| 2 · Política | Pesos de objetivo y restricciones duras para esta situación | OpenAI GPT-5.6 Luna (tier rápido, cabe en el presupuesto de 4 s) | No |
 | 3 · Asignación | Recursos a tareas minimizando coste | `linear_sum_assignment` | Sí |
 | 4 · Verificación | Rechaza planes infactibles y los devuelve con la crítica | Código puro | Sí |
 
@@ -266,17 +266,19 @@ Posiciones de cámara preconfiguradas con `/tp @s x y z yaw pitch` guardadas en 
 ## La capa de telefonía
 
 
-### HappyRobot: el sistema llama
+### HappyRobot: el agente dicta la orden
+
+**Nosotros llamamos al agente y él, en esa misma llamada, nos dicta la orden que ha decidido el Core.** No hay llamada saliente a un tercero: la voz saliente es el agente locutando la orden dentro de la llamada que colocamos nosotros.
 
 La plataforma está organizada en workflows: cada workflow empieza por un trigger y sigue con acciones ejecutadas secuencialmente, y el trigger de tipo *incoming hook* permite enviar una petición a una URL propia para arrancar el workflow, sin esquema predefinido, de forma que el cuerpo que enviáis define las variables disponibles para las acciones siguientes ([docs](https://docs.happyrobot.ai/integrations/webhook)). Recomiendan POST y añadir la cabecera `Content-Type: application/json`.
 
 | Workflow | Trigger | Acción | Uso en la demo |
 | --- | --- | --- | --- |
-| `evacuation_order` | incoming hook | Llamada saliente con el guion de evacuación | Minuto 1:00, al móvil del jurado |
-| `resource_request` | incoming hook | Llamada al responsable de medios | Tras el replan, opcional |
+| `evacuation_order` | incoming hook | El agente locuta la orden de evacuación en la llamada | Minuto 1:00: le llamamos y nos dicta la evacuación |
+| `resource_request` | incoming hook | El agente dicta la petición de medios | Tras el replan, opcional |
 | `status_broadcast` | incoming hook | SMS masivo | Prueba de multicanal |
 
-El Core dispara con un POST cuyo cuerpo lleva siempre los mismos campos: `to`, `run_id`, `task_id`, `poi_name`, `route_name`, `deadline_min`, `severity`.
+El Core publica la orden con los mismos campos —`run_id`, `task_id`, `poi_name`, `route_name`, `deadline_min`, `severity`— vía POST al incoming hook, y el agente los locuta cuando entra la llamada.
 
 Para el retorno, el asistente se configura con un webhook que se dispara en los eventos de inicio, fin y fallo de llamada, con una carga cuya estructura incluye `type` (`start` o `end`), `call.id`, y un `call.metadata.custom` de tipo libre ([docs](https://docs.happyrobot.ai/details/phone_calling)). **Meted vuestro `task_id` en `metadata.custom`**: es lo que os permite casar la llamada con la tarea sin mantener estado en la plataforma.
 
@@ -309,7 +311,7 @@ La resolución de `location_hint` contra un POI real del escenario se hace con `
 
 ### Números de teléfono y ensayo
 
-Comprad los números el viernes por la noche. Uno de salida, uno de entrada, uno de repuesto. Probad la llamada al móvil del jurado el sábado por la tarde: la cobertura de una sala con 200 personas es el punto de fallo más tonto y más probable de todo el proyecto.
+Comprad los números el viernes por la noche. Uno para el agente (al que llamamos), uno para la entrante del vecino, uno de repuesto. Probad la llamada al agente el sábado por la tarde: la cobertura de una sala con 200 personas es el punto de fallo más tonto y más probable de todo el proyecto.
 
 Plan B: el script de demo tiene un modo `--mock-calls` que reproduce un audio grabado y publica los mismos eventos.
 
@@ -427,7 +429,7 @@ pareja el trabajo se subdivide por fichero para no romper la regla de *un ficher
 | Persona | Ficheros | Cadena | También le toca |
 | --- | --- | --- | --- |
 | **Hugo** · percepción + voz entrante | `voice/humalike.py`, `voice/webhooks.py`, `voice/synthetic.py`, `voice/fake.py`, `core/ingest.py`, `core/belief.py` | Llamada entra → transcripción → `semantic.extract` → hechos → `WorldState` | Hacer de vecino en la llamada (humalike entrante) |
-| **Carlos** · decisión + voz saliente | `core/planner.py`, `core/solver.py`, `core/verifiers.py`, `core/divergence.py`, `core/memory.py`, `core/loop.py`, `core/prompts/`, `journal/**`, `voice/happyrobot.py` | `WorldState` → divergencia → `Policy` → `Plan` → verificación → `action.*` → llamada saliente | Explicar el motor de decisión al jurado |
+| **Carlos** · decisión + voz saliente | `core/planner.py`, `core/solver.py`, `core/verifiers.py`, `core/divergence.py`, `core/memory.py`, `core/loop.py`, `core/prompts/`, `journal/**`, `voice/happyrobot.py` | `WorldState` → divergencia → `Policy` → `Plan` → verificación → `action.*` → el agente locuta la orden | Explicar el motor de decisión al jurado |
 | **Luis** · mundo | `sim/**` (`rcon`, `worldgen`, `graph`, `movement`, `hazard`, `injects`, `scenario`, `runner`), `infra/**`, `scenarios/*.yaml` | Estado del modelo → RCON → mundo renderizado + injects | Mover la cámara durante la demo |
 | **Nacho** · cara | `apps/gateway/**` (`main`, `ws`, `control`), `apps/dashboard/**`, `scripts/demo.py`, `scripts/gen_ts_types.py` | Bus → WS → paneles del dashboard | Narrar el pitch y montar la landing |
 
@@ -444,7 +446,7 @@ P4 Cara = Nacho. La pareja agéntica es P1+P3; la de simulación, P2+P4.
 | Bloque | Hugo · percepción + voz-in | Carlos · decisión + voz-out | Luis · mundo | Nacho · cara |
 | --- | --- | --- | --- | --- |
 | Vie 18–20 | **Los cuatro: cerrar `contracts/` y el guion de la demo en una pizarra. Nada de código hasta que esté.** | | | |
-| Vie 20–00 | `belief.py` + `WorldState` sobre eventos falsos · comprar número entrante | Cuentas + número saliente, primera llamada de prueba (HappyRobot) | Paper arriba, RCON respondiendo, mapa a mano | Gateway + WS + esqueleto de paneles |
+| Vie 20–00 | `belief.py` + `WorldState` sobre eventos falsos · comprar número entrante | Cuentas + número del agente, primera llamada de prueba (HappyRobot) | Paper arriba, RCON respondiendo, mapa a mano | Gateway + WS + esqueleto de paneles |
 | Sáb 00–02 | `ingest.py` (fenic `extract`) sobre una transcripción de ejemplo | `solver.py` con pesos fijos, sin LLM · workflow `evacuation_order` por curl | `goto` moviendo un armor stand | Mapa pintando posiciones del mock |
 | Sáb 09–13 | `humalike.py` + `webhooks` entrante conectados al bus | `planner.py` + prompts + `verifiers.py` · webhook de fin de llamada al bus | Autómata de fuego renderizando | Panel *qué ha cambiado* + cola de prioridad |
 | Sáb 13–14 | **Integración 1: el sistema decide y mueve unidades de punta a punta. Grabar `run_golden.jsonl`.** | | | |
@@ -500,7 +502,7 @@ Grabad el nivel 4 aunque estéis convencidos de que no hace falta.
 - [ ] Colgar → giro medido y por debajo de 3 s en las seis
 - [ ] Cada uno sabe decir la frase del otro por si se queda en blanco
 - [ ] El portátil de demo no tiene nada más abierto
-- [ ] Notificaciones silenciadas en los cuatro móviles menos en el del jurado
+- [ ] Notificaciones silenciadas en los cuatro móviles menos en el que llama al agente
 - [ ] Vídeo de respaldo subido y el QR impreso
 - [ ] La landing abierta en una pestaña y el QR listo para los 5 segundos finales
 
