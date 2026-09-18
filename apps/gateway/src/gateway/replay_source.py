@@ -45,6 +45,7 @@ async def run(rt: Runtime, path: Path, speed: float = 1.0, loop: bool = False) -
     while True:
         passes += 1
         async for ev in _stream(path, speed):
+            await _wait_while_paused(rt)
             rt.run_id = ev.run_id
             folder.feed(ev)
             rt.hub.dispatch(ev)
@@ -54,6 +55,23 @@ async def run(rt: Runtime, path: Path, speed: float = 1.0, loop: bool = False) -
         folder.reset()
     log.info("replay: %s agotado tras %s vuelta(s)", path, passes)
     rt.mark("replay", "degraded", "journal agotado")
+
+
+PAUSE_POLL_S = 0.05
+"""Lo que tarda en reanudar tras despausar. Imperceptible en pantalla y no gasta CPU
+en un bucle apretado."""
+
+
+async def _wait_while_paused(rt: Runtime) -> None:
+    """`POST /control/pause` congela el chorro aquí.
+
+    Pausar es **dejar de emitir**, no saltarse eventos: el siguiente `seq` que ve el
+    cliente al reanudar es el que tocaba. Si se saltara alguno, el dashboard lo leería
+    como hueco, pediría `GET /api/state` y se quedaría sin la historia en pantalla —
+    justo cuando estoy parando la demo para explicar algo.
+    """
+    while rt.paused:
+        await asyncio.sleep(PAUSE_POLL_S)
 
 
 # --- las fuentes ----------------------------------------------------------------

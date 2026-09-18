@@ -72,8 +72,27 @@ from contracts.plan import (
 )
 from contracts.scenario import Scenario
 from contracts.world import Wind
+from gateway.scenario_fallback import (
+    AMBULANCE,
+    CIV_A,
+    CIV_B,
+    DRONE,
+    PUEBLO_A,
+    PUEBLO_B,
+    ROAD_NORTE,
+    TRUCK1,
+    TRUCK2,
+)
+from gateway.scenario_fallback import WAYPOINT_XZ as WAYPOINTS
 
-OUT = Path("fixtures/run_fake.jsonl")
+OUT = {
+    # v1 es el del H2/H3 y está CONGELADO: los criterios de aceptación de las dos specs
+    # anteriores van por sus `t_sim`, y meter una escena en medio los correría todos.
+    "v1": Path("fixtures/run_fake.jsonl"),
+    # v2 añade la llamada sin respuesta con `facts=None` y el override que escala de
+    # ella. `fixtures/**` solo se añade: es otro fichero, no otra versión del mismo.
+    "v2": Path("fixtures/run_fake_v2.jsonl"),
+}
 SCENARIO = Path("scenarios/wildfire_ridge.yaml")
 
 RUN_ID = "run_fake_0001"
@@ -89,31 +108,14 @@ DURATION_S = 360.0  # seis minutos, como la demo
 #
 # El YAML de P2 tiene `pois`, `units`, `waypoints`, `roads` y `civilians` a `[]`
 # todavía (TODO suyo). De él se lee lo que SÍ está: seed, viento, celda de ignición y
-# la línea temporal de injects. Lo demás son estas constantes, que siguen la
-# convención de ids de CLAUDE.md y desaparecen solas: `_entities()` prefiere lo que
-# venga del escenario en cuanto P2 lo rellene.
-
-WAYPOINTS: dict[str, tuple[float, float]] = {
-    "wp_base": (100.0, 20.0),
-    "wp_sur_01": (140.0, 60.0),
-    "wp_sur_02": (180.0, 80.0),
-    "wp_sur_03": (220.0, 100.0),
-    "wp_sur_04": (260.0, 120.0),
-    "wp_norte_01": (140.0, -20.0),
-    "wp_norte_02": (180.0, -40.0),
-    "wp_norte_03": (220.0, -60.0),
-}
-
-TRUCK1 = "unit_truck1"
-TRUCK2 = "unit_truck2"  # el que se avería en el inject de t=240 del YAML
-AMBULANCE = "unit_ambulance1"
-DRONE = "unit_drone1"
-
-PUEBLO_A = "poi_pueblo_a"
-PUEBLO_B = "poi_pueblo_b"
-
-CIV_A = "civ_pueblo_a"
-CIV_B = "civ_pueblo_b"
+# la línea temporal de injects.
+#
+# Los ids y las coordenadas de la maqueta NO se declaran aquí: se importan de
+# `gateway.scenario_fallback`, que es lo mismo que sirve `GET /api/scenario` al mapa del
+# dashboard. Si el fixture dijera `wp_sur_04` y el mapa otra cosa, el camión se movería
+# hacia un waypoint que no existe y no se vería hasta la demo.
+#
+# Las tareas y los ids de llamada sí son de aquí: no son geometría, son el guion.
 
 TASK_EVAC_A = "task_evac_a"
 TASK_EXTINGUISH = "task_extinguish_ridge"
@@ -121,8 +123,7 @@ TASK_NOTIFY_B = "task_notify_b"
 
 CALL_OUT = "hl_8821"  # saliente, HappyRobot
 CALL_IN = "vh_1074"  # entrante, humalike · la que dispara el clímax
-
-ROAD_NORTE = "wp_norte_02-wp_norte_03"
+CALL_NO_ANSWER = "hl_9002"  # saliente que nadie coge · solo en el variant v2
 
 
 # --- El armazón -----------------------------------------------------------------
@@ -274,8 +275,14 @@ def _entities(sc: Scenario) -> dict[str, list[str]]:
     }
 
 
-def build(sc: Scenario) -> list[Event]:
-    """Seis minutos de incendio, con la llamada entrante del 03:30 como clímax."""
+def build(sc: Scenario, *, variant: str = "v2") -> list[Event]:
+    """Seis minutos de incendio, con la llamada entrante del 03:30 como clímax.
+
+    `variant="v1"` reproduce **byte a byte** `fixtures/run_fake.jsonl`, que es contra
+    lo que están escritos los criterios del H2 y del H3 (van por `t_sim`, y meter una
+    escena en medio los correría todos). `fixtures/**` solo se añade: el v2 es otro
+    fichero, no una versión nueva del mismo.
+    """
     rng = random.Random(sc.seed)
     tl = Timeline()
     wind = sc.hazard.wind
@@ -913,7 +920,84 @@ def build(sc: Scenario) -> list[Event]:
         RunEnded(scenario_id=sc.id, score=0.78),
         "core",
     )
+
+    if variant == "v2":
+        _llamada_sin_respuesta(tl)
+
     return tl.events()
+
+
+def _llamada_sin_respuesta(tl: Timeline) -> None:
+    """02:20 · la saliente que nadie coge, y el humano que suple lo que no se supo.
+
+    Es literalmente el guion de `docs/interfaces.md`: «llamada saliente sin respuesta en
+    45 s: `outcome="no_answer"`, el core reintenta una vez y después escala a
+    `human.override`». Está aquí porque el fixture del H3 no tenía **ninguna** llamada
+    con `facts=None`, que es justo el caso que el panel de llamadas no puede romper —y
+    el que, sin fixture, se descubre el domingo por la mañana.
+
+    Va en el hueco tranquilo entre los injects (t=150) y el clímax (t=212): no se pisa
+    con nada y deja ver el `SIN EXTRAER` con la pantalla entera para él.
+    """
+    tl.add(
+        140.0,
+        EventType.CALL_REQUESTED,
+        CallRequest(
+            task_id=TASK_NOTIFY_B,
+            poi_id=PUEBLO_B,
+            to="+34600333444",
+            audience="resident",
+            intent="status_check",
+            urgency="medium",
+            facts={"poi_name": "Pueblo B"},
+            expect=["confirmation", "headcount"],
+        ),
+        "core",
+        label="callreq_b",
+    )
+    tl.add(
+        142.0,
+        EventType.CALL_STARTED,
+        CallStarted(
+            call_id=CALL_NO_ANSWER,
+            task_id=TASK_NOTIFY_B,
+            to="+34600333444",
+            direction="outbound",
+        ),
+        f"call:{CALL_NO_ANSWER}",
+        label="callstart_b",
+        causes=("callreq_b",),
+    )
+    tl.add(
+        187.0,  # 45 s de tono, como dice el contrato
+        EventType.CALL_ENDED,
+        CallResult(
+            call_id=CALL_NO_ANSWER,
+            task_id=TASK_NOTIFY_B,
+            direction="outbound",
+            started_t=142.0,
+            ended_t=187.0,
+            outcome="no_answer",
+            transcript="[sin contestar · 45 s de tono]",
+            facts=None,  # la extracción no tiene nada que extraer
+        ),
+        f"call:{CALL_NO_ANSWER}",
+        label="callend_b",
+        causes=("callstart_b",),
+    )
+    tl.add(
+        195.0,
+        EventType.HUMAN_OVERRIDE,
+        HumanOverride(
+            kind="assert_fact",
+            target=f"civilians:{PUEBLO_B}:warned",
+            value=True,
+            note="Pueblo B confirma por radio de la Guardia Civil; el teléfono no da",
+        ),
+        "human",
+        label="override_b",
+        causes=("callend_b",),
+    )
 
 
 # --- Salida y validación --------------------------------------------------------
@@ -970,7 +1054,13 @@ def main() -> None:
         stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument(
+        "--variant",
+        choices=sorted(OUT),
+        default="v2",
+        help="v1 = el fixture congelado del H2/H3; v2 = v1 + la llamada sin respuesta",
+    )
+    ap.add_argument("--out", type=Path, default=None, help="por defecto, el del variant")
     ap.add_argument("--scenario", type=Path, default=SCENARIO)
     ap.add_argument(
         "--validate",
@@ -978,24 +1068,25 @@ def main() -> None:
         help="no genera: revalida el fichero que ya existe",
     )
     args = ap.parse_args()
+    out: Path = args.out or OUT[args.variant]
 
     if args.validate:
-        if not args.out.exists():
-            raise SystemExit(f"no existe {args.out}: genéralo primero")
-        errors = validate(args.out)
+        if not out.exists():
+            raise SystemExit(f"no existe {out}: genéralo primero")
+        errors = validate(out)
         for e in errors:
             print(f"  ✗ {e}", file=sys.stderr)
         if errors:
-            raise SystemExit(f"{len(errors)} errores en {args.out}")
-        lines = sum(1 for _ in args.out.open(encoding="utf-8"))
-        print(f"✓ {args.out} · {lines} eventos · {len(PAYLOAD_MODELS)} tipos del catálogo")
+            raise SystemExit(f"{len(errors)} errores en {out}")
+        lines = sum(1 for _ in out.open(encoding="utf-8"))
+        print(f"✓ {out} · {lines} eventos · {len(PAYLOAD_MODELS)} tipos del catálogo")
         return
 
     sc = Scenario.model_validate(yaml.safe_load(args.scenario.read_text(encoding="utf-8")))
     ents = _entities(sc)
-    events = build(sc)
-    write(events, args.out)
-    errors = validate(args.out)
+    events = build(sc, variant=args.variant)
+    write(events, out)
+    errors = validate(out)
     for e in errors:
         print(f"  ✗ {e}", file=sys.stderr)
     if errors:
@@ -1004,7 +1095,8 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "out": str(args.out),
+                "out": str(out),
+                "variant": args.variant,
                 "events": len(events),
                 "types": types,
                 "t_sim": events[-1].t_sim,

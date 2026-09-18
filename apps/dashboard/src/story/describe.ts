@@ -1,0 +1,261 @@
+// Un evento → una frase que se entienda sin saber qué es un `EventType`.
+//
+// Es un `switch` exhaustivo sobre `VelaEvent`, la unión discriminada que genera
+// `make types`: cada rama recibe su payload ya estrechado, sin un solo cast. El
+// `assertNever` del final es lo que convierte "P1 ha añadido un tipo de evento" en un
+// error de compilación en vez de en una fila vacía que nadie ve hasta la demo.
+//
+// Regla del panel: aquí no se pinta JSON. Si un payload no se puede contar en una
+// frase, es que la frase está mal pensada, no que haga falta un `<pre>`.
+import type { Event, VelaEvent } from '../types'
+import { CALL_OUTCOME, CELL_STATE, CIV_STATE, OVERRIDE_KIND, UNIT_STATUS } from './labels'
+import { factValue, pct, seconds, shortId } from './format'
+
+/** `tone` decide el color. `replan` es el ÚNICO que usa el rojo: está reservado y si
+ *  algo más lo usa, el banner del H4 deja de significar nada. */
+export type Tone = 'replan' | 'decision' | 'fact' | 'world' | 'call' | 'human' | 'error' | 'muted'
+
+export interface Described {
+  label: string
+  sentence: string
+  tone: Tone
+}
+
+/** El sobre del WS llega como `Event` (payload sin estrechar). Este es el único punto
+ *  donde se estrecha a la unión, y a partir de aquí nadie castea nada. */
+export function describe(ev: Event): Described {
+  return describeNarrowed(ev as unknown as VelaEvent)
+}
+
+function describeNarrowed(ev: VelaEvent): Described {
+  switch (ev.type) {
+    // --- la historia que cuenta el panel ---------------------------------------
+    case 'plan.replan.started':
+      return {
+        label: 'REPLAN',
+        tone: 'replan',
+        sentence: ev.payload.reason,
+      }
+
+    case 'plan.policy.emitted':
+      return {
+        label: 'POLÍTICA',
+        tone: 'decision',
+        sentence: ev.payload.rationale,
+      }
+
+    case 'plan.violation':
+      return {
+        label: 'VIOLACIÓN',
+        tone: 'error',
+        sentence: `${ev.payload.message} · ${ev.payload.verifier}`,
+      }
+
+    case 'plan.emitted': {
+      const { assignments, unassigned_tasks } = ev.payload
+      const sinCubrir = unassigned_tasks.length
+        ? ` · ${unassigned_tasks.length} sin cubrir`
+        : ''
+      return {
+        label: 'PLAN NUEVO',
+        tone: 'decision',
+        sentence: `${assignments.length} asignaciones${sinCubrir}`,
+      }
+    }
+
+    case 'plan.divergence':
+      return {
+        label: 'DIVERGENCIA',
+        tone: ev.payload.broken.length ? 'error' : 'muted',
+        sentence: ev.payload.broken.length
+          ? `${ev.payload.value.toFixed(2)} · roto: ${ev.payload.broken.join(', ')}`
+          : ev.payload.value.toFixed(2),
+      }
+
+    case 'world.fact.asserted': {
+      const { key, value, confidence, source } = ev.payload
+      return {
+        label: 'HECHO',
+        tone: 'fact',
+        // Clave, valor, confianza y procedencia SIEMPRE juntos: ningún hecho aparece
+        // en pantalla sin decir de qué llamada viene.
+        sentence: `${key} = ${factValue(value)} · ${pct(confidence)} · ${source}`,
+      }
+    }
+
+    case 'human.override':
+      return {
+        label: 'HUMANO',
+        tone: 'human',
+        sentence: `${OVERRIDE_KIND[ev.payload.kind]} · ${ev.payload.target}${
+          ev.payload.note ? ` · «${ev.payload.note}»` : ''
+        }`,
+      }
+
+    // --- el mundo --------------------------------------------------------------
+    case 'world.fire.detected':
+      return {
+        label: 'FUEGO',
+        tone: 'error',
+        sentence: `ignición en ${ev.payload.cell_id} · ${ev.payload.hazard}`,
+      }
+
+    case 'world.road.changed':
+      return {
+        label: ev.payload.cut ? 'CARRETERA CORTADA' : 'CARRETERA ABIERTA',
+        tone: 'world',
+        sentence: `${ev.payload.edge_id}${ev.payload.cause ? ` · ${ev.payload.cause}` : ''}`,
+      }
+
+    case 'world.inject':
+      return {
+        label: 'INJECT',
+        tone: 'world',
+        sentence: `${ev.payload.inject_type.replace(/_/g, ' ')}${detail(ev.payload.detail)}`,
+      }
+
+    case 'world.unit.status':
+      return {
+        label: 'UNIDAD',
+        tone: ev.payload.status === 'unavailable' ? 'error' : 'world',
+        sentence: `${shortId(ev.payload.unit_id)} · ${UNIT_STATUS[ev.payload.status]} · ${
+          ev.payload.reason
+        }`,
+      }
+
+    case 'world.civilians.changed':
+      return {
+        label: 'CIVILES',
+        tone: 'world',
+        sentence: `${ev.payload.count} en ${shortId(ev.payload.poi_id)} · ${
+          CIV_STATE[ev.payload.state]
+        }`,
+      }
+
+    case 'world.cell.changed':
+      return {
+        label: 'CELDA',
+        tone: 'world',
+        sentence: `${ev.payload.cell_id} · ${CELL_STATE[ev.payload.state]}`,
+      }
+
+    // --- telefonía -------------------------------------------------------------
+    case 'call.requested':
+      return {
+        label: 'LLAMADA PEDIDA',
+        tone: 'call',
+        sentence: `${ev.payload.intent.replace(/_/g, ' ')} a ${shortId(ev.payload.poi_id)}`,
+      }
+
+    case 'call.started':
+      return {
+        label: ev.payload.direction === 'inbound' ? 'LLAMADA ENTRANTE' : 'LLAMADA SALIENTE',
+        tone: 'call',
+        sentence: `${ev.payload.call_id} · ${ev.payload.to}`,
+      }
+
+    case 'call.ended': {
+      const { call_id, outcome, facts, transcript } = ev.payload
+      // `facts: null` pasa de verdad (la extracción falla o tarda más de 4 s) y no
+      // puede dejar la fila vacía: se enseña la transcripción y se marca sin extraer.
+      const extra = facts
+        ? ` · ${pct(facts.confidence)}`
+        : ` · SIN EXTRAER · «${transcript.slice(0, 60)}…»`
+      return {
+        label: 'LLAMADA FIN',
+        tone: 'call',
+        sentence: `${call_id} · ${CALL_OUTCOME[outcome]}${extra}`,
+      }
+    }
+
+    case 'call.transcript.partial':
+      return {
+        label: 'TRANSCRIPCIÓN',
+        tone: 'call',
+        sentence: `${ev.payload.speaker}: ${ev.payload.text}`,
+      }
+
+    // --- acciones (las pinta el ActionLog del H4, la frase ya está aquí) --------
+    case 'action.requested':
+      return {
+        label: 'ORDEN',
+        tone: 'decision',
+        sentence: `${ev.payload.verb} ${args(ev.payload.args)}`,
+      }
+
+    case 'action.completed':
+      return { label: 'HECHA', tone: 'muted', sentence: ev.payload.action_id }
+
+    case 'action.failed':
+      return {
+        label: 'FALLÓ',
+        tone: 'error',
+        sentence: `${ev.payload.action_id} · ${ev.payload.error}`,
+      }
+
+    // --- posición y latido: el mapa los usa, la historia no --------------------
+    case 'world.unit.position':
+      return {
+        label: 'POSICIÓN',
+        tone: 'muted',
+        sentence: `${shortId(ev.payload.unit_id)} · ${ev.payload.x.toFixed(0)}, ${ev.payload.z.toFixed(0)}`,
+      }
+
+    case 'world.unit.arrived':
+      return {
+        label: 'LLEGADA',
+        tone: 'world',
+        sentence: `${shortId(ev.payload.unit_id)} en ${ev.payload.waypoint_id}`,
+      }
+
+    case 'world.tick':
+      return {
+        label: 'TICK',
+        tone: 'muted',
+        sentence: `viento ${ev.payload.wind.bearing_deg}° · ${ev.payload.wind.speed}`,
+      }
+
+    // --- run y errores ---------------------------------------------------------
+    case 'run.started':
+      return { label: 'RUN', tone: 'muted', sentence: `arranca ${ev.payload.scenario_id}` }
+
+    case 'run.ended':
+      return {
+        label: 'RUN',
+        tone: 'muted',
+        sentence: `termina ${ev.payload.scenario_id}${
+          ev.payload.score != null ? ` · ${ev.payload.score.toFixed(2)}` : ''
+        }`,
+      }
+
+    case 'event.malformed':
+      return {
+        label: 'MALFORMADO',
+        tone: 'error',
+        sentence: `${ev.payload.type} · ${ev.payload.error}`,
+      }
+
+    default:
+      return assertNever(ev)
+  }
+}
+
+/** Un tipo de evento nuevo en `contracts` rompe la compilación aquí. Es el objetivo. */
+function assertNever(ev: never): never {
+  throw new Error(`tipo de evento sin describir: ${JSON.stringify(ev)}`)
+}
+
+function detail(d: Record<string, unknown>): string {
+  const parts = Object.entries(d).map(([k, v]) => `${k} ${String(v)}`)
+  return parts.length ? ` · ${parts.join(', ')}` : ''
+}
+
+function args(a: Record<string, unknown>): string {
+  const unit = typeof a.unit_id === 'string' ? shortId(a.unit_id) : null
+  const to = typeof a.to === 'string' ? a.to : null
+  if (unit && to) return `${unit} → ${to}`
+  const eta = typeof a.eta_s === 'number' ? ` (${seconds(a.eta_s)})` : ''
+  return `${Object.entries(a)
+    .map(([k, v]) => `${k} ${String(v)}`)
+    .join(', ')}${eta}`
+}

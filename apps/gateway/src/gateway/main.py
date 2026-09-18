@@ -24,24 +24,24 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import uuid
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from contracts.events import Event, EventType, RunEnded, RunStarted
+from contracts.events import EventType, RunEnded, RunStarted
 from contracts.settings import settings
 
 from gateway import replay_source
 from gateway.bridges import mount_bridges
 from gateway.control import router as control_router
-from gateway.runtime import SHUTDOWN_GRACE_S, Runtime
+from gateway.runtime import SHUTDOWN_GRACE_S, Rt, Runtime
+from gateway.scenario_fallback import fill
 from gateway.scenarios import list_ids, load_scenario, scenario_path
+from gateway.webhook_auth import webhook_token_guard
 from gateway.ws import router as ws_router
 
 try:  # P3 puede tener el paquete a medias el viernes por la noche
@@ -163,45 +163,10 @@ async def _shutdown(rt: Runtime) -> None:
 # --- Arrancar y parar un run -----------------------------------------------------
 
 
-def _new_run_id() -> str:
-    """El uuid del run lo pone el bus; si aún no tiene cuerpo, uno propio."""
-    with contextlib.suppress(Exception):
-        from contracts.bus import current_run_id
-
-        rid = current_run_id()
-        if rid:
-            return rid
-    return f"run_{uuid.uuid4().hex[:12]}"
-
-
-async def _publish(rt: Runtime, type_: EventType, payload: BaseModel, source: str) -> None:
-    """Publicar por el bus si tiene cuerpo; si no, al menos que el dashboard lo vea.
-
-    Sin bus, el evento se reparte solo al hub: se pierde el journal (invariante 3),
-    así que esto es solo para desarrollo y queda anotado en `/api/health`.
-    """
-    ev = Event(
-        run_id=rt.run_id or "run_unknown",
-        seq=rt.hub.last_seq + 1,
-        t_wall=datetime.now(UTC),
-        t_sim=0.0,
-        type=type_,
-        source=source,
-        payload=payload.model_dump(mode="json"),
-    )
-    try:
-        from contracts.bus import publish
-
-        await publish(ev)
-    except (ImportError, NotImplementedError):
-        rt.notes["bus"] = "sin cuerpo: los eventos del gateway no llegan al journal"
-        rt.hub.dispatch(ev)
-
-
 async def start_run(rt: Runtime, scenario_id: str) -> str:
     """Construye sim + core para ese escenario, abre el journal y publica
     `run.started`. Lo usan `POST /api/run` y el arranque del modo demo."""
-    rt.run_id = _new_run_id()
+    rt.run_id = rt.new_run_id()
     rt.scenario_id = scenario_id
 
     with rt.guard("journal"):
@@ -239,7 +204,7 @@ async def start_run(rt: Runtime, scenario_id: str) -> str:
         rt.mark("core", "up")
 
     mount_bridges(rt)
-    await _publish(rt, EventType.RUN_STARTED, RunStarted(scenario_id=scenario_id), "core")
+    await rt.publish(EventType.RUN_STARTED, RunStarted(scenario_id=scenario_id), "core")
     log.info("run %s arrancado · escenario %s", rt.run_id, scenario_id)
     return rt.run_id
 
@@ -251,8 +216,8 @@ async def stop_run(rt: Runtime) -> dict:
         return {"run_id": None, "stopped": False, "journal": None}
 
     run_id, scenario_id = rt.run_id, rt.scenario_id or DEFAULT_SCENARIO
-    await _publish(
-        rt, EventType.RUN_ENDED, RunEnded(scenario_id=scenario_id), "core"
+    await rt.publish(
+        EventType.RUN_ENDED, RunEnded(scenario_id=scenario_id), "core"
     )  # antes de cerrar el writer, siempre
 
     await rt.stop_tasks("core")
@@ -278,6 +243,9 @@ async def stop_run(rt: Runtime) -> dict:
 # --- La app ----------------------------------------------------------------------
 
 app = FastAPI(title="vela", lifespan=lifespan)
+# Antes de montar nada: `/webhooks/*` es lo único que ve internet (va por un túnel) y
+# el token se comprueba desde aquí, sin entrar en el router de P3.
+app.middleware("http")(webhook_token_guard)
 if voice_router is not None:
     app.include_router(voice_router)
 app.include_router(control_router)
@@ -289,13 +257,6 @@ async def unhandled(request: Request, exc: Exception) -> JSONResponse:
     """Nada de 500 con traza en mitad del pitch."""
     log.exception("error no manejado en %s", request.url.path)
     return JSONResponse(status_code=500, content={"detail": repr(exc)})
-
-
-def get_runtime(request: Request) -> Runtime:
-    return request.app.state.runtime
-
-
-Rt = Annotated[Runtime, Depends(get_runtime)]
 
 
 class RunBody(BaseModel):
@@ -325,6 +286,38 @@ async def get_plan(rt: Rt) -> dict | None:
     """Plan vigente."""
     plan = rt.current_plan()
     return plan.model_dump(mode="json") if plan is not None else None
+
+
+@app.get("/api/scenario")
+async def get_current_scenario(rt: Rt) -> dict:
+    """La capa estática del run en curso: geometría para el mapa del dashboard.
+
+    El mapa necesita `origin` y `cell_size` para proyectar celdas, y las coordenadas de
+    los waypoints para dibujar rutas y cortes de carretera — `world.road.changed` solo
+    trae el `edge_id`. Nada de eso viaja por eventos, así que va por aquí y el
+    dashboard lo pide una vez por run.
+    """
+    return _scenario_layer(rt, rt.scenario_id or DEFAULT_SCENARIO)
+
+
+@app.get("/api/scenario/{scenario_id}")
+async def get_scenario(scenario_id: str, rt: Rt) -> dict:
+    """La de un escenario concreto, para comparar antes de arrancar un run."""
+    return _scenario_layer(rt, scenario_id)
+
+
+def _scenario_layer(rt: Runtime, scenario_id: str) -> dict:
+    if not scenario_path(scenario_id).exists():
+        raise HTTPException(404, f"escenario desconocido: {scenario_id}")
+    filled, provisional = fill(load_scenario(scenario_id))
+    return {
+        **filled.model_dump(mode="json"),
+        # Qué listas son inventadas, para que el mapa lo avise en pantalla: una
+        # geometría de prueba presentada como real se cae en cuanto el jurado pregunta.
+        "provisional": bool(provisional),
+        "provisional_lists": provisional,
+        "of_run": rt.run_id,  # null = es el escenario por defecto, no hay run
+    }
 
 
 @app.get("/api/scenarios")

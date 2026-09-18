@@ -4,10 +4,12 @@
 RUN ?=
 SCENARIO ?= wildfire_ridge
 
-# El journal que sirve `dev-dash`: el golden de P2 en cuanto exista y, mientras no,
-# el falso de `scripts/fake_journal.py`. El día que Luis grabe el golden, este
-# target cambia solo y nadie tiene que acordarse.
-REPLAY ?= $(if $(wildcard fixtures/run_golden.jsonl),fixtures/run_golden.jsonl,fixtures/run_fake.jsonl)
+# El journal que sirve `dev-dash`: el golden de P2 en cuanto exista y, mientras no, el
+# falso de `scripts/fake_journal.py` — el v2 si está, que trae la llamada sin extraer del
+# H4, y si no el v1. El día que Luis grabe el golden, este target cambia solo y nadie
+# tiene que acordarse.
+FAKE_REPLAY := $(if $(wildcard fixtures/run_fake_v2.jsonl),fixtures/run_fake_v2.jsonl,fixtures/run_fake.jsonl)
+REPLAY ?= $(if $(wildcard fixtures/run_golden.jsonl),fixtures/run_golden.jsonl,$(FAKE_REPLAY))
 
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'

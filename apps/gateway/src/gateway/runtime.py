@@ -7,6 +7,11 @@ arrancó, qué no, y de dónde sale el estado que ve el dashboard.
 Aquí vive **la única función que construye la forma del snapshot** (`snapshot`). La
 usan el primer frame del WS y `GET /api/state`, y por eso el cliente tiene un solo
 parser para el arranque, la recuperación por hueco y la reconexión.
+
+Y aquí viven también `publish` y la dependencia `Rt`, que estaban en `main.py` hasta
+el H4: `control.py` las necesita las dos, y `main.py` importa `control.py`. Este
+fichero no importa de nadie del gateway salvo `hub`, así que es el único sitio donde
+pueden estar sin cerrar un ciclo.
 """
 
 from __future__ import annotations
@@ -14,10 +19,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import uuid
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from datetime import UTC, datetime
+from typing import Annotated, Any, Literal
 
+from fastapi import Depends, Request
+from pydantic import BaseModel
+
+from contracts.events import Event, EventType
 from contracts.plan import Plan
 from contracts.world import WorldState
 
@@ -60,6 +71,11 @@ class Runtime:
     tasks: dict[str, asyncio.Task] = field(default_factory=dict)
     duplicate_actions: dict[str, int] = field(default_factory=dict)
     paused: bool = False
+
+    # Peticiones a `/webhooks/*` rechazadas por token (H4). Se cuenta y se enseña en
+    # `/api/health`: si alguien escanea el túnel en la sala, quiero ver el número subir
+    # y no descubrirlo porque suene un teléfono en mitad del pitch.
+    webhook_rejected: int = 0
 
     def __post_init__(self) -> None:
         for name in COMPONENTS:
@@ -121,6 +137,46 @@ class Runtime:
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await asyncio.wait_for(task, timeout=SHUTDOWN_GRACE_S)
 
+    # --- publicar ----------------------------------------------------------------
+
+    def new_run_id(self) -> str:
+        """El uuid del run lo pone el bus; si aún no tiene cuerpo, uno propio."""
+        with contextlib.suppress(Exception):
+            from contracts.bus import current_run_id
+
+            rid = current_run_id()
+            if rid:
+                return rid
+        return f"run_{uuid.uuid4().hex[:12]}"
+
+    async def publish(self, type_: EventType, payload: BaseModel, source: str) -> Event:
+        """Publicar por el bus si tiene cuerpo; si no, al menos que el dashboard lo vea.
+
+        Sin bus, el evento se reparte solo al hub: se pierde el journal (invariante 3),
+        así que esto es solo para desarrollo y queda anotado en `/api/health`.
+
+        Devuelve el `Event` sellado porque quien publica necesita su `seq`: es lo que
+        `POST /control/override` le contesta al dashboard para que sepa qué fila del
+        chorro es la suya.
+        """
+        ev = Event(
+            run_id=self.run_id or "run_unknown",
+            seq=self.hub.last_seq + 1,
+            t_wall=datetime.now(UTC),
+            t_sim=0.0,
+            type=type_,
+            source=source,
+            payload=payload.model_dump(mode="json"),
+        )
+        try:
+            from contracts.bus import publish
+
+            await publish(ev)
+        except (ImportError, NotImplementedError):
+            self.notes["bus"] = "sin cuerpo: los eventos del gateway no llegan al journal"
+            self.hub.dispatch(ev)
+        return ev
+
     # --- el estado que ve el dashboard -----------------------------------------
 
     def world_state(self) -> WorldState | None:
@@ -161,6 +217,8 @@ class Runtime:
         }
 
     def health(self) -> dict:
+        from contracts.settings import settings
+
         return {
             "mode": self.mode,
             "run_id": self.run_id,
@@ -169,5 +227,23 @@ class Runtime:
             "components": dict(self.components),
             "notes": dict(self.notes),
             "duplicate_actions": dict(self.duplicate_actions),
+            # Sin token no se bloquea nada, y hay que poder verlo: el viernes por la
+            # noche el token no existe todavía y unos webhooks devolviendo 401 sin que
+            # nadie sepa por qué cuestan una hora de depuración a las tres de la mañana.
+            "webhooks": "activo" if settings.webhook_shared_token else "sin token",
+            "webhook_rejected": self.webhook_rejected,
             **self.hub.stats(),
         }
+
+
+# --- la dependencia de FastAPI ---------------------------------------------------
+#
+# Vive aquí y no en `main.py` porque `control.py` la necesita y `main.py` importa
+# `control.py`. Es el mismo motivo por el que `publish` es un método de `Runtime`.
+
+
+def get_runtime(request: Request) -> Runtime:
+    return request.app.state.runtime
+
+
+Rt = Annotated[Runtime, Depends(get_runtime)]

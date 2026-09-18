@@ -21,6 +21,10 @@ runs/*
 docs-nacho/
 claude-nacho.md
 
+# Capturas de UIs ajenas que uso como referencia visual del dashboard.
+# Material de terceros: se mira, no se commitea.
+refs-dashboard/
+
 # El mundo construido a mano SÍ se commitea (infra/server/world/), el resto no.
 infra/server/logs/
 infra/server/cache/

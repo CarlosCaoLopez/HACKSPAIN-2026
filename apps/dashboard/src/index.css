@@ -30,3 +30,56 @@ body {
   /* REQ-018: el scroll vive dentro de cada panel, nunca en el body. */
   overflow: hidden;
 }
+
+/* Movimiento del mapa. Las posiciones llegan cada 2-4 segundos: sin interpolar, las
+   unidades dan saltos y el mapa parece roto. Un segundo lineal es justo el hueco
+   entre dos eventos de posición. */
+.vela-unit {
+  transition: transform 1s linear;
+}
+
+/* Plan nuevo: las flechas entran con un fundido de 600 ms en vez de morfear el path
+   (la `d` no es animable de forma fiable en todos los navegadores). Es el clímax
+   visual del dashboard y tiene que leerse desde el fondo de la sala. */
+.vela-plan-enter {
+  animation: vela-plan-in 600ms ease-out;
+}
+
+@keyframes vela-plan-in {
+  from {
+    opacity: 0;
+    stroke-width: 3;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* El banner REPLAN entra con ganas: es lo que hay que ver sin que nadie lo señale.
+   Se anima por `key={seq}`, así que solo se reejecuta con un replan nuevo y no en cada
+   render: a 60× los replanes se atropellan y si no, parpadea. */
+.vela-replan-enter {
+  animation: vela-replan-in 400ms ease-out;
+}
+
+@keyframes vela-replan-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* El proyector de la sala no tiene por qué respetar esto, pero una máquina con
+   "reducir movimiento" activado sí. */
+@media (prefers-reduced-motion: reduce) {
+  .vela-unit,
+  .vela-plan-enter,
+  .vela-replan-enter {
+    transition: none;
+    animation: none;
+  }
+}
