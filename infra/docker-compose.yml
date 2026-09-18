@@ -1,0 +1,26 @@
+# Paper 1.21 en local, nunca en la nube. El servidor es un dispositivo de salida.
+# Dueño: P2. `make world` regenera el mundo por RCON, esto solo levanta el server.
+
+services:
+  paper:
+    image: itzg/minecraft-server:java21
+    container_name: vela-paper
+    ports:
+      - "25565:25565"
+      - "25575:25575" # RCON
+    environment:
+      EULA: "TRUE"
+      TYPE: PAPER
+      VERSION: "1.21"
+      MEMORY: 4G
+      ENABLE_RCON: "true"
+      RCON_PORT: "25575"
+      RCON_PASSWORD: ${RCON_PASSWORD}
+      ONLINE_MODE: "false"
+      VIEW_DISTANCE: "8"
+      SIMULATION_DISTANCE: "4"
+      SPAWN_PROTECTION: "0"
+    volumes:
+      # El mapa se construye a mano una vez y se commitea.
+      - ./server/world:/data/world
+    restart: "no"

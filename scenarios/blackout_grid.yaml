@@ -1,0 +1,24 @@
+# Segundo escenario · sábado 20-00. Es lo tercero en la lista de sacrificio si a
+# las 13:00 del sábado el sistema no decide y mueve unidades de punta a punta.
+# Esquema: contracts.scenario.Scenario
+
+id: blackout_grid
+name: Apagón en el valle
+seed: 4402
+origin: [0, 0]
+
+hazard:
+  kind: blackout
+  origin_cell: cell_08_11
+  cell_size: 4
+  base_spread: 0.08
+  wind:
+    bearing_deg: 0
+    speed: 0.0 # un apagón no lo mueve el viento
+
+pois: [] # TODO P2
+units: [] # TODO P2
+waypoints: [] # TODO P2
+roads: [] # TODO P2
+civilians: [] # TODO P2
+injects: [] # TODO P2

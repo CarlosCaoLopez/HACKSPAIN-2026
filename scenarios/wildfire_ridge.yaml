@@ -1,0 +1,46 @@
+# El mundo no se genera, se declara. Este fichero es la única fuente de verdad.
+# Dueño: P2. P1 puede añadir campos previo aviso.
+# Esquema: contracts.scenario.Scenario
+#
+# Coordenadas del mundo Minecraft (x, z). Ids con prefijo: poi_, unit_, wp_, cell_.
+# La semilla hace que el mismo escenario produzca el mismo incendio en cada ensayo.
+
+id: wildfire_ridge
+name: Cresta oeste
+seed: 1821
+origin: [0, 0]
+
+hazard:
+  kind: wildfire
+  origin_cell: cell_14_22 # la ignición del minuto 00:00
+  cell_size: 4 # bloques por celda
+  base_spread: 0.12
+  wind:
+    bearing_deg: 270 # O→E
+    speed: 1.2 # celdas por minuto
+
+# Pueblo A, pueblo B, hospital, refugio, base.
+# `name` y `contact_phone` los dice y marca el agente telefónico.
+pois: [] # TODO P2
+
+# 2 camiones, 1 ambulancia, 1 dron.
+units: [] # TODO P2
+
+waypoints: [] # TODO P2
+roads: [] # TODO P2 · carretera en Y con desvío norte y desvío sur
+
+# 20 aldeanos con posición y flag de movilidad.
+civilians: [] # TODO P2
+
+# La línea temporal de sorpresas. La importante no está aquí: la dispara la
+# llamada entrante del minuto 03:30.
+injects:
+  - at: 150
+    type: wind_shift
+    payload: { bearing: 90, speed: 1.4 }
+  - at: 210
+    type: road_cut
+    payload: { edge: wp_norte_02-wp_norte_03, cause: "árbol caído" }
+  - at: 240
+    type: unit_failure
+    payload: { unit: unit_truck2, reason: "avería de bomba" }

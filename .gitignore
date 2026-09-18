@@ -1,0 +1,23 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+node_modules/
+apps/dashboard/dist/
+# Se genera con `make types` desde contracts. Nunca se escribe a mano.
+apps/dashboard/src/types.ts
+
+# Salida de los runs. Cuando uno sale bien, se fuerza con `git add -f`:
+# son vuestro dataset y la prueba de que el aprendizaje funciona.
+runs/*
+!runs/.gitkeep
+
+# El mundo construido a mano SÍ se commitea (infra/server/world/), el resto no.
+infra/server/logs/
+infra/server/cache/
+infra/server/*.jar
