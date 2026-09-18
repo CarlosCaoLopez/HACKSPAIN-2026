@@ -10,9 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
 
 from contracts.calls import CallFacts, CallRequest, Fact
 from contracts.factkeys import road_cut_key, validate_fact_key
+from contracts.settings import settings
 from voice import pois
 from voice.webhooks import router
 
@@ -110,20 +115,87 @@ class VoiceGateway:
         return out
 
 
+FENIC_MODEL = "claude-haiku-4-5"
+"""Camino frío (fin de llamada, sintéticas): rápido y barato. fenic lee la key de
+ANTHROPIC_API_KEY en el entorno; `settings` la carga del .env."""
+
+
+_fenic_failed: str | None = None
+"""Si la sesión de fenic falló una vez (sin key, key inválida), no se reintenta en
+cada llamada: se recuerda el motivo y se cae a las heurísticas en silencio."""
+
+
+def fenic_session():
+    """Sesión de fenic con Anthropic como modelo por defecto, o (None, None) si no
+    hay `fenic` o no hay API key. Nunca lanza."""
+    try:
+        import fenic as fc
+    except ImportError:
+        return None, None
+    global _fenic_failed
+    if _fenic_failed is not None or not settings.anthropic_api_key:
+        return None, None
+    os.environ.setdefault("ANTHROPIC_API_KEY", settings.anthropic_api_key)
+    try:
+        config = fc.SessionConfig(
+            app_name="vela",
+            semantic=fc.SemanticConfig(
+                language_models={
+                    "claude": fc.AnthropicLanguageModel(
+                        model_name=FENIC_MODEL,
+                        rpm=100,
+                        input_tpm=100_000,
+                        output_tpm=20_000,
+                    )
+                },
+                default_language_model="claude",
+            ),
+        )
+        return fc, fc.Session.get_or_create(config)
+    except Exception as exc:  # noqa: BLE001
+        _fenic_failed = str(exc)[:200]
+        log.warning("fenic sin sesión (no se reintenta): %s", _fenic_failed)
+        return None, None
+
+
+class _CallFactsExtract(BaseModel):
+    """Espejo de `CallFacts` con `Optional[...]`: fenic no acepta `str | None`.
+    Las descripciones son las mismas: son parte del prompt."""
+
+    location_hint: str | None = Field(
+        None, description="lugar mencionado, tal cual lo dice la persona"
+    )
+    road_blocked: str | None = Field(None, description="tramo o carretera impracticable")
+    people_immobile: int | None = Field(
+        None, description="personas que no pueden moverse solas"
+    )
+    injuries: Optional[int] = Field(None, description="número de heridos")  # noqa: UP045
+    confirmed_order: bool | None = Field(
+        None, description="si acepta la instrucción dada"
+    )
+    contradicts_known: bool = Field(False, description="si contradice algo dicho antes")
+    urgency: Literal["low", "medium", "critical"] = Field(
+        "medium", description="urgencia"
+    )
+    confidence: float = Field(0.5, description="confianza de 0 a 1 en lo extraído")
+
+
 def _fenic_extract(transcript: str) -> CallFacts | None:
     """El camino frío. Si `fenic` no está o cambia su API, None y se sigue."""
-    try:
-        import fenic as fc  # type: ignore[import-not-found]
-    except ImportError:
+    fc, session = fenic_session()
+    if fc is None:
         return None
-    session = fc.Session.get_or_create(fc.SessionConfig(app_name="vela"))
     df = session.create_dataframe([{"transcript": transcript}])
     rows = df.select(
-        fc.semantic.extract(fc.col("transcript"), CallFacts).alias("f")
+        fc.semantic.extract(
+            fc.col("transcript"), _CallFactsExtract, request_timeout=EXTRACT_TIMEOUT_S
+        ).alias("f")
     ).to_pylist()
     if not rows:
         return None
     raw = rows[0].get("f")
     if raw is None:
         return None
-    return CallFacts.model_validate(raw if isinstance(raw, dict) else raw.__dict__)
+    data = raw if isinstance(raw, dict) else vars(raw)
+    data["confidence"] = min(1.0, max(0.0, float(data.get("confidence") or 0.5)))
+    return CallFacts.model_validate(data)

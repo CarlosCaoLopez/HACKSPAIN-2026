@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import difflib
 import logging
+import os
 import re
 import unicodedata
 
+from contracts.settings import settings
 from contracts.world import POI
 
 log = logging.getLogger("core.ingest")
@@ -98,15 +100,46 @@ def rank_signal(texts: list[str]) -> list[tuple[str, float]]:
 # --- fenic, si está --------------------------------------------------------------
 
 
+FENIC_MODEL = "claude-haiku-4-5"
+"""Camino frío (fin de llamada, sintéticas): rápido y barato. fenic lee la key de
+ANTHROPIC_API_KEY en el entorno; `settings` la carga del .env."""
+
+
+_fenic_failed: str | None = None
+"""Si la sesión de fenic falló una vez (sin key, key inválida), no se reintenta en
+cada llamada: se recuerda el motivo y se cae a las heurísticas en silencio."""
+
+
 def _session():
+    """Sesión de fenic con Anthropic como modelo por defecto, o (None, None) si no
+    hay `fenic` o no hay API key. Nunca lanza."""
     try:
-        import fenic as fc  # type: ignore[import-not-found]
+        import fenic as fc
     except ImportError:
         return None, None
+    global _fenic_failed
+    if _fenic_failed is not None or not settings.anthropic_api_key:
+        return None, None
+    os.environ.setdefault("ANTHROPIC_API_KEY", settings.anthropic_api_key)
     try:
-        return fc, fc.Session.get_or_create(fc.SessionConfig(app_name="vela"))
+        config = fc.SessionConfig(
+            app_name="vela",
+            semantic=fc.SemanticConfig(
+                language_models={
+                    "claude": fc.AnthropicLanguageModel(
+                        model_name=FENIC_MODEL,
+                        rpm=100,
+                        input_tpm=100_000,
+                        output_tpm=20_000,
+                    )
+                },
+                default_language_model="claude",
+            ),
+        )
+        return fc, fc.Session.get_or_create(config)
     except Exception as exc:  # noqa: BLE001
-        log.warning("fenic sin sesión: %s", exc)
+        _fenic_failed = str(exc)[:200]
+        log.warning("fenic sin sesión (no se reintenta): %s", _fenic_failed)
         return None, None
 
 
