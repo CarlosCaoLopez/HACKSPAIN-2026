@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -38,9 +39,11 @@ from contracts.settings import settings
 from gateway import replay_source
 from gateway.bridges import mount_bridges
 from gateway.control import router as control_router
+from gateway.rcon_null import NullRcon
 from gateway.runtime import SHUTDOWN_GRACE_S, Rt, Runtime
 from gateway.scenario_fallback import fill
 from gateway.scenarios import list_ids, load_scenario, scenario_path
+from gateway.voice_canned import CannedVoice
 from gateway.webhook_auth import webhook_token_guard
 from gateway.ws import router as ws_router
 
@@ -163,11 +166,23 @@ async def _shutdown(rt: Runtime) -> None:
 # --- Arrancar y parar un run -----------------------------------------------------
 
 
-async def start_run(rt: Runtime, scenario_id: str) -> str:
+async def start_run(
+    rt: Runtime,
+    scenario_id: str,
+    *,
+    minecraft: bool = True,
+    mock_calls: bool = False,
+    speed: float = 1.0,
+) -> str:
     """Construye sim + core para ese escenario, abre el journal y publica
-    `run.started`. Lo usan `POST /api/run` y el arranque del modo demo."""
+    `run.started`. Lo usan `POST /api/run` y el arranque del modo demo.
+
+    `minecraft=False` y `mock_calls=True` son los planes B nivel 3 y 2: se deciden por
+    run, quedan anotados en `Runtime` y salen en `/api/health`.
+    """
     rt.run_id = rt.new_run_id()
     rt.scenario_id = scenario_id
+    rt.minecraft, rt.calls_mocked = minecraft, mock_calls
 
     with rt.guard("journal"):
         from journal import JournalWriter
@@ -187,10 +202,35 @@ async def start_run(rt: Runtime, scenario_id: str) -> str:
     with rt.guard("sim"):
         from sim import RconClient, Sim
 
-        rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
+        # Sin Minecraft NO se construye el cliente real: `connect` reintenta con backoff
+        # y un puerto muerto son varios segundos de bloqueo al arrancar el run.
+        rcon: Any = (
+            RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
+            if minecraft
+            else NullRcon()
+        )
         rt.sim = Sim(scenario_path(scenario_id), rcon)
+        await _ask_for_speed(rt, speed)
         rt.spawn("sim", rt.sim.start())
-        rt.mark("sim", "up")
+        rt.mark("sim", "up", "" if minecraft else "sin Minecraft (plan B nivel 3)")
+
+    if mock_calls:
+        # El plan B nivel 2 se elige por run y no al arrancar el proceso: los ensayos del
+        # domingo alternan llamada real y simulada sin reiniciar uvicorn.
+        #
+        # `voice.fake.FakeVoice` es de P3 y manda si tiene cuerpo; `CannedVoice` es mía y
+        # solo entra si la suya no está. Se le pasa el `VoiceGateway` real para que la
+        # extracción siga siendo la de P3 aunque la conversación sea enlatada.
+        real_voice = rt.voice
+        with rt.guard("voice"):
+            try:
+                from voice.fake import FakeVoice
+
+                rt.voice = FakeVoice()
+                rt.mark("voice", "up", "llamadas simuladas · voice.fake (P3)")
+            except NotImplementedError:
+                rt.voice = CannedVoice(rt, real=real_voice)
+                rt.mark("voice", "up", "llamadas simuladas · guiones enlatados (P4)")
 
     with rt.guard("core"):
         import contracts.bus as bus
@@ -207,6 +247,27 @@ async def start_run(rt: Runtime, scenario_id: str) -> str:
     await rt.publish(EventType.RUN_STARTED, RunStarted(scenario_id=scenario_id), "core")
     log.info("run %s arrancado · escenario %s", rt.run_id, scenario_id)
     return rt.run_id
+
+
+async def _ask_for_speed(rt: Runtime, speed: float) -> None:
+    """`--speed` en modo demo: se le pide al sim, que puede no saber.
+
+    `Sim` expone `start`, `stop`, `execute`, `inject` y `snapshot`, y **nada de
+    velocidad** (`sim/runner.py`). Se pide por pato y, si no está, se anota y el mundo va
+    a 1×. Es la misma degradación explícita que `Sim.pause()` en el H4: ni se inventa el
+    método ni se entra en el fichero de P2.
+    """
+    if speed == 1.0 or rt.sim is None:
+        return
+    setter = getattr(rt.sim, "set_speed", None)
+    if setter is None:
+        rt.notes["speed"] = f"el sim no acepta velocidad: {speed}× ignorado, el mundo va a 1×"
+        log.info("%s", rt.notes["speed"])
+        return
+    result = setter(speed)
+    if inspect.isawaitable(result):  # P2 aún no lo ha escrito: valen las dos formas
+        await result
+    rt.notes["speed"] = f"{speed}×"
 
 
 async def stop_run(rt: Runtime) -> dict:
@@ -260,7 +321,18 @@ async def unhandled(request: Request, exc: Exception) -> JSONResponse:
 
 
 class RunBody(BaseModel):
+    """El cuerpo de `POST /api/run`.
+
+    Los dos planes B del H5 son campos **de aquí** y no variables de entorno: este
+    modelo es del gateway, así que la bandera viaja con la petición que la usa y
+    `packages/contracts/**` no se entera. `scripts/demo.py` los manda desde
+    `--no-minecraft` y `--mock-calls`.
+    """
+
     scenario_id: str
+    minecraft: bool = True  # False = plan B nivel 3: ni se abre el socket RCON
+    mock_calls: bool = False  # True = plan B nivel 2: `voice.fake` en vez de telefonía
+    speed: float = 1.0  # multiplicador del mundo, si el sim sabe hacerlo
 
 
 @app.get("/api/health")
@@ -338,8 +410,22 @@ async def post_run(body: RunBody, rt: Rt) -> dict:
         raise HTTPException(409, f"ya hay un run en curso: {rt.run_id}")
     if not scenario_path(body.scenario_id).exists():
         raise HTTPException(404, f"escenario desconocido: {body.scenario_id}")
-    run_id = await start_run(rt, body.scenario_id)
-    return {"run_id": run_id, "scenario_id": body.scenario_id}
+    run_id = await start_run(
+        rt,
+        body.scenario_id,
+        minecraft=body.minecraft,
+        mock_calls=body.mock_calls,
+        speed=body.speed,
+    )
+    return {
+        "run_id": run_id,
+        "scenario_id": body.scenario_id,
+        # Se devuelve lo que se ha aplicado, no lo que se ha pedido: `demo.py` lo imprime
+        # al arrancar y así el plan B se ve en la consola antes de que empiece el pitch.
+        "minecraft": rt.minecraft,
+        "mock_calls": rt.calls_mocked,
+        "speed": rt.notes.get("speed", "1×"),
+    }
 
 
 @app.post("/api/run/stop")
@@ -350,7 +436,14 @@ async def post_run_stop(rt: Rt) -> dict:
 
 @app.get("/api/runs")
 async def get_runs(rt: Rt) -> list[dict]:
-    """Runs pasados con su puntuación, para el run 1 vs run 12."""
+    """Runs pasados con su puntuación, para el run 1 vs run 12.
+
+    Tres estados posibles por run, y el dashboard los pinta distintos porque son cosas
+    distintas: **puntuado** por `journal.score` (P1), **provisional** cuando lo ha contado
+    el gateway (`score_fallback`), e **incompleto** cuando el journal no llega a
+    `run.ended` —cada Ctrl-C deja uno—. Un run sintético (`run_fake*`) se marca aparte:
+    lo genero yo para desarrollar y no puede colarse en una comparación del pitch.
+    """
     out: list[dict] = []
     for path in sorted(
         RUNS_DIR.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
@@ -361,6 +454,10 @@ async def get_runs(rt: Rt) -> list[dict]:
             "bytes": path.stat().st_size,
             "score": None,
             "partial": True,
+            "provisional": False,
+            "incomplete": False,
+            "synthetic": path.stem.startswith("run_fake"),
+            "notes": [],
         }
         try:
             from journal import score
@@ -368,9 +465,29 @@ async def get_runs(rt: Rt) -> list[dict]:
             item["score"] = score(path).model_dump(mode="json")
             item["partial"] = False
         except (ImportError, NotImplementedError):
-            rt.notes["score"] = "journal.score sin cuerpo"
+            rt.notes["score"] = "journal.score sin cuerpo: cuenta el gateway (provisional)"
+            _count_here(item, path)
         except Exception as exc:  # noqa: BLE001
             # Un journal a medias es la norma: cada Ctrl-C deja uno. No rompe.
             item["error"] = repr(exc)
         out.append(item)
     return out
+
+
+def _count_here(item: dict, path: Path) -> None:
+    """La puntuación provisional del gateway, marcada como tal.
+
+    `partial` sigue siendo cierto: hay campos que no están (`total`, la fórmula es de
+    P1). `provisional` dice quién ha contado, que es lo que el panel enseña en pantalla.
+    """
+    from gateway import score_fallback
+
+    try:
+        counted = score_fallback.count(path)
+    except Exception as exc:  # noqa: BLE001 — sin `journal` ni contar se puede
+        item["error"] = repr(exc)
+        return
+    item["score"] = counted.as_json()
+    item["provisional"] = True
+    item["incomplete"] = counted.incomplete
+    item["notes"] = counted.notes

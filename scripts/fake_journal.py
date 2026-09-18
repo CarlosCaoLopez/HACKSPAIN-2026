@@ -98,6 +98,47 @@ SCENARIO = Path("scenarios/wildfire_ridge.yaml")
 RUN_ID = "run_fake_0001"
 """Fijo: el fixture es un artefacto reproducible, no un run de verdad."""
 
+
+@dataclass(frozen=True)
+class Variation:
+    """Un run del mismo guion, salido mejor o peor. Para el run 1 vs run 12 del H5.
+
+    `runs/` está vacío y en replay no se llena (un run reproducido no genera otro run),
+    así que sin esto la pantalla partida de la comparación no se puede construir hasta
+    que Carlos corra los doce runs el domingo de madrugada.
+
+    **Los valores por defecto son los de hoy, byte a byte**: `Variation()` produce
+    exactamente `run_fake.jsonl` y `run_fake_v2.jsonl`, y `test_es_determinista` lo
+    comprueba contra los ficheros commiteados. Un fixture que se mueve sin querer corre
+    los `t_sim` contra los que están escritos los criterios del H2, el H3 y el H4.
+
+    Y lo que sale de aquí **se etiqueta sintético** en pantalla (`/api/runs`): un run
+    fabricado por mí no puede colarse en una comparación del pitch.
+    """
+
+    run_id: str = RUN_ID
+    quality: float = 0.0
+    """0 = el run de hoy, tal cual está commiteado; 1 = el mejor. Mueve tres cosas: hasta
+    dónde llega el fuego, si la llamada saliente la coge alguien, y la puntuación final.
+    Las tres arrancan en el valor del fixture, que es lo que lo mantiene byte a byte."""
+
+    @property
+    def spread(self) -> int:
+        """Celdas que alcanza el fuego. Menos fuego es un run mejor."""
+        return 8 - round(self.quality * 4)
+
+    @property
+    def answered(self) -> bool:
+        """En un run bueno, la saliente la cogen: no hay `facts=None` que suplir."""
+        return self.quality >= 0.5
+
+    @property
+    def final_score(self) -> float:
+        """0,78 es el del fixture y el suelo de la escala: el run 1 no es un desastre,
+        es el que todavía no ha aprendido nada."""
+        return round(0.78 + 0.14 * self.quality, 3)
+
+
 BASE_WALL = datetime(2026, 9, 19, 10, 0, 0, tzinfo=UTC)
 """`t_wall` = BASE_WALL + t_sim. Con un `datetime.now()` el fichero cambiaría en cada
 ejecución y no se podría comparar por hash."""
@@ -162,7 +203,7 @@ class Timeline:
     ) -> None:
         self.drafts.append(Draft(t_sim, type_, payload, source, label, causes))
 
-    def events(self) -> list[Event]:
+    def events(self, run_id: str = RUN_ID) -> list[Event]:
         """Ordena por `t_sim` (estable: el orden de escritura decide los empates),
         sella `seq` desde 1 y resuelve las etiquetas de `causes`."""
         ordered = sorted(self.drafts, key=lambda d: d.t_sim)
@@ -192,7 +233,7 @@ class Timeline:
             model.model_validate(payload)  # revienta aquí, no en la demo
             out.append(
                 Event(
-                    run_id=RUN_ID,
+                    run_id=run_id,
                     seq=seq,
                     t_wall=BASE_WALL + timedelta(seconds=d.t_sim),
                     t_sim=d.t_sim,
@@ -275,13 +316,23 @@ def _entities(sc: Scenario) -> dict[str, list[str]]:
     }
 
 
-def build(sc: Scenario, *, variant: str = "v2") -> list[Event]:
+BASELINE = Variation()
+"""El run tal cual está commiteado. Es el valor por defecto de `build` y el candado de
+`test_es_determinista`: construir sin variación tiene que dar los mismos bytes."""
+
+
+def build(
+    sc: Scenario, *, variant: str = "v2", var: Variation = BASELINE
+) -> list[Event]:
     """Seis minutos de incendio, con la llamada entrante del 03:30 como clímax.
 
     `variant="v1"` reproduce **byte a byte** `fixtures/run_fake.jsonl`, que es contra
     lo que están escritos los criterios del H2 y del H3 (van por `t_sim`, y meter una
     escena en medio los correría todos). `fixtures/**` solo se añade: el v2 es otro
     fichero, no una versión nueva del mismo.
+
+    `var` es el mismo guion salido mejor o peor, para los runs sintéticos del H5. Con
+    `Variation()` —el valor por defecto— no cambia ni un byte.
     """
     rng = random.Random(sc.seed)
     tl = Timeline()
@@ -308,8 +359,9 @@ def build(sc: Scenario, *, variant: str = "v2") -> list[Event]:
         causes=("fire",),
     )
 
-    # El viento sopla O→E hasta el inject de t=150: el fuego avanza en +x.
-    for i in range(1, 9):
+    # El viento sopla O→E hasta el inject de t=150: el fuego avanza en +x. Hasta dónde
+    # llega es lo que distingue un run bueno de uno malo (`Variation.spread`).
+    for i in range(1, var.spread + 1):
         t = 20.0 + i * 28.0
         if t > DURATION_S:
             break
@@ -371,7 +423,7 @@ def build(sc: Scenario, *, variant: str = "v2") -> list[Event]:
     )
     plan1 = Plan(
         id="plan_0001",
-        run_id=RUN_ID,
+        run_id=var.run_id,
         created_t=6.5,
         policy=policy1,
         assignments=[
@@ -753,7 +805,7 @@ def build(sc: Scenario, *, variant: str = "v2") -> list[Event]:
     )
     plan2 = Plan(
         id="plan_0002",
-        run_id=RUN_ID,
+        run_id=var.run_id,
         created_t=231.5,
         policy=policy2,
         assignments=[
@@ -917,14 +969,14 @@ def build(sc: Scenario, *, variant: str = "v2") -> list[Event]:
     tl.add(
         DURATION_S,
         EventType.RUN_ENDED,
-        RunEnded(scenario_id=sc.id, score=0.78),
+        RunEnded(scenario_id=sc.id, score=var.final_score),
         "core",
     )
 
-    if variant == "v2":
+    if variant == "v2" and not var.answered:
         _llamada_sin_respuesta(tl)
 
-    return tl.events()
+    return tl.events(var.run_id)
 
 
 def _llamada_sin_respuesta(tl: Timeline) -> None:
@@ -1012,6 +1064,37 @@ def write(events: list[Event], out: Path) -> None:
             fh.write(ev.model_dump_json() + "\n")
 
 
+def write_runs(sc: Scenario, count: int, directory: Path) -> list[Path]:
+    """N runs del mismo guion, de peor a mejor, en `runs/`.
+
+    Es lo que me deja construir la pantalla partida del run 1 vs run 12 sin esperar a que
+    Carlos corra los doce el domingo de madrugada. **No entran en `fixtures/`**: `runs/`
+    es salida, está gitignored, y cada uno de estos lleva `run_fake` en el `run_id`, que
+    es lo que hace que `/api/runs` los marque *sintéticos* en pantalla.
+
+    Se escriben en orden para que el `mtime` cuente la misma historia que la calidad: el
+    primero es el más viejo y el peor, como el run 1 de verdad.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for i in range(count):
+        # Con un solo run, el peor; con varios, de 0 a 1 repartido.
+        quality = i / (count - 1) if count > 1 else 0.0
+        var = Variation(run_id=f"run_fake_{i + 1:02d}", quality=quality)
+        events = build(sc, variant="v2", var=var)
+        path = directory / f"{var.run_id}.jsonl"
+        write(events, path)
+        errors = validate(path)
+        if errors:
+            raise SystemExit(f"{path}: {len(errors)} errores · {errors[0]}")
+        written.append(path)
+        print(
+            f"✓ {path} · calidad {quality:.2f} · {len(events)} eventos · "
+            f"score {var.final_score}"
+        )
+    return written
+
+
 def validate(path: Path) -> list[str]:
     """Los mismos tres criterios que `make check` le exige al golden: payloads que
     validan, `seq` sin huecos y `t_sim` monótono. Más el catálogo completo."""
@@ -1067,8 +1150,27 @@ def main() -> None:
         action="store_true",
         help="no genera: revalida el fichero que ya existe",
     )
+    ap.add_argument(
+        "--runs",
+        type=int,
+        default=0,
+        help="N runs sintéticos de peor a mejor, para el run 1 vs run 12 del H5",
+    )
+    ap.add_argument(
+        "--dir",
+        type=Path,
+        default=Path("runs"),
+        help="dónde escribir los runs de --runs. `fixtures/` no se toca nunca",
+    )
     args = ap.parse_args()
     out: Path = args.out or OUT[args.variant]
+
+    if args.runs:
+        sc = Scenario.model_validate(
+            yaml.safe_load(args.scenario.read_text(encoding="utf-8"))
+        )
+        write_runs(sc, args.runs, args.dir)
+        return
 
     if args.validate:
         if not out.exists():

@@ -1,0 +1,11 @@
+{
+  "location_hint": "refugio municipal",
+  "resolved_poi_id": null,
+  "road_blocked": null,
+  "people_immobile": null,
+  "injuries": null,
+  "confirmed_order": true,
+  "contradicts_known": false,
+  "urgency": "low",
+  "confidence": 0.74
+}

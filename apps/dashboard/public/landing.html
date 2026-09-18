@@ -1,0 +1,106 @@
+<!doctype html>
+<!--
+  La landing de los cinco segundos finales. P4 · H5.
+
+  Tres reglas, y de ellas sale todo el fichero:
+
+  1. UN SOLO FICHERO, SIN JAVASCRIPT Y SIN RED. El nivel 4 del plan B es *falla el
+     portátil*: lo que necesite un servidor, una fuente de Google o un generador de QR
+     en línea no es un plan B. Esto se abre con doble clic desde un USB.
+  2. NINGUNA CIFRA SIN SU RUN. Cada número lleva al lado el `run_id` del que sale. Los
+     huecos marcados PENDIENTE se rellenan a mano en la congelación del domingo,
+     leyéndolos de `GET /api/runs` — y mientras estén vacíos se ven vacíos, que es
+     información correcta.
+  3. FUERA DEL GRAFO DE COMPILACIÓN. Vive en `public/`, así que Vite la copia tal cual y
+     `pnpm build` no la mira. Borrarla no rompe nada: es lo primero del orden de
+     sacrificio de `hitos.md`.
+
+  Se sirve en /landing.html y se abre igual con file://
+-->
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vela · agente de crisis</title>
+    <style>
+      /* Los mismos tokens que `index.css`, copiados a mano a propósito: importar el CSS
+         del dashboard ataría esta página al build, y el punto es que no dependa de nada. */
+      :root {
+        --bg: #0a0d12;
+        --panel: #121821;
+        --edge: #223041;
+        --ink: #e6ecf3;
+        --dim: #7d8da1;
+        --accent: #38bdf8;
+        --pending: #f59e0b;
+        font-family: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 2rem;
+        padding: 4vh 6vw;
+        background: var(--bg);
+        color: var(--ink);
+        /* Una pantalla, sin scroll: son cinco segundos. */
+        overflow: hidden;
+      }
+      header { display: flex; align-items: baseline; gap: 1.5rem; }
+      h1 { margin: 0; font-size: clamp(2rem, 5vw, 4rem); letter-spacing: 0.2em; }
+      .claim { font-size: clamp(1rem, 2vw, 1.75rem); color: var(--dim); }
+      main { display: grid; grid-template-columns: 1fr auto; gap: 4vw; align-items: center; }
+      .figures { display: grid; gap: 2.5rem; }
+      .figure { display: grid; gap: 0.35rem; }
+      .value { font-size: clamp(2.5rem, 7vw, 6rem); line-height: 1; color: var(--accent); }
+      .value.pending { color: var(--pending); font-size: clamp(1.5rem, 3vw, 2.5rem); }
+      .label { font-size: clamp(0.9rem, 1.6vw, 1.4rem); }
+      /* La procedencia, en nivel *registro*: pequeña, pero presente siempre. */
+      .run { font-size: 0.8rem; color: var(--dim); }
+      .qr { display: grid; gap: 0.75rem; justify-items: center; }
+      .qr img { width: clamp(9rem, 18vw, 16rem); image-rendering: pixelated; }
+      footer { color: var(--dim); font-size: clamp(0.8rem, 1.3vw, 1.1rem); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>VELA</h1>
+      <p class="claim">
+        Un agente que decide en una crisis, y te enseña por qué lo decidió.
+      </p>
+    </header>
+
+    <main>
+      <div class="figures">
+        <!-- PENDIENTE (congelación del domingo): sustituir el contenido de .value por la
+             cifra y el de .run por el run_id del que sale, leídos de GET /api/runs. -->
+        <div class="figure">
+          <span class="value pending">PENDIENTE</span>
+          <span class="label">segundos de colgar el teléfono a que las unidades giren</span>
+          <span class="run">run: PENDIENTE · medido en tiempo de pared</span>
+        </div>
+        <div class="figure">
+          <span class="value pending">PENDIENTE</span>
+          <span class="label">civiles a salvo al terminar el run</span>
+          <span class="run">run: PENDIENTE</span>
+        </div>
+        <div class="figure">
+          <span class="value pending">PENDIENTE</span>
+          <span class="label">puntuación del run 1 → puntuación del último</span>
+          <span class="run">runs: PENDIENTE</span>
+        </div>
+      </div>
+
+      <div class="qr">
+        <img src="qr.svg" alt="código QR al repositorio de vela" />
+        <span class="run">el código, el journal y el vídeo</span>
+      </div>
+    </main>
+
+    <footer>
+      HackSpain 2026 · reto HappyRobot · Minecraft no es la demo, es el simulador
+    </footer>
+  </body>
+</html>

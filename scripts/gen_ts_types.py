@@ -21,7 +21,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 import contracts
-from contracts import calls, events, world
+from contracts import calls, events, plan, world
 from contracts.events import PAYLOAD_MODELS, Event, EventType
 
 OUT = Path(__file__).resolve().parents[1] / "apps" / "dashboard" / "src" / "types.ts"
@@ -62,6 +62,19 @@ ALIASES: list[tuple[str, object]] = [
     ("CallOutcome", calls.CallOutcome),
     ("Urgency", calls.Urgency),
     ("Severity", calls.Severity),  # idéntico a Urgency: sale como `= Urgency`
+]
+
+
+# Las constantes escalares del contrato. EXPLÍCITAS, por el mismo motivo que los alias:
+# no son modelos, así que no hay grafo que recorrer, y una lista copiada se desincroniza
+# en silencio. Están aquí y no escritas a mano en TypeScript porque el umbral de
+# divergencia lo dibuja el dashboard: el día que P1 mueva el 0,25, la línea del panel
+# mentiría y nadie se enteraría hasta que el banner rojo saliera antes que el cruce.
+CONSTANTS: list[tuple[str, object]] = [
+    ("DIVERGENCE_THRESHOLD", plan.DIVERGENCE_THRESHOLD),
+    ("MAX_REPLAN_ROUNDS", plan.MAX_REPLAN_ROUNDS),
+    ("UNKNOWN_VERB", events.UNKNOWN_VERB),
+    ("UNKNOWN_CONSTRAINT", plan.UNKNOWN_CONSTRAINT),
 ]
 
 
@@ -243,6 +256,19 @@ def emit_aliases() -> str:
     return "\n".join(lines) + "\n"
 
 
+def emit_constants() -> str:
+    """Los escalares del contrato, como `const` tipados por inferencia.
+
+    Un número del contrato copiado a mano en TypeScript es un número que se desincroniza
+    sin avisar. Emitirlo cuesta cuatro líneas y cierra el agujero.
+    """
+    lines = ["// --- Constantes de contracts ---", ""]
+    for name, value in CONSTANTS:
+        rendered = f"'{value}'" if isinstance(value, str) else repr(value)
+        lines.append(f"export const {name} = {rendered}")
+    return "\n".join(lines) + "\n"
+
+
 def emit_event_type() -> str:
     """REQ-003: el enum completo, no `string`."""
     lines = ["export type EventType ="]
@@ -296,7 +322,13 @@ def emit_vela_event() -> str:
 def emit(models: list[type]) -> str:
     """Interfaces TypeScript. Los `Literal` de Pydantic salen como uniones de
     strings; `dict[str, X]` como `Record<string, X>`."""
-    blocks = [HEADER.rstrip("\n"), "", emit_aliases(), emit_event_type()]
+    blocks = [
+        HEADER.rstrip("\n"),
+        "",
+        emit_aliases(),
+        emit_constants(),
+        emit_event_type(),
+    ]
     blocks.append("// --- Modelos ---\n")
     for model in models:
         if not issubclass(model, BaseModel):

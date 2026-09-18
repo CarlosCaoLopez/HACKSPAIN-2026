@@ -1,0 +1,11 @@
+{
+  "location_hint": "la casa del molino, en el pueblo A",
+  "resolved_poi_id": null,
+  "road_blocked": "salida sur del pueblo A, puente cortado por obras",
+  "people_immobile": 3,
+  "injuries": null,
+  "confirmed_order": true,
+  "contradicts_known": true,
+  "urgency": "critical",
+  "confidence": 0.86
+}

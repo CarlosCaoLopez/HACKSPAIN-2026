@@ -3,6 +3,7 @@
 
 RUN ?=
 SCENARIO ?= wildfire_ridge
+FLAGS ?=
 
 # El journal que sirve `dev-dash`: el golden de P2 en cuanto exista y, mientras no, el
 # falso de `scripts/fake_journal.py` — el v2 si está, que trae la llamada sin extraer del
@@ -41,8 +42,12 @@ dev-dash: ## gateway + WS en modo replay
 
 # --- La demo ---
 
-demo: ## todo de verdad, 6 minutos
-	uv run python scripts/demo.py --scenario $(SCENARIO)
+demo: ## todo de verdad, 6 minutos · make demo FLAGS="--mock-calls --no-minecraft"
+	uv run python scripts/demo.py --scenario $(SCENARIO) $(FLAGS)
+# Los dos planes B se ensayan con un comando y no editando el script:
+#   nivel 2 (falla la llamada):  make demo FLAGS="--mock-calls"
+#   nivel 3 (falla Minecraft):   make demo FLAGS="--no-minecraft"
+# Se ensayan los dos, de punta a punta. Un plan B que no se ha corrido es una intención.
 
 world: ## regenera el mundo por RCON (idempotente: /kill @e[tag=vela] y otra vez)
 	uv run python -m sim.worldgen --scenario scenarios/$(SCENARIO).yaml

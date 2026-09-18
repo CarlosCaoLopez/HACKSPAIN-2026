@@ -59,6 +59,11 @@ class Hub:
     def __init__(self, maxsize: int = QUEUE_MAX) -> None:
         self.clients: set[Client] = set()
         self.last_seq: int = 0
+        # El reloj del dominio visto por el proceso. Lo necesita quien publica desde el
+        # gateway (un override, una llamada simulada): sin esto sus eventos salen con
+        # `t_sim=0` y los paneles, que ordenan por `t_sim`, los mandan al principio del
+        # run — es decir, al sitio donde no pasó.
+        self.last_t_sim: float = 0.0
         self.run_id: str | None = None
         self._maxsize = maxsize
         self._dropped_clients = 0
@@ -80,6 +85,7 @@ class Hub:
     def dispatch(self, ev: Event) -> None:
         """Reparte a todos. Síncrono y sin `await`: no puede frenar al bus."""
         self.last_seq = max(self.last_seq, ev.seq)
+        self.last_t_sim = max(self.last_t_sim, ev.t_sim)
         self.run_id = ev.run_id
         for c in self.clients:
             if c.closing:

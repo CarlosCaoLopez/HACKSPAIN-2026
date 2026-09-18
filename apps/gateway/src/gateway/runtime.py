@@ -57,6 +57,13 @@ class Runtime:
     run_id: str | None = None
     scenario_id: str | None = None
 
+    # Los dos planes B del H5, decididos por run en `POST /api/run` y no por entorno: la
+    # bandera viaja con la petición que la usa. Se enseñan en `/api/health` y de ahí a la
+    # cabecera del dashboard, porque una demo degradada que no se anuncia es una demo que
+    # miente — y en el minuto cuatro no me voy a acordar de decirlo yo.
+    minecraft: bool = True
+    calls_mocked: bool = False
+
     # Los objetos de los demás. `Any` a propósito: el gateway los usa por su
     # superficie pública y no debe acoplarse a sus internos.
     core: Any | None = None
@@ -149,7 +156,13 @@ class Runtime:
                 return rid
         return f"run_{uuid.uuid4().hex[:12]}"
 
-    async def publish(self, type_: EventType, payload: BaseModel, source: str) -> Event:
+    async def publish(
+        self,
+        type_: EventType,
+        payload: BaseModel,
+        source: str,
+        causes: list[int] | None = None,
+    ) -> Event:
         """Publicar por el bus si tiene cuerpo; si no, al menos que el dashboard lo vea.
 
         Sin bus, el evento se reparte solo al hub: se pierde el journal (invariante 3),
@@ -158,15 +171,21 @@ class Runtime:
         Devuelve el `Event` sellado porque quien publica necesita su `seq`: es lo que
         `POST /control/override` le contesta al dashboard para que sepa qué fila del
         chorro es la suya.
+
+        `t_sim` sale del último evento visto por el hub, no de cero: lo que se publica
+        desde aquí pasa AHORA, y los paneles ordenan por `t_sim`. `causes` es opcional de
+        escribir y vale oro (`contracts.events.Event`): sin ella no hay cadena que
+        recorrer y el colgar → giro no se puede medir.
         """
         ev = Event(
             run_id=self.run_id or "run_unknown",
             seq=self.hub.last_seq + 1,
             t_wall=datetime.now(UTC),
-            t_sim=0.0,
+            t_sim=self.hub.last_t_sim,
             type=type_,
             source=source,
             payload=payload.model_dump(mode="json"),
+            causes=causes or [],
         )
         try:
             from contracts.bus import publish
@@ -224,6 +243,10 @@ class Runtime:
             "run_id": self.run_id,
             "scenario_id": self.scenario_id,
             "paused": self.paused,
+            # Los dos planes B, con la misma forma que `webhooks`: una palabra que se
+            # puede pintar en la cabecera sin interpretarla.
+            "minecraft": "encendido" if self.minecraft else "apagado",
+            "calls": "simuladas" if self.calls_mocked else "reales",
             "components": dict(self.components),
             "notes": dict(self.notes),
             "duplicate_actions": dict(self.duplicate_actions),
