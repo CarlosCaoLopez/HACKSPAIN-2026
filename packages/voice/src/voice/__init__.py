@@ -11,14 +11,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Literal, Optional
-
-from pydantic import BaseModel, Field
 
 from contracts.calls import CallFacts, CallRequest, Fact
 from contracts.factkeys import road_cut_key, validate_fact_key
 from contracts.settings import settings
 from voice import pois
+from voice.extract_schema import CallFactsExtract, to_call_facts
 from voice.webhooks import router
 
 __all__ = ["VoiceGateway", "router"]
@@ -130,6 +128,9 @@ cada llamada: se recuerda el motivo y se cae a las heurísticas en silencio."""
 def fenic_session():
     """Sesión de fenic con Anthropic como modelo por defecto, o (None, None) si no
     hay `fenic` o no hay API key. Nunca lanza."""
+    os.environ.setdefault(
+        "TQDM_DISABLE", "1"
+    )  # antes de importar: fenic pinta barras en el log
     try:
         import fenic as fc
     except ImportError:
@@ -166,26 +167,12 @@ def fenic_session():
         return None, None
 
 
-class _CallFactsExtract(BaseModel):
-    """Espejo de `CallFacts` con `Optional[...]`: fenic no acepta `str | None`.
-    Las descripciones son las mismas: son parte del prompt."""
+def warmup() -> None:
+    """Crea la sesión de fenic en un hilo al arrancar, para que el primer extract
+    real no pague los ~2 s de arranque del cliente."""
+    import threading
 
-    location_hint: str | None = Field(
-        None, description="lugar mencionado, tal cual lo dice la persona"
-    )
-    road_blocked: str | None = Field(None, description="tramo o carretera impracticable")
-    people_immobile: int | None = Field(
-        None, description="personas que no pueden moverse solas"
-    )
-    injuries: Optional[int] = Field(None, description="número de heridos")  # noqa: UP045
-    confirmed_order: bool | None = Field(
-        None, description="si acepta la instrucción dada"
-    )
-    contradicts_known: bool = Field(False, description="si contradice algo dicho antes")
-    urgency: Literal["low", "medium", "critical"] = Field(
-        "medium", description="urgencia"
-    )
-    confidence: float = Field(0.5, description="confianza de 0 a 1 en lo extraído")
+    threading.Thread(target=fenic_session, daemon=True).start()
 
 
 def _fenic_extract(transcript: str) -> CallFacts | None:
@@ -196,7 +183,7 @@ def _fenic_extract(transcript: str) -> CallFacts | None:
     df = session.create_dataframe([{"transcript": transcript}])
     rows = df.select(
         fc.semantic.extract(
-            fc.col("transcript"), _CallFactsExtract, request_timeout=EXTRACT_TIMEOUT_S
+            fc.col("transcript"), CallFactsExtract, request_timeout=EXTRACT_TIMEOUT_S
         ).alias("f")
     ).to_pylist()
     if not rows:
@@ -204,6 +191,4 @@ def _fenic_extract(transcript: str) -> CallFacts | None:
     raw = rows[0].get("f")
     if raw is None:
         return None
-    data = raw if isinstance(raw, dict) else vars(raw)
-    data["confidence"] = min(1.0, max(0.0, float(data.get("confidence") or 0.5)))
-    return CallFacts.model_validate(data)
+    return to_call_facts(raw)

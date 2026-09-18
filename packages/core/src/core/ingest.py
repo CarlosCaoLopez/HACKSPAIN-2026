@@ -115,6 +115,9 @@ cada llamada: se recuerda el motivo y se cae a las heurísticas en silencio."""
 def _session():
     """Sesión de fenic con Anthropic como modelo por defecto, o (None, None) si no
     hay `fenic` o no hay API key. Nunca lanza."""
+    os.environ.setdefault(
+        "TQDM_DISABLE", "1"
+    )  # antes de importar: fenic pinta barras en el log
     try:
         import fenic as fc
     except ImportError:

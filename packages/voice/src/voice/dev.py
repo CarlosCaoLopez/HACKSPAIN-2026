@@ -127,6 +127,9 @@ def build_app(
         run_id = bus.configure(run_id=f"dev_{uuid.uuid4().hex[:6]}")
         log.info("run %s · journal en runs/%s.jsonl", run_id, run_id)
         log.info("POIs: %s", load_pois(scenario))
+        from voice import warmup
+
+        warmup()
         if mock_calls:
             from voice.fake import install_fakes
 
