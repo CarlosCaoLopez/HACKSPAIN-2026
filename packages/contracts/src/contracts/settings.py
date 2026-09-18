@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     # P1 (planner) y P3 (fenic)
     anthropic_api_key: str = ""
+    openai_api_key: str = ""  # P1 y P3: fenic usa gpt-5.6-luna si está; si no, Anthropic
 
     # P3 · telefonía
     happyrobot_api_key: str = ""
