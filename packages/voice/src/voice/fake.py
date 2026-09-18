@@ -157,8 +157,7 @@ class FakeHumalike:
         from voice.humanlike import TurnDecision
 
         self.calls.append(("submit", {"content": content}))
-        tags = ["long_silence"] if content.strip() in ("...", "…") else []
-        return TurnDecision(decision="speak", turn_epoch=len(self.calls), tags=tags)
+        return TurnDecision(decision="speak", turn_epoch=len(self.calls), tags=[])
 
     async def respond(self, thread_id, content, turn_epoch, system_prompt=""):
         return [{"content": content, "position": 0, "deliver_at": None}]

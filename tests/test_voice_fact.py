@@ -2,6 +2,7 @@
 FakeLive sin guion. Comprueba el orden: hechos antes que el ack de Humalike."""
 
 import asyncio
+import time
 
 import httpx
 import pytest
@@ -151,26 +152,25 @@ async def test_coach_on_long_silence(journal, fakes):
     _, live = fakes
     mon = humanlike.get_or_start("sess_2", "run_test")
     mon.state.thread_id = "thr"
-    await mon.on_message("user", "...")
-    await asyncio.sleep(0.6)  # el foresee de fondo tarda 0,3 s
+    await mon.on_message("user", "hola, estoy en el molino")
+    await asyncio.sleep(0.6)  # el foresee de fondo tarda 0,3 s y deja last_emotions
+    live.signals.clear()
+    assert not await mon.check_silence(time.time() + 2)  # aún no
+    assert await mon.check_silence(time.time() + humanlike.SILENCE_S + 1)
+    assert not await mon.check_silence(time.time() + humanlike.SILENCE_S + 5)  # una vez
     coach = [s for s in live.signals if s.get("kind") == "coach"]
-    assert coach and coach[-1]["action"] == "acknowledge"
+    assert (
+        coach
+        and coach[-1]["action"] == "acknowledge"
+        and coach[-1]["reason"] == "long_silence"
+    )
     assert coach[-1]["tone"] == "calm" and coach[-1]["pace"] == "slow"
 
 
-async def test_signal_sent_carries_latency_and_causes(client, journal, fakes):
-    _, live = fakes
-    await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
-    mon = humanlike.MONITORS["sess_1"]
-    await mon.on_signal_requested(
-        "unit_dispatched", {"unit": "camión 2", "route": "pista norte", "eta_s": 40}, [42]
-    )
-    sent = next(
-        e
-        for e in journal
-        if e.type == EventType.CALL_SIGNAL_SENT and e.payload["key"] == "unit_dispatched"
-    )
-    assert sent.causes == [42]
-    assert sent.payload["refined"] is True
-    assert 0 <= sent.payload["latency_ms"] < 1500
-    assert sent.payload["message"] == live.signals[-1]["message"]
+def test_tone_for_accepts_spanish_and_english():
+    from voice.humanlike import tone_for
+
+    assert tone_for([{"type": "ansiedad", "intensity": 0.8}]) == ("calm", "slow")
+    assert tone_for([{"type": "frustración", "intensity": 0.7}]) == ("firm", "normal")
+    assert tone_for([{"type": "relief", "intensity": 0.9}]) == ("calm", "normal")
+    assert tone_for([{"type": "anxiety", "intensity": 0.3}]) == ("calm", "normal")

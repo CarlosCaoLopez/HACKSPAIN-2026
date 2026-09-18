@@ -340,7 +340,7 @@ El mapa de claves vive en `contracts/factkeys.py` y es una lista plana de string
 ### Timeouts y fallos
 
 - Llamada saliente sin respuesta en 45 s: `outcome="no_answer"`, el core reintenta una vez y después escala a `human.override`.
-- El endpoint del tool publica los hechos **antes** de esperar a `foresee`; si `foresee` tarda más de 1,5 s, devuelve el ack en borrador. El replan nunca espera a Humalike.
+- El endpoint del tool publica los hechos **antes** de esperar a `foresee`; si `foresee` tarda más de 3 s (medido: 2,5 s), devuelve el ack en borrador. El replan nunca espera a Humalike.
 - `semantic.extract` por encima de 4 s: se emite `CallResult` con `facts=None` y la transcripción cruda va al dashboard marcada como *sin extraer*. La demo continúa.
 - `analyze` falla o devuelve `402`: `CallResult` sin `health_score`. Nada se bloquea.
 - Webhook duplicado (pasa): descartad por `call_id` ya visto. Idempotencia obligatoria.

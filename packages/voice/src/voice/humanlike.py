@@ -36,11 +36,16 @@ log = logging.getLogger("voice.humanlike")
 HUMALIKE_BASE = "https://api.humalike.com"
 HAPPYROBOT_BASE = "https://platform.happyrobot.ai/api/v2"
 
-FORESEE_HOT_S = 1.5
-"""En el camino de vuelta al agente (ack del tool, signal): por encima, borrador."""
+FORESEE_HOT_S = 3.0
+"""En el camino de vuelta al agente (ack del tool, signal): por encima, borrador.
+Medido el viernes: `foresee` tarda 2,4 a 2,6 s; con 1,5 s nunca llegaba."""
 FORESEE_BG_S = 4.0
 """Lectura emocional en background por turno del vecino. Nadie la espera."""
-TURN_S = 0.6
+TURN_S = 2.0
+"""`submit_messages` tarda 1,1 a 1,4 s. Va en background: nadie lo espera."""
+SILENCE_S = 6.0
+"""Sin mensaje de nadie durante esto → coach `acknowledge`. En 1:1 el turn-taking de
+Humalike siempre dice `speak` y no etiqueta silencios de voz: lo medimos aquí."""
 SIGNAL_S = 2.0
 ANALYZE_S = 10.0
 EXTRACT_TIMEOUT_S = 4.0
@@ -392,6 +397,7 @@ class CallState:
     seen_tool_hashes: dict[str, dict] = field(default_factory=dict)
     last_assistant_t: float = 0.0
     last_user_t: float = 0.0
+    silence_coached: bool = False
     tool_facts_keys: set[str] = field(default_factory=set)
     ended: bool = False
 
@@ -420,15 +426,59 @@ def dominant(emotions: list[dict[str, Any]]) -> tuple[str, float]:
     return (str(e.get("type", "")), float(e.get("intensity", 0)))
 
 
+CALM_SLOW = {
+    "fear",
+    "panic",
+    "anxiety",
+    "miedo",
+    "panico",
+    "ansiedad",
+    "temor",
+    "angustia",
+    "nervios",
+}
+FIRM = {
+    "anger",
+    "frustration",
+    "irritation",
+    "enfado",
+    "frustracion",
+    "ira",
+    "irritacion",
+    "rabia",
+}
+WARM = {
+    "sadness",
+    "grief",
+    "resignation",
+    "dependence",
+    "tristeza",
+    "resignacion",
+    "dependencia",
+    "desamparo",
+    "soledad",
+}
+
+
+def _plain(kind: str) -> str:
+    import unicodedata
+
+    k = unicodedata.normalize("NFKD", kind.lower())
+    return "".join(c for c in k if not unicodedata.combining(c)).strip()
+
+
 def tone_for(emotions: list[dict[str, Any]]) -> tuple[str, str]:
-    """Emoción dominante → (tono, ritmo) para la señal `coach`."""
+    """Emoción dominante → (tono, ritmo) para la señal `coach`. Humalike devuelve los
+    nombres en español o en inglés según le dé; se aceptan los dos."""
     kind, intensity = dominant(emotions)
-    if kind in ("fear", "panic", "anxiety", "miedo") and intensity >= 0.5:
-        return ("calm", "slow")
-    if kind in ("anger", "frustration", "enfado", "frustracion") and intensity >= 0.5:
-        return ("firm", "normal")
-    if kind in ("sadness", "grief", "resignation", "tristeza") and intensity >= 0.5:
-        return ("warm", "slow")
+    k = _plain(kind)
+    if intensity >= 0.5:
+        if k in CALM_SLOW:
+            return ("calm", "slow")
+        if k in FIRM:
+            return ("firm", "normal")
+        if k in WARM:
+            return ("warm", "slow")
     return ("calm", "normal")
 
 
@@ -457,6 +507,7 @@ class ConversationMonitor:
             self._task = asyncio.create_task(self.run())
 
     async def run(self) -> None:
+        self._spawn(self._silence_watchdog())
         opened = await self.hl.open_thread()
         if opened:
             self.state.thread_id = opened[0]
@@ -485,6 +536,7 @@ class ConversationMonitor:
         speaker = self._speaker(role)
         self.state.transcript.append({"speaker": speaker, "text": text})
         now = time.time()
+        self.state.silence_coached = False
         if speaker == AGENT_NAME:
             self.state.last_assistant_t = now
         else:
@@ -559,14 +611,35 @@ class ConversationMonitor:
             )
         )
 
+    async def _silence_watchdog(self) -> None:
+        """Cada segundo: si nadie ha hablado en SILENCE_S, un coach `acknowledge`."""
+        while not self.state.ended:
+            await asyncio.sleep(1.0)
+            await self.check_silence()
+
+    async def check_silence(self, now: float | None = None) -> bool:
+        now = time.time() if now is None else now
+        last = max(self.state.last_user_t, self.state.last_assistant_t)
+        if not last or self.state.silence_coached or now - last < SILENCE_S:
+            return False
+        self.state.silence_coached = True
+        await self._coach(None, self.state.last_emotions, silence=True, now=now)
+        return True
+
     async def _coach(
-        self, decision: TurnDecision | None, emotions: list[dict[str, Any]]
+        self,
+        decision: TurnDecision | None,
+        emotions: list[dict[str, Any]],
+        silence: bool = False,
+        now: float | None = None,
     ) -> None:
         """Máximo una señal por turno, separadas ≥3 s, solo si algo cambió."""
-        now = time.time()
+        now = time.time() if now is None else now
         if now - self.state.last_coach_t < COACH_MIN_GAP_S:
             return
         tags = set(decision.tags) if decision else set()
+        if silence:
+            tags.add("long_silence")
         prev_kind, prev_int = dominant(self.state.last_emotions)
         kind, intensity = dominant(emotions)
         shifted = kind != prev_kind or abs(intensity - prev_int) >= EMOTION_DELTA
