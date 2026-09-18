@@ -30,7 +30,11 @@ _RESPONSE = 0
 
 CONNECT_RETRIES = 30
 """Paper tarda ~35 s en el primer arranque. Se reintenta con backoff."""
-COMMAND_TIMEOUT_S = 5.0
+TIMEOUT_S: dict[str, float] = {"high": 5.0, "low": 60.0}
+"""Timeout por carril. `high` va en la ruta crítica: si un `/tp` no vuelve en 5 s,
+la demo ya se ha roto y conviene saberlo. `low` incluye worldgen y `/fill` de
+áreas grandes, que generan terreno y tardan de verdad: un `forceload` de 171
+chunks se pasa de 5 s sin que nada vaya mal."""
 
 
 class RconError(RuntimeError):
@@ -42,9 +46,12 @@ class Rcon(Protocol):
 
     async def connect(self) -> None: ...
     async def close(self) -> None: ...
-    async def send(self, command: str, priority: Priority = HIGH) -> str: ...
+    async def send(
+        self, command: str, priority: Priority = HIGH, timeout: float | None = None
+    ) -> str: ...
     async def send_many(
-        self, commands: list[str], priority: Priority = HIGH
+        self, commands: list[str], priority: Priority = HIGH,
+        timeout: float | None = None,
     ) -> list[str]: ...
 
 
@@ -111,28 +118,32 @@ class RconClient:
             self._writer = None
         self._reader = None
 
-    async def send(self, command: str, priority: Priority = HIGH) -> str:
+    async def send(
+        self, command: str, priority: Priority = HIGH, timeout: float | None = None
+    ) -> str:
         """Encola un comando y devuelve la respuesta cruda del servidor."""
         if self._worker is None:
             raise RconError("RconClient sin conectar: falta `await connect()`")
         fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-        self._queues[priority].put_nowait((command, fut))
+        limit = TIMEOUT_S[priority] if timeout is None else timeout
+        self._queues[priority].put_nowait((command, fut, limit))
         return await fut
 
     async def send_many(
-        self, commands: list[str], priority: Priority = HIGH
+        self, commands: list[str], priority: Priority = HIGH,
+        timeout: float | None = None,
     ) -> list[str]:
         """Lote en orden. Para worldgen, que son 200 comandos seguidos."""
-        return [await self.send(c, priority) for c in commands]
+        return [await self.send(c, priority, timeout) for c in commands]
 
     # --- el worker: único dueño del socket ---
 
     async def _run(self) -> None:
         while True:
-            command, fut = await self._next()
+            command, fut, limit = await self._next()
             try:
                 await self._write(_COMMAND, command)
-                _, body = await asyncio.wait_for(self._read(), COMMAND_TIMEOUT_S)
+                _, body = await asyncio.wait_for(self._read(), limit)
                 if not fut.done():
                     fut.set_result(body)
             except (asyncio.CancelledError, GeneratorExit):
@@ -142,9 +153,13 @@ class RconClient:
             except Exception as exc:  # noqa: BLE001 — deliberado: un comando malo
                 # no tumba el sim. El fallo viaja al future de quien lo pidió.
                 if not fut.done():
-                    fut.set_exception(RconError(f"{command!r}: {exc}"))
+                    # `TimeoutError` tiene str() vacío: sin el nombre del tipo,
+                    # el fallo más probable es también el más opaco.
+                    fut.set_exception(
+                        RconError(f"{command!r}: {type(exc).__name__}: {exc}")
+                    )
 
-    async def _next(self) -> tuple[str, asyncio.Future]:
+    async def _next(self) -> tuple[str, asyncio.Future, float]:
         """`high` primero, siempre. Si está vacío, lo que haya en `low`."""
         high, low = self._queues[HIGH], self._queues[LOW]
         if not high.empty():
@@ -200,14 +215,17 @@ class FakeRcon:
     async def close(self) -> None:
         self.connected = False
 
-    async def send(self, command: str, priority: Priority = HIGH) -> str:
+    async def send(
+        self, command: str, priority: Priority = HIGH, timeout: float | None = None
+    ) -> str:
         self.commands.append((priority, command))
         return ""
 
     async def send_many(
-        self, commands: list[str], priority: Priority = HIGH
+        self, commands: list[str], priority: Priority = HIGH,
+        timeout: float | None = None,
     ) -> list[str]:
-        return [await self.send(c, priority) for c in commands]
+        return [await self.send(c, priority, timeout) for c in commands]
 
     def sent(self, prefix: str = "") -> list[str]:
         """Los comandos, para aserciones: `assert fake.sent("tp") == [...]`."""

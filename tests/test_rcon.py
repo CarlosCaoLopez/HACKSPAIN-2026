@@ -29,8 +29,8 @@ async def test_el_carril_high_adelanta_al_render():
     loop = asyncio.get_running_loop()
 
     for i in range(5):  # el frente de fuego, encolado primero
-        client._queues[LOW].put_nowait((f"fill {i}", loop.create_future()))
-    client._queues[HIGH].put_nowait(("tp truck1", loop.create_future()))
+        client._queues[LOW].put_nowait((f"fill {i}", loop.create_future(), 60.0))
+    client._queues[HIGH].put_nowait(("tp truck1", loop.create_future(), 5.0))
 
     orden = [(await client._next())[0] for _ in range(6)]
     assert orden[0] == "tp truck1", "el movimiento tiene que salir primero"
@@ -44,6 +44,6 @@ async def test_next_espera_sin_quemar_cpu_y_no_pierde_comandos():
 
     pendiente = asyncio.ensure_future(client._next())
     await asyncio.sleep(0)
-    client._queues[LOW].put_nowait(("fill tardío", loop.create_future()))
+    client._queues[LOW].put_nowait(("fill tardío", loop.create_future(), 60.0))
     assert (await asyncio.wait_for(pendiente, 1))[0] == "fill tardío"
     assert client._queues[LOW].empty()
