@@ -514,6 +514,7 @@ OPENAI_API_KEY=                     # P3, fenic con gpt-5.6-luna (fin de llamada
 ANTHROPIC_API_KEY=                  # P1 (planner, memoria); alternativa de fenic
 HAPPYROBOT_API_KEY=                 # P3
 HAPPYROBOT_HOOK_EVACUATION=         # P3, https://platform.happyrobot.ai/hooks/<slug>
+HAPPYROBOT_WEBCALL_URL=             # P3/P4, enlace de la web call del workflow entrante
 HUMANLIKE_API_KEY=                  # P3, token de Humalike (api.humalike.com)
 WEBHOOK_SHARED_TOKEN=               # P3 y P4
 JUDGE_PHONE=                        # P3, se cambia en el último minuto

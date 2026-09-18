@@ -183,6 +183,7 @@ def build_app(
                 "turns": len(m.state.transcript),
                 "thread_id": m.state.thread_id,
                 "last_emotions": m.state.last_emotions,
+                "callback_number": m.state.callback_number,
                 "facts": sorted(m.state.tool_facts_keys),
             }
             for sid, m in humanlike.MONITORS.items()

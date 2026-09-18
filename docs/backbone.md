@@ -18,7 +18,7 @@
 | Razonamiento | Modelo frontera de razonamiento vía API | Genera política y prioridades, nunca la asignación final |
 | Asignación | `scipy.optimize.linear_sum_assignment` | Determinista, instantánea, explicable |
 | Mundo | Paper 1.21 + RCON (`mcrcon`) | `/tp`, `/fill`, `/setblock`. Sin pathfinding, sin bots |
-| Telefonía entrante | HappyRobot · trigger *Inbound to Number* + *Inbound Voice Agent* con tool `report_fact` | Requisito del reto y eje de la demo: el vecino llama, el tool abre el incidente en nuestro backend a mitad de conversación y devuelve las recomendaciones del Core; las *signals* le cuentan al vecino qué unidad va |
+| Telefonía entrante | HappyRobot · trigger **Web Call** + *Inbound Voice Agent* con tool `report_fact` (indicación de HappyRobot: entrante por web call, sin número) | Requisito del reto y eje de la demo: el vecino llama, el tool abre el incidente en nuestro backend a mitad de conversación y devuelve las recomendaciones del Core; las *signals* le cuentan al vecino qué unidad va |
 | Telefonía saliente (opcional) | HappyRobot · trigger Webhook + SMS o *Outbound Voice Agent* | Aviso de vuelta al número que llamó cuando cambia su ruta. Nunca al jurado: el jurado mira, no interviene |
 | Comportamiento conversacional | Humalike (`api.humalike.com`) encima de HappyRobot | No toca la telefonía: `foresee` refina lo que el agente dice y lee la emoción del vecino, `analyze` audita cada llamada, `personas` genera los vecinos sintéticos |
 | Dashboard | Vite + React + TypeScript + Tailwind | Único sitio donde hay TS |
@@ -272,7 +272,7 @@ Posiciones de cámara preconfiguradas con `/tp @s x y z yaw pitch` guardadas en 
 
 ### HappyRobot: lo que hay que saber
 
-- **Un workflow es un trigger más nodos.** Trigger **Webhook**: `POST https://platform.happyrobot.ai/hooks/{slug}` con JSON; cada campo del cuerpo es una variable, `@trigger.campo` en el editor y `{{campo}}` en configuraciones crudas. Mandad un POST de prueba a `hooks/{slug}/draft` para que el editor aprenda el esquema. Trigger **Inbound to Number**: un número de la organización, asignado en Assets > Telephony y en estado *Synced*; expone `caller_number` y `called_number`.
+- **Un workflow es un trigger más nodos.** Trigger **Webhook**: `POST https://platform.happyrobot.ai/hooks/{slug}` con JSON; cada campo del cuerpo es una variable, `@trigger.campo` en el editor y `{{campo}}` en configuraciones crudas. Mandad un POST de prueba a `hooks/{slug}/draft` para que el editor aprenda el esquema. Trigger **Web Call**: un enlace `https://platform.happyrobot.ai/deployments/{slug}` que abre la llamada en el navegador, sin número; hay que desactivar *Enhanced security* en el trigger o pedirá login. Con web call no hay `caller_number` (vale `web`): si hace falta devolver la llamada, el número lo pide el agente y lo manda el tool como `callback_number`. Para la saliente sí hace falta un número: se compra uno US en Assets > Telephony y lo cubre HappyRobot.
 - **Nodos que usamos:** *Outbound Voice Agent* (`To = @trigger.to`, `From` = número de la organización), *Inbound Voice Agent* (atiende el trigger raíz, sin más configuración), *AI Extract* (transcripción → campos tipados), *Webhook* (POST a nuestra URL con `@agente.transcript` y lo extraído), condicionales. El nodo *Custom Code* es Python **sin red**: para hablar con nosotros siempre es un Webhook.
 - **Tools.** Una función que el agente puede invocar en mitad de la conversación: descripción, parámetros tipados que el agente rellena escuchando, y nodos hijos que se ejecutan al invocarla (un Webhook a nuestro backend). El resultado vuelve al agente y lo relata. Modo *blocking* (espera) o *background*. Trampa: hay que abrir **View Tool Call Result** una vez y exponer los campos que el agente debe ver, o el workflow no publica. Los nodos se ejecutan de verdad al pulsar *Generate*: apuntad al túnel de desarrollo.
 - **Signals.** `POST https://platform.happyrobot.ai/api/v2/signals` con `{"key": "session.<session_id>", "payload": {...}}` llega al agente **durante** la llamada y el prompt dice cómo reaccionar. Se activa en el nodo del agente (*Agent Signals* + *Start agent response on signal*).
@@ -298,7 +298,7 @@ Créditos: la primera llamada facturable aprovisiona la cuenta con un saldo inic
 
 | Workflow | Trigger | Acción | Uso en la demo |
 | --- | --- | --- | --- |
-| `citizen_report` | Inbound to Number | Llamada entrante del vecino, con el tool `report_fact`: abre o actualiza el incidente y devuelve las recomendaciones | Minuto 0:10 (informa del incendio) y minuto 3:30 (el clímax) |
+| `citizen_report` | Web Call | Llamada entrante del vecino, con el tool `report_fact`: abre o actualiza el incidente y devuelve las recomendaciones | Minuto 0:10 (informa del incendio) y minuto 3:30 (el clímax) |
 | `route_update` | Webhook | SMS, o llamada saliente corta si el número no tiene mensajería, al número que llamó cuando cambia su ruta recomendada | Minutos 1:00 y 2:35, opcional |
 | `resource_request` | Webhook | Llamada al responsable de medios (un móvil del equipo) | Tras el replan, opcional, lo primero que se cae |
 
@@ -306,7 +306,7 @@ Créditos: la primera llamada facturable aprovisiona la cuenta con un saldo inic
 
 ### Workflow 1 · `citizen_report` — el ciudadano llama, el sistema atiende y registra
 
-Trigger **Inbound to Number** → Inbound Voice Agent → Webhook a nuestro backend.
+Trigger **Web Call** → Inbound Voice Agent → Webhook a nuestro backend. El vecino abre el enlace en un portátil o un móvil y habla; para HappyRobot es una llamada como cualquier otra.
 
 El agente es un operador del 112: escucha, pregunta dónde, cuántos, qué carretera, y no cuelga hasta tener localización. **No inventa consejos**: las recomendaciones que da al vecino son las que le devuelve el tool o le llegan por signal, calculadas por el Core. Lleva:
 
@@ -358,7 +358,7 @@ Lo que una llamada dispara en segundo plano, todo visible en el log de acciones 
 
 ### Workflow 2 · `route_update` — el sistema avisa de vuelta (opcional)
 
-Trigger Webhook → nodo SMS si el número de la organización tiene mensajería *Synced*; si no, Outbound Voice Agent de 30 segundos que lee el `Advice` y cuelga. El core lo dispara con `action.notify` cuando cambian `safe_route` o `unit_en_route` de un incidente con llamadas enlazadas. El POST lleva `to` (el `caller_number` que HappyRobot expuso en la llamada entrante), `incident_id`, `run_id` y `message`; el `incident_id` vuelve en el webhook final para cerrar el bucle sin guardar estado en la plataforma. Es la primera pieza de telefonía que se cae si el sábado va justo: la demo se sostiene con la entrante.
+Trigger Webhook → nodo SMS si el número de la organización tiene mensajería *Synced*; si no, Outbound Voice Agent de 30 segundos que lee el `Advice` y cuelga. El core lo dispara con `action.notify` cuando cambian `safe_route` o `unit_en_route` de un incidente con llamadas enlazadas. El POST lleva `to` (con web call no hay `caller_number`: es el `callback_number` que el agente le pidió al vecino y el tool mandó, o `JUDGE_PHONE` en la demo), `incident_id`, `run_id` y `message`; el `incident_id` vuelve en el webhook final para cerrar el bucle sin guardar estado en la plataforma. Es la primera pieza de telefonía que se cae si el sábado va justo: la demo se sostiene con la entrante.
 
 ### Al colgar: de la transcripción al hecho
 
@@ -391,7 +391,7 @@ Cada `CallResult` lleva el `health_score` y los hallazgos de `analyze` (*"el age
 
 ### Números de teléfono y ensayo
 
-Comprad los números el viernes por la noche desde Assets > Telephony de HappyRobot: uno de entrada, uno de repuesto, y si existe uno con mensajería *Synced* para `route_update`; comprobad que quedan en estado *Synced*. La disponibilidad internacional "varía por país" y nada documenta España: si no hay número español, uno US llamando a un móvil español funciona, solo se ve raro. API keys de las dos plataformas en `.env`. Túnel (`cloudflared` o `ngrok`) para los dos webhooks, con la URL en una variable de entorno del workflow para no editar nodos cada vez que cambie. Probad la llamada entrante desde los móviles del equipo el sábado por la tarde y dentro de la sala: la cobertura de una sala con 200 personas es el punto de fallo más tonto y más probable de todo el proyecto. Escribid los dos guiones de vecino (incendio en la cresta, pista sur cortada) y ensayadlos: la conversación debe ser natural, pero las tres o cuatro frases que el tool tiene que oír van fijas.
+Indicación de HappyRobot el sábado: **la entrante va por trigger Web Call** (sin número) y **para la saliente se compra un número US en Assets > Telephony, que cubren ellos**; las salientes no deberían costar nada. Comprobad que el número US queda *Synced* para llamar y, si lo tiene, para mensajería (`route_update` por SMS). Un número US llamando a un móvil español funciona, solo se ve raro. API keys de las dos plataformas en `.env`; el enlace de la web call en `HAPPYROBOT_WEBCALL_URL`. Túnel (`cloudflared` o `ngrok`) para los dos webhooks, con la URL en una variable de entorno del workflow para no editar nodos cada vez que cambie. Probad la web call desde el portátil de la demo y desde un móvil el sábado por la tarde y dentro de la sala: ya no depende de la cobertura, pero sí de la wifi y del micrófono del navegador (permiso concedido, Chrome, sin extensiones raras). Tened el hotspot del móvil probado como respaldo. Escribid los dos guiones de vecino (incendio en la cresta, pista sur cortada) y ensayadlos: la conversación debe ser natural, pero las tres o cuatro frases que el tool tiene que oír van fijas.
 
 Plan B: el script de demo tiene un modo `--mock-calls` que reproduce un audio grabado y publica los mismos eventos, incluido el `world.fact.asserted` que habría emitido el tool.
 
@@ -607,7 +607,7 @@ Grabad el nivel 4 aunque estéis convencidos de que no hace falta.
 - [LLMs Can't Plan, But Can Help Planning in LLM-Modulo Frameworks](https://proceedings.mlr.press/v235/kambhampati24a.html) — Kambhampati et al., ICML 2024
 - [typedef-ai/fenic](https://github.com/typedef-ai/fenic) — capa de construcción de contexto y operadores semánticos
 - [fenic en PyPI](https://pypi.org/project/fenic/) — requisito de Python >=3.10, <3.13
-- [HappyRobot · Triggers: Webhook, Inbound to Number](https://docs.happyrobot.ai/workflows/triggers)
+- [HappyRobot · Triggers: Webhook, Web Call](https://docs.happyrobot.ai/workflows/triggers#web-call)
 - [HappyRobot · Inbound calls](https://docs.happyrobot.ai/voice-agents/inbound-calls) · [Outbound calls](https://docs.happyrobot.ai/voice-agents/outbound-calls) · [Outbound with callback](https://docs.happyrobot.ai/voice-agents/outbound-with-callback)
 - [HappyRobot · Creating tools](https://docs.happyrobot.ai/tools/creating-tools) · [Tool call result](https://docs.happyrobot.ai/tools/tool-call-result) · [Webhook node](https://docs.happyrobot.ai/core-nodes/webhook) · [AI Extract](https://docs.happyrobot.ai/core-nodes/ai-extract)
 - [HappyRobot · Signals](https://docs.happyrobot.ai/workflows/signals) · [Stream session messages (SSE)](https://docs.happyrobot.ai/api-reference/sessions/stream-session-messages-sse) · [STT, TTS y LLM](https://docs.happyrobot.ai/voice-agents/stt-tts-llm-configuration) · [Telephony](https://docs.happyrobot.ai/assets/telephony)

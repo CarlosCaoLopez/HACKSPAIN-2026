@@ -21,3 +21,6 @@ runs/*
 infra/server/logs/
 infra/server/cache/
 infra/server/*.jar
+
+# fenic deja bases locales al crear sesión
+*.duckdb

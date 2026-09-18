@@ -83,6 +83,9 @@ async def happyrobot_fact(
         }
 
     mon = humanlike.get_or_start(session_id, run_id)
+    cb = params.pop("callback_number", None) or body.get("caller_number")
+    if cb and str(cb).strip() and str(cb) != "web":
+        mon.state.callback_number = str(cb).strip()
     h = mon.tool_hash(params)
     cached = mon.state.seen_tool_hashes.get(h)
     if cached is not None:

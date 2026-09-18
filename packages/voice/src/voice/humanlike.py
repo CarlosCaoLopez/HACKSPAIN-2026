@@ -409,6 +409,9 @@ class CallState:
         False  # el ack del tool está esperando; el plan va dentro del ack
     )
     plan_message: str | None = None  # último mensaje de plan aún no dicho por el ack
+    callback_number: str | None = (
+        None  # con Web Call no hay caller_number: lo da el vecino
+    )
 
     def __post_init__(self) -> None:
         self.call_id = self.call_id or self.session_id

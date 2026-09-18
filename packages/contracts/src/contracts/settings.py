@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     # P3 · telefonía
     happyrobot_api_key: str = ""
     happyrobot_hook_evacuation: str = ""  # la URL del incoming hook
+    happyrobot_webcall_url: str = ""  # P3/P4: enlace de la web call del workflow entrante
     humanlike_api_key: str = ""
     judge_phone: str = ""
 
