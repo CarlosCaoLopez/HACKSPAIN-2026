@@ -24,7 +24,7 @@ y lo enseña en un dashboard.
 | Ingesta | Typedef `fenic` | `semantic.extract` / `classify` / `join` |
 | Asignación | `scipy.optimize.linear_sum_assignment` | Determinista y explicable |
 | Mundo | Paper 1.21 + RCON (`mcrcon`) | Solo `/tp`, `/fill`, `/setblock`. Sin bots ni pathfinding |
-| Voz | HappyRobot (saliente) + Humanlike (entrante) | |
+| Voz | HappyRobot en las dos direcciones (tool `report_fact` en llamada, *signals* de vuelta) + Humalike encima (`foresee`, `analyze`, `personas`) | Humalike no toca la telefonía. Todo REST, no hay SDK de Python |
 | Dashboard | Vite + React + TS + Tailwind | **Único sitio donde hay TypeScript** |
 | Deps | `uv` (Python) + `pnpm` (dashboard) | |
 

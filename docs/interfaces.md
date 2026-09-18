@@ -69,11 +69,14 @@ class Event(BaseModel):
 | `world.road.changed` | sim | `{edge_id, cut, cause}` | core, dashboard |
 | `world.civilians.changed` | sim | `{group_id, count, state, poi_id}` | core, dashboard |
 | `world.inject` | sim | `{inject_type, detail}` | core, dashboard |
-| `world.fact.asserted` | voice, human | `{key, value, confidence, source, severity}` | core, dashboard |
+| `world.fact.asserted` | voice (tool `report_fact` en llamada, o `semantic.extract` al colgar), human | `{key, value, confidence, source, severity}` | core, dashboard |
 | `call.requested` | core | `CallRequest` | voice, dashboard |
 | `call.started` | voice | `{call_id, task_id, to, direction}` | dashboard |
-| `call.transcript.partial` | voice | `{call_id, speaker, text}` | dashboard |
-| `call.ended` | voice | `CallResult` | core, dashboard |
+| `call.transcript.partial` | voice (SSE de la sesión de HappyRobot) | `{call_id, speaker, text}` | dashboard |
+| `call.affect` | voice (Humalike `foresee`) | `{call_id, emotions: list[{type, intensity}], risk}` | dashboard |
+| `call.ended` | voice | `CallResult` (con `health_score` y hallazgos de `analyze` si llegaron) | core, dashboard |
+| `call.signal.requested` | core | `{call_id, key, payload}` | voice, dashboard |
+| `call.signal.sent` | voice | `{call_id, key, signal_id}` | dashboard |
 | `plan.divergence` | core | `{value, broken: list[str]}` | dashboard |
 | `plan.replan.started` | core | `{reason, trigger}` | dashboard |
 | `plan.policy.emitted` | core | `Policy` | dashboard |
@@ -324,7 +327,10 @@ class Fact(BaseModel):
 | --- | --- |
 | Decidir que hay que llamar y a quién | P1 (core) |
 | Elegir plataforma, número saliente y guion | P3 (voice) |
-| Recibir el webhook y montar `CallResult` | P3 |
+| Recibir el tool en llamada, responder el ack (pasado por `foresee`) sin bloquear el replan | P3 |
+| Recibir el webhook de fin de llamada y montar `CallResult` | P3 |
+| Pedir una signal al agente cuando hay plan nuevo | P1 (core) |
+| Redactar la signal, refinarla con `foresee` y publicarla a `session.<id>` | P3 |
 | Ejecutar `semantic.extract` y producir `CallFacts` | P3 |
 | Traducir `CallFacts` a la lista de `Fact` | **P3**, con el mapa de claves que le da P1 |
 | Aplicar los `Fact` al `WorldState` | P1 |
@@ -334,7 +340,9 @@ El mapa de claves vive en `contracts/factkeys.py` y es una lista plana de string
 ### Timeouts y fallos
 
 - Llamada saliente sin respuesta en 45 s: `outcome="no_answer"`, el core reintenta una vez y después escala a `human.override`.
+- El endpoint del tool publica los hechos **antes** de esperar a `foresee`; si `foresee` tarda más de 1,5 s, devuelve el ack en borrador. El replan nunca espera a Humalike.
 - `semantic.extract` por encima de 4 s: se emite `CallResult` con `facts=None` y la transcripción cruda va al dashboard marcada como *sin extraer*. La demo continúa.
+- `analyze` falla o devuelve `402`: `CallResult` sin `health_score`. Nada se bloquea.
 - Webhook duplicado (pasa): descartad por `call_id` ya visto. Idempotencia obligatoria.
 
 ---
@@ -391,10 +399,13 @@ Las cinco funciones de abajo son puras a propósito: P1 puede desarrollarlas con
 ```python
 class VoiceGateway:
     async def place_call(self, req: CallRequest) -> str        # devuelve call_id
+    async def signal(self, call_id: str, key: str, payload: dict) -> str   # HappyRobot: POST /api/v2/signals a session.<id>
+    async def foresee(self, call_id: str, draft: str) -> tuple[str, dict]  # Humalike: (refined_reply, mental_state); el borrador si tarda > 1,5 s
+    async def analyze(self, call_id: str) -> dict | None                   # Humalike: health_score y hallazgos, al colgar
     async def extract(self, transcript: str) -> CallFacts | None
     def to_facts(self, cf: CallFacts, t_sim: float, call_id: str) -> list[Fact]
 
-router: APIRouter    # /webhooks/happyrobot/call, /webhooks/humanlike/call
+router: APIRouter    # /webhooks/happyrobot/fact (tool, en llamada) · /webhooks/happyrobot/call (fin)
 ```
 
 `place_call` devuelve en cuanto la plataforma acepta, no cuando la llamada termina. El resultado llega por evento. Nadie espera a una llamada de forma bloqueante.
@@ -426,8 +437,8 @@ P4 decide el orden de arranque y apaga limpio. Expone `POST /control/*` y es el 
 | `POST /control/inject` | P4 | `{inject_type, payload}` dispara un inject a mano |
 | `POST /control/override` | P4 | La intervención humana, ver abajo |
 | `POST /control/pause` | P4 | Congela el tick, para explicar algo en el pitch |
-| `POST /webhooks/happyrobot/call` | P3 | Eventos de inicio, fin y fallo |
-| `POST /webhooks/humanlike/call` | P3 | Llamada entrante terminada |
+| `POST /webhooks/happyrobot/fact` | P3 | El tool `report_fact` del agente, **durante** la llamada. Publica los hechos y devuelve el ack |
+| `POST /webhooks/happyrobot/call` | P3 | Fin de llamada (nodo Webhook del workflow): `task_id`, `session_id`, estado, transcripción, extract |
 | `GET /api/runs` | P4 | Runs pasados con su puntuación, para el run 1 vs run 12 |
 | `WS /ws` | P4 | El chorro de eventos |
 
@@ -501,8 +512,8 @@ RCON_PORT=25575
 RCON_PASSWORD=
 ANTHROPIC_API_KEY=                  # P1 (planner) y P3 (fenic)
 HAPPYROBOT_API_KEY=                 # P3
-HAPPYROBOT_HOOK_EVACUATION=         # P3, la URL del incoming hook
-HUMANLIKE_API_KEY=                  # P3
+HAPPYROBOT_HOOK_EVACUATION=         # P3, https://platform.happyrobot.ai/hooks/<slug>
+HUMANLIKE_API_KEY=                  # P3, token de Humalike (api.humalike.com)
 WEBHOOK_SHARED_TOKEN=               # P3 y P4
 JUDGE_PHONE=                        # P3, se cambia en el último minuto
 VELA_MODE=demo|dev|replay           # P4
