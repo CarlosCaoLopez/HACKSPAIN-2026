@@ -8,5 +8,46 @@ import { PriorityQueue } from './panels/PriorityQueue'
 import { WhatChangedPanel } from './panels/WhatChangedPanel'
 
 export default function App() {
-  throw new Error('not implemented')
+  const { state, plan, events, connected } = useEventStream()
+
+  return (
+    // REQ-018: entra completo en 1920×1080 sin scroll vertical. La rejilla es
+    // h-screen y cada celda es min-h-0; el scroll vive dentro de cada panel.
+    <div className="grid h-screen grid-rows-[auto_1fr] bg-vela-bg">
+      <header className="flex items-baseline gap-4 px-4 py-2">
+        <span className="text-lg font-bold tracking-widest text-vela-ink">VELA</span>
+        <span className="text-xs text-vela-dim">
+          ver · establecer prioridad · llamar · adaptar
+        </span>
+        <span className="ml-auto text-xs tabular-nums text-vela-dim">
+          t_sim {state?.t_sim.toFixed(1) ?? '—'} · seq {state?.seq ?? '—'} ·{' '}
+          {events.length} eventos
+        </span>
+        <span className={connected ? 'text-xs text-vela-accent' : 'text-xs text-vela-dim'}>
+          {connected ? 'conectado' : 'sin conexión'}
+        </span>
+      </header>
+
+      <main className="grid min-h-0 grid-cols-12 grid-rows-3 gap-3 p-3 pt-0">
+        <div className="col-span-7 row-span-2 min-h-0">
+          <MapPanel state={state} plan={plan} />
+        </div>
+        <div className="col-span-5 min-h-0">
+          <WhatChangedPanel events={events} />
+        </div>
+        <div className="col-span-5 min-h-0">
+          <PriorityQueue plan={plan} />
+        </div>
+        <div className="col-span-4 min-h-0">
+          <ActionLog events={events} />
+        </div>
+        <div className="col-span-4 min-h-0">
+          <CallsPanel events={events} />
+        </div>
+        <div className="col-span-4 min-h-0">
+          <DivergenceChart events={events} />
+        </div>
+      </main>
+    </div>
+  )
 }

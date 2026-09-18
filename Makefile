@@ -4,6 +4,11 @@
 RUN ?=
 SCENARIO ?= wildfire_ridge
 
+# El journal que sirve `dev-dash`: el golden de P2 en cuanto exista y, mientras no,
+# el falso de `scripts/fake_journal.py`. El día que Luis grabe el golden, este
+# target cambia solo y nadie tiene que acordarse.
+REPLAY ?= $(if $(wildcard fixtures/run_golden.jsonl),fixtures/run_golden.jsonl,fixtures/run_fake.jsonl)
+
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-12s\033[0m %s\n",$$1,$$2}'
 
@@ -23,8 +28,14 @@ dev-voice: ## gateway + voice + túnel, con un core que pide una llamada cada 60
 	uv run uvicorn gateway.main:app --reload --port 8000
 
 dev-dash: ## gateway + WS en modo replay
-	VELA_MODE=replay uv run uvicorn gateway.main:app --port 8000 & \
+	@echo "replay: $(REPLAY)"
+	VELA_MODE=replay VELA_REPLAY_FILE=$(REPLAY) \
+		uv run uvicorn gateway.main:app --port 8000 & \
+	GW=$$!; trap 'kill $$GW 2>/dev/null' EXIT INT TERM; \
 	cd apps/dashboard && pnpm dev
+# El `trap` es lo que hace que Ctrl-C se lleve los dos procesos: sin él, `pnpm dev`
+# muere y uvicorn se queda con el puerto 8000 cogido, y el siguiente `make dev-dash`
+# arranca contra un gateway viejo sin que se note.
 
 # --- La demo ---
 

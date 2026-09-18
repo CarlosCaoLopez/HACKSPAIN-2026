@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Reglas personales, si existen en tu copia (gitignored, cada uno las suyas): @claude-nacho.md
+
 ## Estado del repo
 
 Solo hay diseño: `docs/backbone.md` y `docs/interfaces.md`. **Cero código.** El árbol de

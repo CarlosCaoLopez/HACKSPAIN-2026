@@ -1,0 +1,7 @@
+# Los journals son datos, no texto fuente: a un `.jsonl` no se le toca el fin de
+# línea. Con `core.autocrlf=true` (Windows) el checkout lo convertiría a CRLF, y
+# entonces `fixtures/run_fake.jsonl` deja de coincidir byte a byte con lo que
+# genera `scripts/fake_journal.py` -- que es justo lo que comprueba
+# `tests/test_fake_journal.py::test_es_determinista`. Los mismos bytes en las
+# cuatro máquinas.
+*.jsonl -text

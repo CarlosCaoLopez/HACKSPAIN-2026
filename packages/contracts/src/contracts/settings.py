@@ -34,5 +34,16 @@ class Settings(BaseSettings):
     # P4
     vela_mode: Literal["demo", "dev", "replay"] = "dev"
 
+    # P4 · modo replay: el gateway alimenta el WS desde un journal en vez de desde
+    # el sim. Es lo que hace útil `make dev-dash` y no necesita ni core ni voz.
+    vela_replay_file: str = "fixtures/run_golden.jsonl"
+    vela_replay_speed: float = 1.0  # 0 = tan rápido como pueda
+    vela_replay_loop: bool = False  # útil mientras se pintan paneles
+
+    # P4 · los puentes `action.requested` → sim y `call.requested` → voice. Apagados
+    # hasta que P2 y P3 confirmen que no se suscriben ellos: si lo hacen los dos,
+    # cada acción se ejecuta dos veces y la unidad se mueve doble en la demo.
+    vela_bridges: bool = False
+
 
 settings = Settings()

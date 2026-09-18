@@ -1,0 +1,173 @@
+"""El estado del proceso, en un objeto y no en globals dispersos. P4.
+
+El gateway es el único que importa de todos los paquetes, así que es el único que
+puede arrancar medio sistema y quedarse en pie. `Runtime` es donde se anota qué
+arrancó, qué no, y de dónde sale el estado que ve el dashboard.
+
+Aquí vive **la única función que construye la forma del snapshot** (`snapshot`). La
+usan el primer frame del WS y `GET /api/state`, y por eso el cliente tiene un solo
+parser para el arranque, la recuperación por hueco y la reconexión.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+from collections.abc import Coroutine
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from contracts.plan import Plan
+from contracts.world import WorldState
+
+from gateway.hub import Hub
+
+log = logging.getLogger("vela.gateway")
+
+Status = Literal["up", "absent", "error", "degraded"]
+"""`absent` es un `NotImplementedError`: el paquete existe pero aún no tiene cuerpo.
+Es el estado normal de la mitad del sistema hasta el sábado, no un fallo."""
+
+COMPONENTS = ("bus", "journal", "sim", "core", "voice", "replay")
+
+SHUTDOWN_GRACE_S = 3.0
+"""Lo que se le da a cada componente antes del `cancel()`. Ctrl-C en mitad de la
+demo no puede dejar el RCON colgado ni el journal a medias."""
+
+
+@dataclass
+class Runtime:
+    mode: str
+    hub: Hub = field(default_factory=Hub)
+    components: dict[str, Status] = field(default_factory=dict)
+    notes: dict[str, str] = field(default_factory=dict)
+
+    run_id: str | None = None
+    scenario_id: str | None = None
+
+    # Los objetos de los demás. `Any` a propósito: el gateway los usa por su
+    # superficie pública y no debe acoplarse a sus internos.
+    core: Any | None = None
+    sim: Any | None = None
+    voice: Any | None = None
+    writer: Any | None = None
+
+    # Estado plegado del replay, cuando no hay core que lo mantenga.
+    replay_state: WorldState | None = None
+    replay_plan: Plan | None = None
+
+    tasks: dict[str, asyncio.Task] = field(default_factory=dict)
+    duplicate_actions: dict[str, int] = field(default_factory=dict)
+    paused: bool = False
+
+    def __post_init__(self) -> None:
+        for name in COMPONENTS:
+            self.components.setdefault(name, "absent")
+
+    # --- arranque degradado ----------------------------------------------------
+
+    def mark(self, name: str, status: Status, note: str = "") -> None:
+        self.components[name] = status
+        if note:
+            self.notes[name] = note
+        log.info("componente %s → %s %s", name, status, note)
+
+    @contextlib.contextmanager
+    def guard(self, name: str):
+        """Arrancar un componente sin que su ausencia tumbe el proceso.
+
+        Un `NotImplementedError` es `absent`; cualquier otra cosa es `error`. En los
+        dos casos el resto del sistema sigue arrancando: de eso vive todo el fin de
+        semana, porque la mitad de los paquetes no tienen cuerpo hasta el sábado.
+        """
+        try:
+            yield
+        except NotImplementedError:
+            self.mark(name, "absent", "sin implementar")
+        except ImportError as exc:
+            self.mark(name, "absent", f"no importable: {exc}")
+        except Exception as exc:  # noqa: BLE001 — degradar es el objetivo
+            self.mark(name, "error", repr(exc))
+            log.exception("fallo arrancando %s", name)
+
+    def spawn(self, name: str, coro: Coroutine[Any, Any, Any]) -> None:
+        """Un bucle largo en su propia task, supervisado.
+
+        `Sim.start()` o `Core.run()` lanzando `NotImplementedError` dentro de la task
+        no lo vería el `guard`: por eso la supervisión va aquí.
+        """
+
+        async def supervised() -> None:
+            try:
+                await coro
+            except asyncio.CancelledError:
+                raise
+            except NotImplementedError:
+                self.mark(name, "absent", "sin implementar")
+            except Exception as exc:  # noqa: BLE001
+                self.mark(name, "error", repr(exc))
+                log.exception("la task de %s murió", name)
+
+        self.tasks[name] = asyncio.create_task(supervised(), name=f"vela.{name}")
+
+    async def stop_tasks(self, *names: str) -> None:
+        """Para las tasks nombradas con cortesía y luego a la fuerza."""
+        for name in names:
+            task = self.tasks.pop(name, None)
+            if task is None or task.done():
+                continue
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.wait_for(task, timeout=SHUTDOWN_GRACE_S)
+
+    # --- el estado que ve el dashboard -----------------------------------------
+
+    def world_state(self) -> WorldState | None:
+        """El core manda si está arriba; si no, el estado plegado del replay."""
+        if self.core is not None and self.components.get("core") == "up":
+            try:
+                return self.core.state()
+            except NotImplementedError:
+                self.mark("core", "degraded", "state() sin implementar")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Core.state() falló: %r", exc)
+        return self.replay_state
+
+    def current_plan(self) -> Plan | None:
+        if self.core is not None and self.components.get("core") == "up":
+            try:
+                return self.core.current_plan()
+            except NotImplementedError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Core.current_plan() falló: %r", exc)
+        return self.replay_plan
+
+    def snapshot(self) -> dict:
+        """El primer frame del WS y el cuerpo de `GET /api/state`, la misma forma.
+
+        `state: null` es un estado válido y esperado: pasa antes del primer run y
+        pasa en replay mientras `core.belief.apply` no exista. El dashboard ya lo
+        tipa como `WorldState | null` y pinta los paneles vacíos.
+        """
+        state = self.world_state()
+        plan = self.current_plan()
+        return {
+            "kind": "snapshot",
+            "state": state.model_dump(mode="json") if state is not None else None,
+            "plan": plan.model_dump(mode="json") if plan is not None else None,
+            "seq": state.seq if state is not None else self.hub.last_seq,
+        }
+
+    def health(self) -> dict:
+        return {
+            "mode": self.mode,
+            "run_id": self.run_id,
+            "scenario_id": self.scenario_id,
+            "paused": self.paused,
+            "components": dict(self.components),
+            "notes": dict(self.notes),
+            "duplicate_actions": dict(self.duplicate_actions),
+            **self.hub.stats(),
+        }

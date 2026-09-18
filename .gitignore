@@ -17,6 +17,10 @@ apps/dashboard/src/types.ts
 runs/*
 !runs/.gitkeep
 
+# Cuaderno personal de Nacho. No es contrato del equipo.
+docs-nacho/
+claude-nacho.md
+
 # El mundo construido a mano SÍ se commitea (infra/server/world/), el resto no.
 infra/server/logs/
 infra/server/cache/

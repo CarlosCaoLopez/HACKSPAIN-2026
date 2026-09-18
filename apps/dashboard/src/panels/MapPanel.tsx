@@ -4,7 +4,16 @@
 //
 // Si Minecraft falla, este panel es la demo (plan B nivel 3).
 import type { Plan, WorldState } from '../types'
+import { Panel } from '../components/Panel'
 
 export function MapPanel({ state, plan }: { state: WorldState | null; plan: Plan | null }) {
-  throw new Error('not implemented')
+  const units = state ? Object.keys(state.units).length : 0
+  const routes = plan?.assignments.length ?? 0
+  return (
+    <Panel title="Mapa" count={units}>
+      <p>
+        sin datos · {units} unidades · {routes} asignaciones
+      </p>
+    </Panel>
+  )
 }

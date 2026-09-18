@@ -1,0 +1,32 @@
+@import 'tailwindcss';
+
+/* Tailwind v4: la config es CSS, no hay tailwind.config.js ni array `content`.
+   Se proyecta en una sala grande: fondo oscuro, texto legible a 10 metros, y el
+   rojo RESERVADO a REPLAN. Si algo más usa `vela-replan`, el banner deja de
+   significar nada. */
+@theme {
+  --color-vela-bg: #0a0d12;
+  --color-vela-panel: #121821;
+  --color-vela-edge: #223041;
+  --color-vela-ink: #e6ecf3;
+  --color-vela-dim: #7d8da1;
+  --color-vela-accent: #38bdf8;
+  --color-vela-replan: #ef4444;
+
+  --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-vela-bg);
+  color: var(--color-vela-ink);
+  font-family: var(--font-mono);
+  /* REQ-018: el scroll vive dentro de cada panel, nunca en el body. */
+  overflow: hidden;
+}
