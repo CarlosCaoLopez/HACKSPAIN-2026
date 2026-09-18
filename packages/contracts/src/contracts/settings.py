@@ -19,8 +19,11 @@ class Settings(BaseSettings):
     rcon_port: int = 25575
     rcon_password: str = ""
 
-    # P1 (planner) y P3 (fenic)
+    # P3 (fenic)
     anthropic_api_key: str = ""
+
+    # P1 · planner (GPT-5.6 Luna)
+    openai_api_key: str = ""
 
     # P3 · telefonía
     happyrobot_api_key: str = ""
