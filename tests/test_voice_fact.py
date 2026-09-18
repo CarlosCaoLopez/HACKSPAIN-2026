@@ -14,7 +14,9 @@ from voice import fake, humanlike, pois
 from voice.webhooks import router
 
 EDGE = "wp_sur_03-wp_sur_04"
-TOKEN = ""  # settings.webhook_shared_token está vacío en tests: no se exige
+from contracts.settings import settings
+
+HEADERS = {"X-Vela-Token": settings.webhook_shared_token}  # vacío si no hay .env
 
 
 @pytest.fixture
@@ -81,7 +83,7 @@ BODY = {
 
 
 async def test_tool_publishes_facts_then_ack(client, journal, fakes):
-    r = await client.post("/webhooks/happyrobot/fact", json=BODY)
+    r = await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
     assert r.status_code == 200, r.text
     ack = r.json()
     assert ack["ack"] is True
@@ -101,16 +103,20 @@ async def test_tool_publishes_facts_then_ack(client, journal, fakes):
 
 
 async def test_duplicate_tool_post_is_idempotent(client, journal, fakes):
-    a = (await client.post("/webhooks/happyrobot/fact", json=BODY)).json()
+    a = (
+        await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
+    ).json()
     n = len([e for e in journal if e.type == EventType.WORLD_FACT_ASSERTED])
-    b = (await client.post("/webhooks/happyrobot/fact", json=BODY)).json()
+    b = (
+        await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
+    ).json()
     assert a == b
     assert len([e for e in journal if e.type == EventType.WORLD_FACT_ASSERTED]) == n
 
 
 async def test_signal_requested_reaches_agent(client, journal, fakes):
     _, live = fakes
-    await client.post("/webhooks/happyrobot/fact", json=BODY)
+    await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
     mon = humanlike.MONITORS["sess_1"]
     await mon.on_signal_requested(
         "unit_dispatched", {"unit": "camión 2", "route": "pista norte", "eta_s": 40}, []
@@ -121,7 +127,7 @@ async def test_signal_requested_reaches_agent(client, journal, fakes):
 
 
 async def test_end_of_call_archives_with_health_score(client, journal, fakes):
-    await client.post("/webhooks/happyrobot/fact", json=BODY)
+    await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
     mon = humanlike.MONITORS["sess_1"]
     await mon.on_message("user", "estoy en el molino viejo")
     end = {
@@ -130,15 +136,15 @@ async def test_end_of_call_archives_with_health_score(client, journal, fakes):
         "status": "completed",
         "direction": "inbound",
     }
-    r = await client.post("/webhooks/happyrobot/call", json=end)
+    r = await client.post("/webhooks/happyrobot/call", json=end, headers=HEADERS)
     assert r.status_code == 200
     ended = next(e for e in journal if e.type == EventType.CALL_ENDED)
     assert ended.payload["health_score"] == pytest.approx(0.82)
     assert "molino" in ended.payload["transcript"]
     # duplicado
-    assert (await client.post("/webhooks/happyrobot/call", json=end)).json() == {
-        "dup": True
-    }
+    assert (
+        await client.post("/webhooks/happyrobot/call", json=end, headers=HEADERS)
+    ).json() == {"dup": True}
 
 
 async def test_coach_on_long_silence(journal, fakes):

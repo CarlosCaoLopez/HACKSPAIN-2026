@@ -135,18 +135,12 @@ async def publish(ev: Event) -> None:
         except ValidationError as exc:
             if _strict():
                 raise
-            ev = ev.model_copy(
-                update={
-                    "type": EventType.EVENT_MALFORMED,
-                    "payload": {
-                        "type": str(ev.type),
-                        "error": str(exc),
-                        "raw": ev.payload,
-                    },
-                }
-            )
+            ev.payload = {"type": str(ev.type), "error": str(exc), "raw": ev.payload}
+            ev.type = EventType.EVENT_MALFORMED
     _seq += 1
-    ev = ev.model_copy(update={"seq": _seq, "run_id": ev.run_id or _run_id})
+    # Se sella en el mismo objeto: quien publica ve el `seq` y puede usarlo en `causes`.
+    ev.seq = _seq
+    ev.run_id = ev.run_id or _run_id
     if ev.type == EventType.WORLD_TICK:
         _t_sim = float(ev.payload.get("t_sim", _t_sim))
     if _writer is not None:
