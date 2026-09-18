@@ -115,9 +115,11 @@ class VoiceGateway:
         return out
 
 
-FENIC_MODEL = "claude-haiku-4-5"
-"""Camino frío (fin de llamada, sintéticas): rápido y barato. fenic lee la key de
-ANTHROPIC_API_KEY en el entorno; `settings` la carga del .env."""
+FENIC_OPENAI_MODEL = "gpt-5.6-luna"
+FENIC_ANTHROPIC_MODEL = "claude-haiku-4-5"
+"""Camino frío (fin de llamada, sintéticas). OpenAI con gpt-5.6-luna si hay
+OPENAI_API_KEY; si no, Anthropic. fenic lee la key del entorno; `settings` la carga
+del .env."""
 
 
 _fenic_failed: str | None = None
@@ -133,22 +135,28 @@ def fenic_session():
     except ImportError:
         return None, None
     global _fenic_failed
-    if _fenic_failed is not None or not settings.anthropic_api_key:
+    if _fenic_failed is not None:
         return None, None
-    os.environ.setdefault("ANTHROPIC_API_KEY", settings.anthropic_api_key)
+    if settings.openai_api_key:
+        os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
+        model = fc.OpenAILanguageModel(
+            model_name=FENIC_OPENAI_MODEL, rpm=100, tpm=100_000
+        )
+    elif settings.anthropic_api_key:
+        os.environ.setdefault("ANTHROPIC_API_KEY", settings.anthropic_api_key)
+        model = fc.AnthropicLanguageModel(
+            model_name=FENIC_ANTHROPIC_MODEL,
+            rpm=100,
+            input_tpm=100_000,
+            output_tpm=20_000,
+        )
+    else:
+        return None, None
     try:
         config = fc.SessionConfig(
             app_name="vela",
             semantic=fc.SemanticConfig(
-                language_models={
-                    "claude": fc.AnthropicLanguageModel(
-                        model_name=FENIC_MODEL,
-                        rpm=100,
-                        input_tpm=100_000,
-                        output_tpm=20_000,
-                    )
-                },
-                default_language_model="claude",
+                language_models={"llm": model}, default_language_model="llm"
             ),
         )
         return fc, fc.Session.get_or_create(config)
