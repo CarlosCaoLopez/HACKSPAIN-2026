@@ -75,8 +75,8 @@ class Event(BaseModel):
 | `call.transcript.partial` | voice (SSE de la sesión de HappyRobot) | `{call_id, speaker, text}` | dashboard |
 | `call.affect` | voice (Humalike `foresee`) | `{call_id, emotions: list[{type, intensity}], risk}` | dashboard |
 | `call.ended` | voice | `CallResult` (con `health_score` y hallazgos de `analyze` si llegaron) | core, dashboard |
-| `call.signal.requested` | core | `{call_id, key, payload}` | voice, dashboard |
-| `call.signal.sent` | voice | `{call_id, key, signal_id}` | dashboard |
+| `call.signal.requested` | core | `{call_id, key, payload}` · `causes` apunta al hecho que provocó el replan | voice, dashboard |
+| `call.signal.sent` | voice | `{call_id, key, signal_id, message?, latency_ms?, refined?}` · `causes` apunta al `call.signal.requested` | dashboard |
 | `plan.divergence` | core | `{value, broken: list[str]}` | dashboard |
 | `plan.replan.started` | core | `{reason, trigger}` | dashboard |
 | `plan.policy.emitted` | core | `Policy` | dashboard |

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import ValidationError
@@ -94,6 +95,7 @@ async def happyrobot_fact(
     cf.resolved_poi_id = pois.resolve_poi_local(cf.location_hint)
     name = pois.poi_name(cf.resolved_poi_id)
 
+    t0 = time.perf_counter()
     # 1. Los hechos, todos publicados antes de tocar Humalike.
     facts = _gateway().to_facts(cf, current_t_sim(), session_id)
     seqs: list[int] = []
@@ -116,7 +118,16 @@ async def happyrobot_fact(
 
     # 2. El ack, refinado por Humalike si llega en 1,5 s.
     draft = ack_draft(cf, name)
-    message, _ = await mon.refine_ack(draft)
+    t_facts = time.perf_counter()
+    message, res = await mon.refine_ack(draft)
+    log.info(
+        "tool %s: %d hechos en %.0f ms, ack en %.0f ms (%s)",
+        session_id,
+        len(facts),
+        (t_facts - t0) * 1000,
+        (time.perf_counter() - t0) * 1000,
+        "refinado" if res else "borrador",
+    )
 
     ack = {
         "ack": True,

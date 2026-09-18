@@ -53,7 +53,9 @@ class EventType(StrEnum):
     CALL_TRANSCRIPT_PARTIAL = "call.transcript.partial"
     CALL_AFFECT = "call.affect"  # Humalike: emoción del interlocutor durante la llamada
     CALL_ENDED = "call.ended"
-    CALL_SIGNAL_REQUESTED = "call.signal.requested"  # core → voice: algo que decir en vivo
+    CALL_SIGNAL_REQUESTED = (
+        "call.signal.requested"  # core → voice: algo que decir en vivo
+    )
     CALL_SIGNAL_SENT = "call.signal.sent"  # voice → HappyRobot lo ha recibido
 
     PLAN_DIVERGENCE = "plan.divergence"
@@ -195,6 +197,13 @@ class SignalSent(BaseModel):
     call_id: str
     key: str
     signal_id: str
+    message: str | None = None  # lo que se le pidió decir al agente, para la tarjeta
+    latency_ms: float | None = (
+        None  # desde `call.signal.requested` hasta que HappyRobot aceptó
+    )
+    refined: bool | None = (
+        None  # True si Humalike llegó a tiempo; False si fue el borrador
+    )
 
 
 # --- Payloads: plan.* ------------------------------------------------------

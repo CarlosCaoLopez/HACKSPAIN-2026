@@ -596,16 +596,40 @@ class ConversationMonitor:
         self.state.last_coach_t = now
         await self._send(payload, key="coach")
 
-    async def _send(self, payload: dict, key: str) -> str | None:
+    async def _send(
+        self,
+        payload: dict,
+        key: str,
+        causes: list[int] | None = None,
+        t0: float | None = None,
+        refined: bool | None = None,
+    ) -> str | None:
         sid = await self.hr.signal(self.state.session_id, payload)
         if sid is not None:
+            latency = (time.perf_counter() - t0) * 1000 if t0 is not None else None
             await publish(
                 make_event(
                     EventType.CALL_SIGNAL_SENT,
-                    {"call_id": self.state.call_id, "key": key, "signal_id": sid or "-"},
+                    {
+                        "call_id": self.state.call_id,
+                        "key": key,
+                        "signal_id": sid or "-",
+                        "message": payload.get("message") or payload.get("say"),
+                        "latency_ms": latency,
+                        "refined": refined,
+                    },
                     source="voice",
+                    causes=causes,
                 )
             )
+            if latency is not None:
+                log.info(
+                    "signal %s → %s en %.0f ms (%s)",
+                    key,
+                    self.state.session_id,
+                    latency,
+                    "refinada por Humalike" if refined else "borrador",
+                )
         return sid
 
     async def on_signal_requested(
@@ -613,6 +637,7 @@ class ConversationMonitor:
     ) -> None:
         """El core quiere que el agente diga algo: borrador → `foresee` (1,5 s) →
         signal. Si Humalike no llega, va el borrador."""
+        t0 = time.perf_counter()
         draft = draft_for(key, payload)
         message = draft
         try:
@@ -626,7 +651,7 @@ class ConversationMonitor:
             message = res.refined_reply
             await self.publish_affect(res)
         body = {**payload, "kind": key, "message": message}
-        await self._send(body, key=key)
+        await self._send(body, key=key, causes=causes, t0=t0, refined=res is not None)
 
     # -- el tool report_fact --
 

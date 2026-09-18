@@ -4,7 +4,7 @@
 
 ## 0. Antes de abrir la UI
 
-- Servidor local arriba: `python -m voice.dev` (o `make dev-voice` cuando exista el gateway). Escucha en `:8000`.
+- Servidor local arriba: `python -m voice.dev --dummy-core` (o `make dev-voice` cuando exista el gateway). Escucha en `:8000`. `--dummy-core` hace de core mientras Carlos no emita `call.signal.requested`.
 - Túnel: `ngrok http 8000` → copia la URL `https://xxxx.ngrok-free.app`. **Cambia cada vez que arrancas ngrok**: por eso va en una variable de entorno del workflow, no en los nodos.
 - `WEBHOOK_SHARED_TOKEN` del `.env` a mano: es la cabecera `X-Vela-Token`.
 - En HappyRobot: *Settings > API Keys* → una key → `HAPPYROBOT_API_KEY` en `.env`. *Assets > Telephony* → un número con *Calling status: Synced* (inbound).
@@ -123,7 +123,7 @@ Los nombres exactos de `session_status` y `agent.transcript` salen del selector 
 1. *Publish*. Llama al número desde tu móvil. Di: «Hola, estoy en el molino viejo, la pista del sur está cortada por un árbol y hay tres personas en la casa de al lado que no pueden andar».
 2. En el log del servidor tienen que aparecer `world.fact.asserted road:wp_sur_03-wp_sur_04:cut=True`, `poi:poi_molino:immobile=3`, y `call.affect fear:0.x` si el token de Humalike está.
 3. El agente tiene que decirte el `message` del ack («Anotado, Molino viejo, …»).
-4. Con la llamada aún abierta, manda la señal a mano (lo que hará el core tras el replan):
+4. Con la llamada aún abierta, la señal del replan. Si el servidor corre con `--dummy-core`, sale sola 300 ms después del hecho de carretera cortada (es lo que hará el core de Carlos). Si no, mándala a mano:
 
 ```bash
 curl -s localhost:8000/dev/calls   # coge el session_id
@@ -132,7 +132,7 @@ curl -s -X POST localhost:8000/dev/signal -H 'content-type: application/json' \
        "payload": {"unit": "camión 2", "route": "pista norte", "eta_s": 40}}'
 ```
 
-   El agente tiene que decir «Ya va camión 2 por pista norte, llega en 40 segundos…». Cronómetro desde el `curl` hasta que empieza a hablar: objetivo ≤ 2 s.
+   El agente tiene que decir «Ya va camión 2 por pista norte, llega en 40 segundos…». `GET /dev/latency` da los tramos: hecho → petición → señal aceptada, y si Humalike llegó a tiempo. Objetivo: `fact_to_sent_ms ≤ 2000`, y de oído, desde tu frase hasta que el agente la repite, ≤ 3 s.
 5. Cuelga. En el log: `call.ended health_score=0.xx`. `GET /dev/events?n=40` para ver la secuencia completa.
 
 ## Fallos típicos

@@ -156,3 +156,21 @@ async def test_coach_on_long_silence(journal, fakes):
     coach = [s for s in live.signals if s.get("kind") == "coach"]
     assert coach and coach[-1]["action"] == "acknowledge"
     assert coach[-1]["tone"] == "calm" and coach[-1]["pace"] == "slow"
+
+
+async def test_signal_sent_carries_latency_and_causes(client, journal, fakes):
+    _, live = fakes
+    await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
+    mon = humanlike.MONITORS["sess_1"]
+    await mon.on_signal_requested(
+        "unit_dispatched", {"unit": "camión 2", "route": "pista norte", "eta_s": 40}, [42]
+    )
+    sent = next(
+        e
+        for e in journal
+        if e.type == EventType.CALL_SIGNAL_SENT and e.payload["key"] == "unit_dispatched"
+    )
+    assert sent.causes == [42]
+    assert sent.payload["refined"] is True
+    assert 0 <= sent.payload["latency_ms"] < 1500
+    assert sent.payload["message"] == live.signals[-1]["message"]

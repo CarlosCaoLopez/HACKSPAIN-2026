@@ -116,7 +116,9 @@ def load_pois(scenario: Path | None) -> str:
     return "POIs de desarrollo (el YAML no tiene pois)"
 
 
-def build_app(scenario: Path | None, mock_calls: bool, speed: float) -> FastAPI:
+def build_app(
+    scenario: Path | None, mock_calls: bool, speed: float, dummy_core: bool = False
+) -> FastAPI:
     app = FastAPI(title="vela · voice dev")
     app.include_router(router)
 
@@ -134,6 +136,11 @@ def build_app(scenario: Path | None, mock_calls: bool, speed: float) -> FastAPI:
             )
         asyncio.create_task(humanlike.signal_dispatcher())
         asyncio.create_task(_tail())
+        if dummy_core:
+            asyncio.create_task(_dummy_core())
+            log.info(
+                "--dummy-core: carretera cortada por llamada → unit_dispatched en 300 ms"
+            )
         if mock_calls:
             asyncio.create_task(_mock_session(run_id))
 
@@ -159,6 +166,12 @@ def build_app(scenario: Path | None, mock_calls: bool, speed: float) -> FastAPI:
         )
         await bus.publish(ev)
         return {"seq": ev.seq, "monitors": list(humanlike.MONITORS)}
+
+    @app.get("/dev/latency")
+    async def dev_latency(call_id: str | None = None) -> dict:
+        """Cronómetro de la última llamada (o de `call_id`): desde el primer hecho del
+        tool hasta que HappyRobot aceptó la señal, con los tramos intermedios."""
+        return latency_report(list(_recent), call_id)
 
     @app.get("/dev/calls")
     async def dev_calls() -> dict:
@@ -203,6 +216,81 @@ def _short(ev: Event) -> str:
     return ""
 
 
+def latency_report(events: list[Event], call_id: str | None = None) -> dict:
+    def cid(e: Event) -> str | None:
+        if e.type == EventType.WORLD_FACT_ASSERTED:
+            return (
+                e.source.removeprefix("call:") if e.source.startswith("call:") else None
+            )
+        return e.payload.get("call_id")
+
+    def ms(a: Event | None, b: Event | None) -> int | None:
+        if a is None or b is None:
+            return None
+        return round((b.t_wall - a.t_wall).total_seconds() * 1000)
+
+    if call_id is None:
+        for e in reversed(events):
+            if (
+                e.type == EventType.CALL_SIGNAL_SENT
+                and e.payload.get("key") == "unit_dispatched"
+            ):
+                call_id = e.payload["call_id"]
+                break
+    if call_id is None:
+        return {"error": "sin unit_dispatched todavía"}
+    mine = [e for e in events if cid(e) == call_id]
+    first_fact = next((e for e in mine if e.type == EventType.WORLD_FACT_ASSERTED), None)
+    requested = next((e for e in mine if e.type == EventType.CALL_SIGNAL_REQUESTED), None)
+    sent = next(
+        (
+            e
+            for e in mine
+            if e.type == EventType.CALL_SIGNAL_SENT
+            and e.payload.get("key") == "unit_dispatched"
+        ),
+        None,
+    )
+    return {
+        "call_id": call_id,
+        "fact_to_requested_ms": ms(first_fact, requested),
+        "requested_to_sent_ms": ms(requested, sent),
+        "fact_to_sent_ms": ms(first_fact, sent),
+        "voice_latency_ms": sent.payload.get("latency_ms") if sent else None,
+        "refined": sent.payload.get("refined") if sent else None,
+        "message": sent.payload.get("message") if sent else None,
+        "objetivo": "fact_to_sent_ms <= 2000",
+    }
+
+
+async def _dummy_core() -> None:
+    """Lo que hará el core de Carlos tras el replan, en tonto: una carretera cortada
+    por llamada → 300 ms de "planner" → `call.signal.requested` con la desviación."""
+    async for ev in bus.subscribe(EventType.WORLD_FACT_ASSERTED):
+        p = ev.payload
+        if not (
+            p["key"].startswith("road:") and p["key"].endswith(":cut") and p["value"]
+        ):
+            continue
+        if not ev.source.startswith("call:"):
+            continue
+        edge = p["key"].split(":")[1]
+        route = "pista norte" if "sur" in edge else "pista sur"
+        await asyncio.sleep(0.3)
+        await bus.publish(
+            bus.make_event(
+                EventType.CALL_SIGNAL_REQUESTED,
+                {
+                    "call_id": ev.source.removeprefix("call:"),
+                    "key": "unit_dispatched",
+                    "payload": {"unit": "camión 2", "route": route, "eta_s": 40},
+                },
+                source="core",
+                causes=[ev.seq],
+            )
+        )
+
+
 async def _mock_session(run_id: str) -> None:
     """Una llamada de guion: arranca el monitor (FakeLive reproduce el jsonl y
     hace el POST real al tool) y, tras el hecho, manda la señal como haría el core."""
@@ -213,17 +301,22 @@ async def _mock_session(run_id: str) -> None:
     while not mon.state.tool_facts_keys and not mon.state.ended:
         await asyncio.sleep(0.2)
     await asyncio.sleep(0.5)
-    await bus.publish(
-        bus.make_event(
-            EventType.CALL_SIGNAL_REQUESTED,
-            {
-                "call_id": session_id,
-                "key": "unit_dispatched",
-                "payload": {"unit": "camión 2", "route": "pista norte", "eta_s": 40},
-            },
-            source="core",
+    if not any(
+        e.type == EventType.CALL_SIGNAL_REQUESTED
+        and e.payload.get("call_id") == session_id
+        for e in _recent
+    ):
+        await bus.publish(
+            bus.make_event(
+                EventType.CALL_SIGNAL_REQUESTED,
+                {
+                    "call_id": session_id,
+                    "key": "unit_dispatched",
+                    "payload": {"unit": "camión 2", "route": "pista norte", "eta_s": 40},
+                },
+                source="core",
+            )
         )
-    )
     if mon._task:
         await mon._task
     from voice.webhooks import _on_end
@@ -245,12 +338,17 @@ def main() -> None:
     p.add_argument("--scenario", type=Path, default=Path("scenarios/wildfire_ridge.yaml"))
     p.add_argument("--mock-calls", action="store_true")
     p.add_argument(
+        "--dummy-core",
+        action="store_true",
+        help="un core tonto: cada carretera cortada por llamada dispara unit_dispatched",
+    )
+    p.add_argument(
         "--speed", type=float, default=1.0, help="velocidad del guion en --mock-calls"
     )
     args = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
     uvicorn.run(
-        build_app(args.scenario, args.mock_calls, args.speed),
+        build_app(args.scenario, args.mock_calls, args.speed, args.dummy_core),
         host="0.0.0.0",
         port=args.port,
         log_level="warning",
