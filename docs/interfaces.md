@@ -510,7 +510,8 @@ Un solo `.env` en la raíz, con `.env.example` commiteado. Las claves las carga 
 RCON_HOST=localhost                 # P2
 RCON_PORT=25575
 RCON_PASSWORD=
-ANTHROPIC_API_KEY=                  # P1 (planner) y P3 (fenic)
+OPENAI_API_KEY=                     # P3, fenic con gpt-5.6-luna (fin de llamada, sintéticas)
+ANTHROPIC_API_KEY=                  # P1 (planner, memoria); alternativa de fenic
 HAPPYROBOT_API_KEY=                 # P3
 HAPPYROBOT_HOOK_EVACUATION=         # P3, https://platform.happyrobot.ai/hooks/<slug>
 HUMANLIKE_API_KEY=                  # P3, token de Humalike (api.humalike.com)
