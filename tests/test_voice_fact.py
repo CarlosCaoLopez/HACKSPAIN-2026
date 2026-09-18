@@ -58,7 +58,10 @@ def fakes():
     hl = fake.FakeHumalike()
     live = fake.FakeLive(post_tools=False)
     humanlike.configure(hl=hl, hr=live, autostart=False)  # type: ignore[arg-type]
+    saved = humanlike.PLAN_WAIT_S
+    humanlike.PLAN_WAIT_S = 1.0  # en tests nadie replanifica salvo que se simule
     yield hl, live
+    humanlike.PLAN_WAIT_S = saved
     humanlike.configure(None, None, True)
 
 
@@ -192,3 +195,47 @@ async def test_signal_sent_carries_latency_and_causes(client, journal, fakes):
     assert sent.payload["refined"] is True
     assert 0 <= sent.payload["latency_ms"] < 1500
     assert sent.payload["message"] == live.signals[-1]["message"]
+
+
+async def test_ack_includes_plan_when_core_replans_in_time(client, journal, fakes):
+    _, live = fakes
+
+    sub = bus.subscribe(
+        EventType.WORLD_FACT_ASSERTED
+    )  # suscrito antes del POST, como el core real
+
+    async def dummy_core():
+        async for ev in sub:
+            if ev.payload["key"].endswith(":cut"):
+                await asyncio.sleep(0.2)
+                mon = humanlike.MONITORS[ev.source.removeprefix("call:")]
+                await mon.on_signal_requested(
+                    "unit_dispatched",
+                    {"unit": "camión 2", "route": "pista norte", "eta_s": 40},
+                    [ev.seq],
+                )
+                return
+
+    task = asyncio.create_task(dummy_core())
+    r = await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
+    task.cancel()
+    ack = r.json()
+    assert ack["plan_included"] is True
+    assert "Molino viejo" in ack["message"] and "camión 2" in ack["message"]
+    # la noticia fue dentro del ack: no se mandó signal unit_dispatched
+    assert not [s for s in live.signals if s.get("kind") == "unit_dispatched"]
+
+
+async def test_ack_without_plan_falls_back_to_signal(client, journal, fakes):
+    _, live = fakes
+    humanlike.PLAN_WAIT_S, saved = 0.3, humanlike.PLAN_WAIT_S
+    try:
+        r = await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
+    finally:
+        humanlike.PLAN_WAIT_S = saved
+    assert r.json()["plan_included"] is False
+    mon = humanlike.MONITORS["sess_1"]
+    await mon.on_signal_requested(
+        "unit_dispatched", {"unit": "camión 2", "route": "pista norte", "eta_s": 40}, []
+    )
+    assert live.signals[-1]["kind"] == "unit_dispatched"

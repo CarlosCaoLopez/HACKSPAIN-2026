@@ -116,17 +116,22 @@ async def happyrobot_fact(
         seqs.append(ev.seq)
         mon.state.tool_facts_keys.add(f.key)
 
-    # 2. El ack, refinado por Humalike si llega en 1,5 s.
+    # 2. El ack: Humalike lo refina y, en paralelo, se espera al replan del core.
+    #    Si el plan llega a tiempo, el agente dice en la misma frase qué unidad va.
+    if not mon.state.transcript:
+        # Sin SSE (sin API key de plataforma) el único texto es el del tool.
+        mon.add_turn("user", _pseudo_turn(cf))
     draft = ack_draft(cf, name)
     t_facts = time.perf_counter()
-    message, res = await mon.refine_ack(draft)
+    message, res, got_plan = await mon.ack_with_plan(draft)
     log.info(
-        "tool %s: %d hechos en %.0f ms, ack en %.0f ms (%s)",
+        "tool %s: %d hechos en %.0f ms, ack en %.0f ms (%s%s)",
         session_id,
         len(facts),
         (t_facts - t0) * 1000,
         (time.perf_counter() - t0) * 1000,
         "refinado" if res else "borrador",
+        ", con plan" if got_plan else ", sin plan aún",
     )
 
     ack = {
@@ -134,9 +139,23 @@ async def happyrobot_fact(
         "resolved_poi_name": name,
         "message": message,
         "facts_published": len(facts),
+        "plan_included": got_plan,
     }
     mon.state.seen_tool_hashes[h] = ack
     return ack
+
+
+def _pseudo_turn(cf: CallFacts) -> str:
+    parts = []
+    if cf.location_hint:
+        parts.append(f"estoy en {cf.location_hint}")
+    if cf.road_blocked:
+        parts.append(f"{cf.road_blocked} está cortada")
+    if cf.people_immobile:
+        parts.append(f"hay {cf.people_immobile} personas que no pueden moverse")
+    if cf.injuries:
+        parts.append(f"hay {cf.injuries} heridos")
+    return ", ".join(parts) or "necesito ayuda"
 
 
 def _coerce(params: dict) -> dict:

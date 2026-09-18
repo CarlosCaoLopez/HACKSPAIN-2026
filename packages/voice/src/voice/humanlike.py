@@ -37,6 +37,10 @@ HUMALIKE_BASE = "https://api.humalike.com"
 HAPPYROBOT_BASE = "https://platform.happyrobot.ai/api/v2"
 
 FORESEE_HOT_S = 3.0
+PLAN_WAIT_S = 3.5
+"""Cuánto espera el ack del tool a que el core replanifique. Si el plan llega, el
+agente dice en la misma frase qué unidad va: una sola ida y vuelta, sin signals.
+Si no llega, el ack sale igual y la noticia irá por signal cuando haya plan."""
 """En el camino de vuelta al agente (ack del tool, signal): por encima, borrador.
 Medido el viernes: `foresee` tarda 2,4 a 2,6 s; con 1,5 s nunca llegaba."""
 FORESEE_BG_S = 4.0
@@ -400,6 +404,10 @@ class CallState:
     silence_coached: bool = False
     tool_facts_keys: set[str] = field(default_factory=set)
     ended: bool = False
+    tool_pending: bool = (
+        False  # el ack del tool está esperando; el plan va dentro del ack
+    )
+    plan_message: str | None = None  # último mensaje de plan aún no dicho por el ack
 
     def __post_init__(self) -> None:
         self.call_id = self.call_id or self.session_id
@@ -499,6 +507,7 @@ class ConversationMonitor:
         self.prompt = agent_prompt
         self._task: asyncio.Task[None] | None = None
         self._bg: set[asyncio.Task[None]] = set()
+        self._plan_event = asyncio.Event()
 
     # -- ciclo de vida --
 
@@ -723,6 +732,12 @@ class ConversationMonitor:
         if res is not None:
             message = res.refined_reply
             await self.publish_affect(res)
+        if key == "unit_dispatched" and self.state.tool_pending:
+            # El tool sigue esperando: la noticia va dentro del ack, no por signal.
+            self.state.plan_message = message
+            self._plan_event.set()
+            log.info("plan de %s entregado por el ack del tool", self.state.session_id)
+            return
         body = {**payload, "kind": key, "message": message}
         await self._send(body, key=key, causes=causes, t0=t0, refined=res is not None)
 
@@ -735,7 +750,7 @@ class ConversationMonitor:
         return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
     async def refine_ack(self, draft: str) -> tuple[str, ForeseeResult | None]:
-        """El ack del tool, refinado si Humalike llega en 1,5 s."""
+        """El ack del tool, refinado si Humalike llega a tiempo (FORESEE_HOT_S)."""
         try:
             res = await asyncio.wait_for(
                 self.hl.foresee(self.transcript_turns(), draft, subject_name=CALLER_NAME),
@@ -747,6 +762,32 @@ class ConversationMonitor:
             return draft, None
         await self.publish_affect(res)
         return res.refined_reply, res
+
+    async def ack_with_plan(self, draft: str) -> tuple[str, ForeseeResult | None, bool]:
+        """Refina el ack y, en paralelo, espera hasta PLAN_WAIT_S a que el core
+        replanifique. Si el plan llega, se dice en la misma frase. Devuelve
+        (mensaje, resultado de foresee, plan incluido)."""
+        self.state.tool_pending = True
+        self.state.plan_message = None
+        self._plan_event.clear()
+
+        async def wait_plan() -> bool:
+            try:
+                await asyncio.wait_for(self._plan_event.wait(), PLAN_WAIT_S)
+                return True
+            except TimeoutError:
+                return False
+
+        try:
+            (message, res), got_plan = await asyncio.gather(
+                self.refine_ack(draft), wait_plan()
+            )
+        finally:
+            self.state.tool_pending = False
+        if got_plan and self.state.plan_message:
+            message = f"{message} {self.state.plan_message}"
+            self.state.plan_message = None
+        return message, res, got_plan
 
 
 # --- Registro de monitores y el despachador de señales -------------------------
