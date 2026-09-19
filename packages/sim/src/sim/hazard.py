@@ -36,6 +36,17 @@ CELL_ID = re.compile(r"^cell_(-?\d+)_(-?\d+)$")
 BURN_DURATION_S = 45.0
 """Lo que una celda arde antes de quedar `burnt`. Deja frente móvil y cicatriz."""
 
+AT_RISK_P = 0.5
+"""Probabilidad mínima de arder dentro del horizonte para marcar una celda
+`at_risk`.
+
+Sin umbral se marcaba **toda vecina de toda celda ardiendo**, que no es estar en
+riesgo sino estar al lado del fuego: mil celdas por run. Y no es cosmético — el
+core crea una tarea de extinción por cada celda caliente y `at_risk` cuenta como
+caliente, así que cada marca de más era una tarea de más y un replan de más.
+
+Medio significa medio: es tan probable que arda como que no."""
+
 MAX_RADIUS_CELLS = 40
 """Tope de propagación alrededor del origen. Sin él, seis minutos de demo bastan
 para que el fuego salga del valle y se coma el mapa entero."""
@@ -73,7 +84,7 @@ class Hazard(Protocol):
 
     def tick(self, dt: float) -> list[CellChange]: ...
 
-    def cells_at_risk(self, horizon_s: float) -> list[str]: ...
+    def cells_at_risk(self, horizon_s: float, threshold: float = 0.0) -> list[str]: ...
 
     def set_wind(self, wind: Wind) -> None: ...
 
@@ -168,7 +179,7 @@ class CellularHazard:
         changes.extend(self._mark_at_risk())
         return changes
 
-    def cells_at_risk(self, horizon_s: float) -> list[str]:
+    def cells_at_risk(self, horizon_s: float, threshold: float = 0.0) -> list[str]:
         """Las que probablemente caigan dentro de ese horizonte, de más a menos.
 
         Es lo que el core necesita para priorizar: actuar antes de que llegue el
@@ -180,7 +191,10 @@ class CellularHazard:
                 probability = _probability(rate, horizon_s)
                 survives = (1 - probability) * (1 - risk.get(neighbour, 0.0))
                 risk[neighbour] = 1 - survives
-        return sorted(risk, key=lambda c: (-risk[c], c))
+        return sorted(
+            (c for c, p in risk.items() if p >= threshold),
+            key=lambda c: (-risk[c], c),
+        )
 
     def set_wind(self, wind: Wind) -> None:
         """Cambiar el viento es cambiar un vector en memoria."""
@@ -251,7 +265,7 @@ class CellularHazard:
     def _mark_at_risk(self) -> list[CellChange]:
         changes: list[CellChange] = []
         horizon = self.DURATION or 60.0
-        for cid in self.cells_at_risk(horizon):
+        for cid in self.cells_at_risk(horizon, AT_RISK_P):
             if self.state_of(cid) == "intact":
                 self._state[cid] = "at_risk"
                 changes.append(self._change(cid, "at_risk"))
@@ -307,7 +321,7 @@ class Flood:
     def tick(self, dt: float) -> list[CellChange]:
         raise NotImplementedError
 
-    def cells_at_risk(self, horizon_s: float) -> list[str]:
+    def cells_at_risk(self, horizon_s: float, threshold: float = 0.0) -> list[str]:
         raise NotImplementedError
 
     def set_wind(self, wind: Wind) -> None:
