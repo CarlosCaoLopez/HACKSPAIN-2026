@@ -33,7 +33,7 @@ export function CallsPanel({
         <Skeleton rows={3} />
       ) : calls.length === 0 ? (
         <Empty>
-          Sin llamadas. Entrantes y salientes se listan aquí con su transcripción.
+          Sin llamadas. Las órdenes del agente y los avisos del vecino se listan aquí con su transcripción.
         </Empty>
       ) : (
         <ol className="flex flex-col gap-3">
@@ -58,7 +58,7 @@ function CallCard({ call }: { call: Call }) {
         {/* Las llamadas tienen su propio tono (REQ-200): el cian era suyo y de las
             decisiones a la vez, y son las dos voces que cuentan la historia. */}
         <span className="text-xs font-bold tracking-wide text-vela-call">
-          {entrante ? 'ENTRANTE' : 'SALIENTE'}
+          {entrante ? 'AVISO DEL VECINO' : 'ORDEN DEL AGENTE'}
         </span>
         <span className="truncate text-vela-ink">{call.to || call.callId}</span>
         <span

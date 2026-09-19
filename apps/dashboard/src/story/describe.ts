@@ -149,7 +149,7 @@ function describeNarrowed(ev: VelaEvent): Described {
 
     case 'call.started':
       return {
-        label: ev.payload.direction === 'inbound' ? 'LLAMADA ENTRANTE' : 'LLAMADA SALIENTE',
+        label: ev.payload.direction === 'inbound' ? 'AVISO DEL VECINO' : 'ORDEN DEL AGENTE',
         tone: 'call',
         sentence: `${ev.payload.call_id} · ${ev.payload.to}`,
       }
