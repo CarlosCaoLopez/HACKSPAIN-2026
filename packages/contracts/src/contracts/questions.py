@@ -27,10 +27,22 @@ URGENCY_LEVELS: tuple[str, ...] = ("low", "medium", "critical")
 """El orden importa: es el de los `criteria` del `Score`, y el índice redondeado del
 score es la posición en esta tupla."""
 IMMOBILE_OPTIONS: tuple[str, ...] = ("0", "1", "2", "3", "4", "5plus")
+_COUNT_LABELS: dict[str, str] = {
+    "0": "None",
+    "1": "One",
+    "2": "Two",
+    "3": "Three",
+    "4": "Four",
+    "5plus": "Five or more",
+    NOT_STATED: "The caller does not say",
+}
+"""Conteo pequeño enumerado (Jev no cuenta fiable): lo comparten `people_immobile` e
+`injuries`, el resto va a `5plus`."""
 FIELDS: tuple[str, ...] = (
     "location_hint",
     "road_blocked",
     "people_immobile",
+    "injuries",
     "urgency",
     "contradicts_known",
     "confirmed_order",
@@ -90,15 +102,12 @@ def call_questions_for(pois: list[POI], roads: list[RoadEdge]) -> dict[str, Ques
             "choice",
             "How many people who cannot move on their own does the caller mention?"
             + _CALLER_ONLY,
-            {
-                "0": "None",
-                "1": "One",
-                "2": "Two",
-                "3": "Three",
-                "4": "Four",
-                "5plus": "Five or more",
-                NOT_STATED: "The caller does not say",
-            },
+            dict(_COUNT_LABELS),
+        ),
+        "injuries": QuestionSpec(
+            "choice",
+            "How many injured people does the caller mention?" + _CALLER_ONLY,
+            dict(_COUNT_LABELS),
         ),
         "urgency": QuestionSpec(
             "score",

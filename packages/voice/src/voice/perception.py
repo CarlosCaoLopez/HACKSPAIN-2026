@@ -81,14 +81,19 @@ class CallPerception:
         `location_hint` sin resolver): lo que un pin de Telegram puede colocar. Sufijo de
         la clave `poi:<id>:<sufijo>` → valor."""
         f = self.completeness.fields
-        loc, imm = f["location_hint"], f["people_immobile"]
+        loc, imm, inj = f["location_hint"], f["people_immobile"], f["injuries"]
         if loc.value and loc.value != NOT_STATED and loc.status == "observed":
             return {}
+        out: dict[str, int] = {}
         if imm.value and imm.value != NOT_STATED and imm.status == "observed":
             count = _count(imm.value)
             if count:
-                return {"immobile": count}
-        return {}
+                out["immobile"] = count
+        if inj.value and inj.value != NOT_STATED and inj.status == "observed":
+            count = _count(inj.value)
+            if count:
+                out["injuries"] = count
+        return out
 
     @property
     def active(self) -> bool:
@@ -219,6 +224,7 @@ class CallPerception:
             resolved_poi_id=loc.value if has_poi else None,
             road_blocked=road.value if road.value and road.value != NOT_STATED else None,
             people_immobile=_count(imm.value),
+            injuries=_count(f["injuries"].value),
             confirmed_order=self.confirmed_order,
             urgency=self.completeness.severity(),
             confidence=min(confs) if confs else 0.5,

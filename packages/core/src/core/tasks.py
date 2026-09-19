@@ -540,9 +540,10 @@ def _rank(severity: str) -> int:
 
 def _rescue(state: WorldState) -> list[Task]:
     out: list[Task] = []
+    seen: set[str] = set()  # un POI, una tarea: immobile e injuries no la duplican
     for key, fact in sorted(_latest_facts(state).items()):
         seg = key.split(":")
-        if len(seg) != 3 or seg[0] != "poi" or seg[2] != "immobile":
+        if len(seg) != 3 or seg[0] != "poi" or seg[2] not in ("immobile", "injuries"):
             continue
         if fact.kind == "assumed_default":
             continue  # regla 4: lo asumido no funda una tarea
@@ -550,8 +551,9 @@ def _rescue(state: WorldState) -> list[Task]:
             continue
         poi_id = seg[1]
         tid = rescue_task_id(poi_id)
-        if tid in state.tasks:
+        if tid in state.tasks or poi_id in seen:
             continue
+        seen.add(poi_id)
         if poi_id not in state.pois:
             log.warning("rescate sobre un POI que no está en el estado: %s", poi_id)
         out.append(
