@@ -63,3 +63,6 @@ docs/carlos/
 *.duckdb
 *.duckdb.wal
 .DS_Store
+
+# worktrees de los subagentes de Claude
+.claude/worktrees/
