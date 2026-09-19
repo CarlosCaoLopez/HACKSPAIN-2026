@@ -306,18 +306,33 @@ async def stats(workflow_id: str) -> dict[str, Any]:
         return r.json()
 
 
-async def feedback(northstar_id: str, correcto: bool, nota: str = "") -> dict[str, Any]:
-    """Calibra una Northstar con un veredicto humano — o con el nuestro.
+async def feedback(
+    northstar_id: str, correctness: int, nota: str = "", regenerar: bool = False
+) -> dict[str, Any]:
+    """Calibra una Northstar con un veredicto sobre el juez, no sobre el agente.
+
+    `correctness` va de **-2 a +2** (-2 = el juez se equivocó de lleno, +2 = acertó
+    de lleno). No es un booleano: un 0 es «ni una cosa ni otra», que es justo lo que
+    no quieres decirle. Una entrada por clave de API.
+
+    `regenerar=True` hace que la plataforma **reescriba la regla** a partir del
+    comentario. Por defecto no, porque entonces el texto deja de ser el que hay en
+    este fichero y el `sync` ya no manda.
 
     Aquí está lo interesante: **nosotros sabemos a posteriori** si un hecho que el
-    agente afirmó resultó ser falso, porque el journal registra cuando otra llamada
-    o un `human.override` lo contradice. Eso es un pulgar abajo objetivo, no una
-    opinión, y alimentarlo cierra el bucle sin que nadie tenga que puntuar a mano.
+    agente afirmó resultó falso, porque el journal registra cuándo otra llamada o un
+    `human.override` lo contradice. Eso es un pulgar objetivo, no una opinión.
     """
+    if not -2 <= correctness <= 2:
+        raise ValueError(f"correctness va de -2 a +2, no {correctness}")
     async with _client() as c:
         r = await c.post(
             f"/northstars/{northstar_id}/feedback",
-            json={"correctness": 1 if correcto else 0, "feedback": nota},
+            json={
+                "correctness": correctness,
+                "feedback": nota,
+                "trigger_regeneration": regenerar,
+            },
         )
         r.raise_for_status()
         return r.json()
