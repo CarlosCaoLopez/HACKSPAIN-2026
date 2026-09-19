@@ -388,7 +388,12 @@ class Core:
         self, policy: Policy, vetoes: set[tuple[str, str]]
     ) -> tuple[Plan, list[Violation]]:
         return solve_with_violations(
-            self._state, policy, self.graph, vetoes=vetoes, holds=self._holds()
+            self._state,
+            policy,
+            self.graph,
+            vetoes=vetoes,
+            holds=self._holds(),
+            sticky=self._sticky(),
         )
 
     def _holds(self) -> dict[str, str]:
@@ -430,6 +435,44 @@ class Core:
                 continue
             holds[unit_id] = dest
         return holds
+
+    def _sticky(self) -> dict[str, tuple[str, str]]:
+        """Unidad → (tarea, waypoint) al que ya va comprometida por el plan vigente y
+        que sigue siendo válido para SU tarea. A diferencia de `_holds` (pin estricto
+        de corto plazo, `DWELL_S`), sobrevive al cambio de rol primary/alt y a que la
+        celda objetivo del frente se corra una celda, sin ventana de tiempo: sin esto el
+        segundo camión, al quedarse solo en el frente tras irse el primero a otro, era
+        arrastrado de vuelta al waypoint primario y giraba en U a mitad de ruta."""
+        sticky: dict[str, tuple[str, str]] = {}
+        if self._plan is None:
+            return sticky
+        served = {a.task_id for a in self._plan.assignments}
+        orphans = [
+            t
+            for t in self._state.tasks.values()
+            if not t.done and t.severity == "critical" and t.id not in served
+        ]
+        for a in self._plan.assignments:
+            if a.task_id == RETURN_TASK or not a.route:
+                continue
+            unit = self._state.units.get(a.unit_id)
+            task = self._state.tasks.get(a.task_id)
+            if unit is None or task is None or task.done:
+                continue
+            if unit.status == "unavailable":
+                continue
+            dest = a.route[-1]
+            en_route = unit.status == "moving"
+            parked = unit.status in ("idle", "working") and self._at_waypoint(unit, dest)
+            if not (en_route or parked):
+                continue
+            # No congelar una unidad que un crítico sin servir podría necesitar.
+            if any(o.required_capability in unit.capabilities for o in orphans):
+                continue
+            if not self._useful_at(task, dest):
+                continue
+            sticky[a.unit_id] = (a.task_id, dest)
+        return sticky
 
     def _useful_at(self, task: Task, wp_id: str) -> bool:
         """¿Sigue teniendo sentido que la unidad esté (o vaya) a ese waypoint por

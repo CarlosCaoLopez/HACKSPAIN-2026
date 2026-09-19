@@ -570,58 +570,71 @@ def test_waiting_target_only_moves_if_the_new_contact_is_clearly_sooner() -> Non
     assert solver.attack_waypoint(70, 30, st.wind, graph) == "wp_b"
 
 
-# --- (f) el segundo camión no rebota: anclaje estable de las dos columnas del frente
+# --- (f) el segundo camión no rebota: pegajosidad al plan vigente ------------------
 
 
-def _pair_graph() -> solver.RoadGraph:
-    """Grafo mínimo: dos waypoints en línea, wp_p al oeste y wp_a al este."""
-    sc = Scenario(
-        id="sc_anchor",
-        name="anchor",
-        origin=(0.0, 0.0),
-        hazard=HazardSpec(
-            kind="wildfire",
-            origin_cell="cell_0_0",
-            cell_size=4,
-            wind=Wind(bearing_deg=270, speed=1.0),
-        ),
-        waypoints=[Waypoint(id="wp_p", x=0, z=0), Waypoint(id="wp_a", x=100, z=0)],
-        roads=[RoadEdge(id="road:wp_p-wp_a", a="wp_p", b="wp_a", length_m=100)],
-        pois=[],
-        units=[],
+def _two_trucks() -> tuple[Scenario, solver.RoadGraph]:
+    """El escenario de frentes con un segundo camión: dos frentes, dos camiones, uno
+    por frente y sin duplicar columna (como en seq302 del journal, con truck1 en otro
+    frente y truck2 solo en el suyo)."""
+    sc = _scenario()
+    sc = sc.model_copy(
+        update={
+            "units": sc.units
+            + [Unit(id="unit_truck2", kind="fire_truck", x=0, z=10, capabilities=["extinguish"])]
+        }
     )
-    return solver.RoadGraph.from_scenario(sc)
+    return sc, solver.RoadGraph.from_scenario(sc)
 
 
-def test_front_pair_anchor_keeps_the_same_truck_on_the_primary_column() -> None:
-    """Diagnosticado en `runs/run_f789f40c4f1f.jsonl`: con un frente atacable desde dos
-    waypoints, el óptimo global volteaba qué camión iba a cada columna cuando el fuego
-    se extendía y el coste cambiaba unos metros, y el segundo camión recibía
-    sur_01→sur_02→sur_01 y rebotaba (`superseded`). El anclaje fija cada columna al
-    camión más cercano por carretera, y la deriva ya no lo voltea."""
-    graph = _pair_graph()
-    u1 = Unit(id="unit_truck1", kind="fire_truck", x=0, z=0, capabilities=["extinguish"])
-    u2 = Unit(id="unit_truck2", kind="fire_truck", x=100, z=0, capabilities=["extinguish"])
-    units = [u1, u2]
-    # col 0 = primary (se ataca desde wp_p), col 1 = alt (desde wp_a).
-    routes = [
-        [["wp_p"], ["wp_p", "wp_a"]],  # u1: pegado a wp_p
-        [["wp_a", "wp_p"], ["wp_a"]],  # u2: pegado a wp_a
-    ]
+def test_sticky_keeps_the_sole_truck_on_its_committed_waypoint() -> None:
+    """Diagnosticado en `runs/run_f789f40c4f1f.jsonl`: cuando el primer camión se va a
+    un frente nuevo, el segundo se queda solo en el suyo y, sin pegajosidad, el solver
+    lo arrastra del waypoint alt de vuelta al primary (gira en U a mitad de ruta). Con
+    `sticky` sigue en el waypoint al que ya iba comprometido."""
+    sc, graph = _two_trucks()
+    # Frente en anillo (atacable desde wp_cruce y wp_este) + frente sur: dos tareas,
+    # dos camiones, uno cada uno.
+    ring = [f"cell_{cx}_0" for cx in range(25, 37)]
+    st = _burning(belief.initial_state(RUN, sc), *ring, *SOUTH)
+    st = st.model_copy(update={"wind": Wind(bearing_deg=0, speed=0.0)})
+    st, _ = _folded(st, graph)
 
-    def solved(drift: float) -> list[tuple[int, int]]:
-        # Costes base casi empatados; `drift` abarata el anti-diagonal, como haría la
-        # deriva de unos metros al extenderse el fuego.
-        matrix = [
-            [10.0, 20.0 - drift],
-            [20.0 - drift, 10.0],
-        ]
-        solver._anchor_front_pairs(matrix, routes, units, graph, [(0, 1)])
-        return solver._match(matrix)
+    free = solver.solve(st, planner.neutral_policy(), graph)
+    ring_task = st.tasks[EAST_ID]  # el frente en anillo hereda el id de su celda este
+    ring_a = next(a for a in free.assignments if a.task_id == ring_task.id)
+    primary_wp = ring_a.route[-1]
+    assert primary_wp in {"wp_cruce", "wp_este"}
+    alt_wp = ({"wp_cruce", "wp_este"} - {primary_wp}).pop()
 
-    # Sin anclaje, un drift de 11 voltea el óptimo (anti 18 < diag 20).
-    assert solver._match([[10.0, 9.0], [9.0, 10.0]]) == [(0, 1), (1, 0)]
-    # Con anclaje, el camión cercano a wp_p (u1) se queda en la columna primary en
-    # ambos casos: sin deriva y con la deriva que antes lo volteaba.
-    assert solved(0.0) == [(0, 0), (1, 1)]
-    assert solved(11.0) == [(0, 0), (1, 1)]
+    # El camión del anillo iba comprometido al waypoint alt. Sin pegajosidad revierte
+    # al primary; con ella se queda en el alt.
+    stuck = solver.solve(
+        st,
+        planner.neutral_policy(),
+        graph,
+        sticky={ring_a.unit_id: (ring_task.id, alt_wp)},
+    )
+    dest = {a.unit_id: a.route[-1] for a in stuck.assignments}
+    assert dest[ring_a.unit_id] == alt_wp
+
+
+def test_sticky_to_an_unreachable_waypoint_never_strands_the_unit() -> None:
+    """La pegajosidad es un descuento finito, no un pin duro: si el waypoint comprometido
+    no tiene ruta viva (columna infactible), la unidad sigue recibiendo su frente por el
+    camino normal en vez de quedarse sin asignar."""
+    sc, graph = _two_trucks()
+    ring = [f"cell_{cx}_0" for cx in range(25, 37)]
+    st = _burning(belief.initial_state(RUN, sc), *ring)
+    st, _ = _folded(st, graph)
+    (task,) = _ext(st).values()
+
+    plan = solver.solve(
+        st,
+        planner.neutral_policy(),
+        graph,
+        sticky={"unit_truck1": (task.id, "wp_fantasma")},
+    )
+    a = next(a for a in plan.assignments if a.unit_id == "unit_truck1")
+    assert a.task_id == task.id
+    assert a.route[-1] in {"wp_cruce", "wp_este"}
