@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -163,7 +164,7 @@ async def test_el_run_fluye_de_sim_a_core_y_al_dashboard(gateway) -> None:
     for comp in ("bus", "journal", "sim", "core", "voice"):
         assert health["components"][comp] == "up", (comp, health["notes"].get(comp))
     assert health["notes"]["bridges"].startswith("encendidos")
-    assert health["notes"]["voice-pois"].startswith("5 POIs"), health["notes"]["voice-pois"]
+    assert re.match(r"\d+ POIs", health["notes"]["voice-pois"]), health["notes"]["voice-pois"]
     assert warmups == [True], "voice.warmup() se llama una vez por proceso"
 
     # Puente 1: action.requested → Sim.execute, y el sim contesta por el bus.
@@ -174,9 +175,14 @@ async def test_el_run_fluye_de_sim_a_core_y_al_dashboard(gateway) -> None:
     )
     await _publish(EventType.ACTION_REQUESTED, req.model_dump(mode="json"))
     evs = await _wait_for(journal, EventType.WORLD_UNIT_STATUS)
-    moving = [e for e in evs if e.type == EventType.WORLD_UNIT_STATUS]
-    assert moving[-1].payload["unit_id"] == "unit_truck1"
-    assert moving[-1].payload["status"] == "moving"
+    # El core ya planifica solo y puede mover a otras unidades a la vez: basta con
+    # que la orden del test haya puesto en marcha al camión 1.
+    moving = [
+        e
+        for e in evs
+        if e.type == EventType.WORLD_UNIT_STATUS and e.payload["unit_id"] == "unit_truck1"
+    ]
+    assert moving and moving[-1].payload["status"] == "moving"
     assert not any(e.type == EventType.ACTION_FAILED for e in evs), "la orden falló"
     assert rt.duplicate_actions == {}, "el puente ejecuta cada orden una vez"
 

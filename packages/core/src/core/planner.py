@@ -158,7 +158,7 @@ async def _call(prompt: str) -> Policy:
         args = resp.choices[0].message.tool_calls[0].function.arguments
         return Policy.model_validate(json.loads(args))
     except Exception as exc:  # noqa: BLE001 — degradar a pesos neutros es el diseño
-        log.warning("planner %s falló, pesos neutros: %r", MODEL, exc)
+        log.error("planner %s falló; se cae a la política neutra: %r", MODEL, exc)
         return neutral_policy()
 
 
