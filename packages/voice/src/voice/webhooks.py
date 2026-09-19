@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
+from collections.abc import Iterable
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import ValidationError
@@ -105,11 +107,53 @@ def telegram_hint(bot: str) -> str:
     )
 
 
-def needs_telegram(resolved_poi_id: str | None) -> bool:
-    """Cuando la llamada no ha podido ubicar al vecino contra el escenario: sin
-    `location_hint`, o con uno que no resuelve (o resuelve por debajo del umbral de
-    percepción, que es lo mismo: `resolved_poi_id` queda a None)."""
-    return resolved_poi_id is None
+_LOST_RE = re.compile(
+    r"\b(estoy|estamos|me he|nos hemos)\s+perdid|"
+    r"\bno s[eé] d[oó]nde (estoy|estamos|me encuentro|nos encontramos)\b|"
+    r"\bno reconozco (nada|d[oó]nde)\b",
+    re.IGNORECASE,
+)
+"""El vecino dice, con todas las letras, que no sabe dónde está."""
+
+
+def says_lost(transcript: Iterable[dict[str, str]]) -> bool:
+    """¿Ha dicho el **vecino** que está perdido?
+
+    Solo cuenta lo que dice él. Si la frase sale del agente —repitiendo el `message`
+    del ack, que es lo que le manda hacer su prompt— no es una declaración del vecino
+    y realimentaría la condición en cada vuelta del tool.
+    """
+    return any(
+        t.get("speaker") == humanlike.CALLER_NAME and _LOST_RE.search(t.get("text") or "")
+        for t in transcript
+    )
+
+
+def needs_telegram(
+    resolved_poi_id: str | None, transcript: Iterable[dict[str, str]] = ()
+) -> bool:
+    """¿Hay que pedirle al vecino su ubicación por Telegram?
+
+    Dos motivos:
+
+    1. **No hemos podido ubicarlo**: sin `location_hint`, o con uno que no resuelve
+       (o resuelve por debajo del umbral de percepción: `resolved_poi_id` a None).
+       Es la condición original y no cambia.
+
+    2. **Él dice que está perdido.** Aunque el `location_hint` haya resuelto. Porque
+       resolver no es acertar: `resolve_poi_local` cae, como último recurso, en un
+       solape de tokens que se conforma con **uno solo**, y «al final de una pista,
+       junto a unas casas» —el ejemplo que usa la propia documentación para describir
+       a alguien que NO sabe ubicarse— aterriza en `poi_pueblo_a` porque comparte la
+       preposición «a», que no está en `STOPWORDS`. Un perdido que describa su
+       entorno queda ubicado con total confianza en el pueblo equivocado.
+
+       Ese fallo del resolutor no se toca aquí a propósito: arreglarlo cambiaría
+       cómo se ubican todas las llamadas. Lo que se hace es más estrecho: si el
+       vecino dice que está perdido, su palabra pesa más que nuestra conjetura, y se
+       le pide el punto exacto.
+    """
+    return resolved_poi_id is None or says_lost(transcript)
 
 
 def with_telegram_hint(draft: str, bot: str | None, hint: bool) -> str:
@@ -196,7 +240,7 @@ async def _fact_by_jev(mon: humanlike.ConversationMonitor, params: dict) -> dict
     cf = mon.perception.call_facts()
     n = mon.perception.facts_published
     road = pois.road_label(cf.road_blocked) if cf.road_blocked else None
-    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id)
+    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id, mon.state.transcript)
     draft = with_telegram_hint(
         ack_draft(cf.location_hint, road, cf.people_immobile, cf.injuries), bot, hint
     )
@@ -239,7 +283,7 @@ async def _fact_without_jev(
         mon.add_turn("user", _pseudo_turn(cf))
     edge = pois.resolve_edge_local(cf.road_blocked)
     road = pois.road_label(edge) if edge else None
-    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id)
+    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id, mon.state.transcript)
     draft = with_telegram_hint(
         ack_draft(name, road, cf.people_immobile, cf.injuries), bot, hint
     )
