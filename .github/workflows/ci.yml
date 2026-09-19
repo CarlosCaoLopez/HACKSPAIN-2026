@@ -1,0 +1,50 @@
+# Lo mismo que `make check` más el typecheck del dashboard: verde en cada merge a main.
+name: ci
+
+on:
+  push:
+    branches: [main, rama-nacho]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # Python 3.12 exacto: `fenic` declara <3.13 (lo fija requires-python).
+      - run: uv sync --frozen
+      - name: mypy sobre contracts
+        run: uv run mypy packages/contracts/src
+      # Sin claves ni red: los tests usan fakes (FakeJev, FakeHumalike) y tests/conftest.py
+      # desactiva TypeSafe aunque haya clave.
+      - name: pytest
+        run: uv run pytest -q
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/dashboard/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - uses: astral-sh/setup-uv@v5
+      - name: types.ts está al día con contracts
+        working-directory: .
+        run: |
+          uv sync --frozen
+          uv run python scripts/gen_ts_types.py
+          git diff --exit-code apps/dashboard/src/types.ts
+      - name: typecheck y build
+        run: pnpm build
