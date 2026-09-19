@@ -17,11 +17,12 @@ se toca.
   cabecera del dashboard lo enseña mientras dure. Una llamada simulada que se presenta
   como real es la clase de mentira que este proyecto existe para no contar.
 
-**Límite conocido**: esto son llamadas **salientes**, que son las que nacen de un
-`call.requested` del core. La entrante —el vecino asustado, el clímax de la demo— entra
-por el webhook de humalike y es de P3: sin su router no hay forma de simularla desde
-aquí sin inventarse un evento con `source` de otro, que es justo lo que `control.py` se
-niega a hacer con `world.inject`.
+**Límite conocido**: esto son las llamadas que nacen de un `call.requested` del core:
+nosotros llamamos al agente (HappyRobot) y él nos dicta la orden en esa misma llamada.
+La del vecino asustado —información del terreno, el clímax de la demo— entra por el
+webhook de humalike y es de P3: sin su router no hay forma de simularla desde aquí sin
+inventarse un evento con `source` de otro, que es justo lo que `control.py` se niega a
+hacer con `world.inject`.
 """
 
 from __future__ import annotations

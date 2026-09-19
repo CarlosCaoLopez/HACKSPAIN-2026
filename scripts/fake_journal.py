@@ -119,7 +119,7 @@ class Variation:
     run_id: str = RUN_ID
     quality: float = 0.0
     """0 = el run de hoy, tal cual está commiteado; 1 = el mejor. Mueve tres cosas: hasta
-    dónde llega el fuego, si la llamada saliente la coge alguien, y la puntuación final.
+    dónde llega el fuego, si la llamada de la orden se completa, y la puntuación final.
     Las tres arrancan en el valor del fixture, que es lo que lo mantiene byte a byte."""
 
     @property
@@ -129,7 +129,7 @@ class Variation:
 
     @property
     def answered(self) -> bool:
-        """En un run bueno, la saliente la cogen: no hay `facts=None` que suplir."""
+        """En un run bueno, la llamada de la orden se completa: no hay `facts=None` que suplir."""
         return self.quality >= 0.5
 
     @property
@@ -162,9 +162,9 @@ TASK_EVAC_A = "task_evac_a"
 TASK_EXTINGUISH = "task_extinguish_ridge"
 TASK_NOTIFY_B = "task_notify_b"
 
-CALL_OUT = "hl_8821"  # saliente, HappyRobot
-CALL_IN = "vh_1074"  # entrante, humalike · la que dispara el clímax
-CALL_NO_ANSWER = "hl_9002"  # saliente que nadie coge · solo en el variant v2
+CALL_OUT = "hl_8821"  # la orden: llamamos al agente (HappyRobot) y nos la dicta
+CALL_IN = "vh_1074"  # el vecino: info del terreno, humalike · dispara el clímax
+CALL_NO_ANSWER = "hl_9002"  # la orden que no se completa · solo en el variant v2
 
 
 # --- El armazón -----------------------------------------------------------------
@@ -523,7 +523,7 @@ def build(
     _leg(tl, TRUCK2, ["wp_base", "wp_norte_01", "wp_norte_02"], 12.0, 80.0, rng)
     _leg(tl, DRONE, ["wp_base", "wp_sur_01", "wp_sur_02"], 20.0, 120.0, rng, step=12.0)
 
-    # --- 00:40 · la llamada saliente -------------------------------------------
+    # --- 00:40 · la llamada al agente: nos dicta la orden -------------------------------------------
     call_req = CallRequest(
         task_id=TASK_EVAC_A,
         poi_id=PUEBLO_A,
@@ -683,7 +683,7 @@ def build(
         causes=("truck2down",),
     )
 
-    # --- 03:30 · el clímax: llamada entrante → replan --------------------------
+    # --- 03:30 · el clímax: llamada del vecino → replan --------------------------
     #
     # Esta es la cadena que dibuja el WhatChangedPanel del H3 de punta a punta:
     # llamada → hecho → violación → replan → política → plan → orden.
@@ -980,9 +980,9 @@ def build(
 
 
 def _llamada_sin_respuesta(tl: Timeline) -> None:
-    """02:20 · la saliente que nadie coge, y el humano que suple lo que no se supo.
+    """02:20 · la llamada de la orden que no se completa, y el humano que suple lo que no se supo.
 
-    Es literalmente el guion de `docs/interfaces.md`: «llamada saliente sin respuesta en
+    Es literalmente el guion de `docs/interfaces.md`: «llamada sin respuesta en
     45 s: `outcome="no_answer"`, el core reintenta una vez y después escala a
     `human.override`». Está aquí porque el fixture del H3 no tenía **ninguna** llamada
     con `facts=None`, que es justo el caso que el panel de llamadas no puede romper —y
