@@ -27,6 +27,9 @@ class CallFactsExtract(BaseModel):
         None, description="personas que no pueden moverse solas"
     )
     injuries: Optional[int] = Field(None, description="número de heridos")
+    headcount: Optional[int] = Field(
+        None, description="cuántas personas hay en total en el lugar, si lo dice"
+    )
     confirmed_order: Optional[bool] = Field(
         None, description="si acepta la instrucción dada"
     )
@@ -48,11 +51,17 @@ def build_extract_model(poi_ids: list[str], road_ids: list[str]) -> type[BaseMod
         __base__=CallFactsExtract,
         location_hint=(
             Optional[Literal[tuple(poi_ids)]],  # type: ignore[valid-type]  # Literal dinámico: los ids salen del YAML en runtime
-            Field(None, description="the place the caller speaks from, one of the allowed ids"),
+            Field(
+                None,
+                description="the place the caller speaks from, one of the allowed ids",
+            ),
         ),
         road_blocked=(
             Optional[Literal[tuple(road_ids)]],  # type: ignore[valid-type]  # idem
-            Field(None, description="the road stretch the caller says is cut, one of the allowed ids"),
+            Field(
+                None,
+                description="the road stretch the caller says is cut, one of the allowed ids",
+            ),
         ),
     )
 

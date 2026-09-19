@@ -19,7 +19,6 @@ from itertools import pairwise
 
 from contracts.plan import Plan, Violation
 from contracts.world import WorldState
-
 from core.solver import RoadGraph, _route_crosses_burning
 
 

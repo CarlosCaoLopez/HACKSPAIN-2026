@@ -215,6 +215,13 @@ class HumalikeClient:
         """Social Observability, al colgar: `health_score`, recepción, hallazgos."""
         if not transcript:
             return None
+        speakers = {t["speaker"] for t in transcript}
+        if agent_name not in speakers:
+            # `turns_from_text` etiqueta "operator"/"caller" (las etiquetas de Jev);
+            # analyze exige que agent_name sea un speaker literal de la transcripción.
+            agent_name = next(
+                (sp for sp in ("operator", AGENT_NAME) if sp in speakers), agent_name
+            )
         messages = [
             {"id": f"m{i + 1}", "speaker": t["speaker"], "text": t["text"]}
             for i, t in enumerate(transcript)

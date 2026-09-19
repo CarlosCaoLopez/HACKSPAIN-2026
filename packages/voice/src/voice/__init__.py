@@ -44,7 +44,12 @@ class VoiceGateway:
         await publish(
             make_event(
                 EventType.CALL_STARTED,
-                {"call_id": call_id, "task_id": req.task_id, "to": req.to, "direction": "outbound"},
+                {
+                    "call_id": call_id,
+                    "task_id": req.task_id,
+                    "to": req.to,
+                    "direction": "outbound",
+                },
                 source="voice",
             )
         )
@@ -117,6 +122,8 @@ class VoiceGateway:
                 log.warning("carretera sin resolver: %r", cf.road_blocked)
         poi = cf.resolved_poi_id or pois.resolve_poi_local(cf.location_hint)
         if poi:
+            if cf.headcount is not None:
+                add(f"poi:{poi}:headcount", int(cf.headcount))
             if cf.people_immobile is not None:
                 add(f"poi:{poi}:immobile", int(cf.people_immobile))
             if cf.injuries is not None:

@@ -296,3 +296,36 @@ async def test_outbound_end_without_monitor_is_analyzed(client, journal, fakes):
     assert ended.payload["call_id"] == "run_7" and ended.payload["outcome"] == "answered"
     assert ended.payload["health_score"] == pytest.approx(0.82)
     assert ("analyze", {"turns": 2}) in hl.calls
+
+
+def test_to_facts_includes_headcount():
+    from contracts.calls import CallFacts
+    from voice import VoiceGateway
+
+    cf = CallFacts(
+        location_hint="Pueblo B",
+        resolved_poi_id="poi_pueblo_b",
+        headcount=4,
+        people_immobile=1,
+        urgency="critical",
+    )
+    keys = {f.key: f.value for f in VoiceGateway().to_facts(cf, 1.0, "s")}
+    assert (
+        keys["poi:poi_pueblo_b:headcount"] == 4 and keys["poi:poi_pueblo_b:immobile"] == 1
+    )
+
+
+async def test_analyze_uses_a_real_speaker_as_agent(fakes):
+    from voice.humanlike import HumalikeClient, turns_from_text
+
+    seen = {}
+
+    class Rec(HumalikeClient):
+        async def _post(self, path, body, timeout):
+            seen.update(body)
+            return {"health_score": 0.5}
+
+    hl = Rec(token="x")
+    await hl.analyze(turns_from_text("operador: hola\nvecino: hola"))
+    assert seen["agent_name"] == "operator"
+    await hl.aclose()

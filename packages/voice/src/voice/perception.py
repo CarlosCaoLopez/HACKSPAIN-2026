@@ -91,8 +91,14 @@ class CallPerception:
             return {}
         conf = perc.get("confirmed_order")
         if conf is not None:
-            self.confirmed_order = bool(conf.value) and conf.confidence >= CONFIRM_THRESHOLD
-        return {k: (str(a.value), a.confidence) for k, a in perc.answers.items() if k in TRACKED}
+            self.confirmed_order = (
+                bool(conf.value) and conf.confidence >= CONFIRM_THRESHOLD
+            )
+        return {
+            k: (str(a.value), a.confidence)
+            for k, a in perc.answers.items()
+            if k in TRACKED
+        }
 
     async def _fill(self, fields: list[str], turns: list[dict[str, str]]) -> None:
         """Presupuesto agotado: el LLM elige entre las opciones cerradas y, si no
@@ -163,7 +169,9 @@ class CallPerception:
         loc = f["location_hint"]
         road = f["road_blocked"]
         imm = f["people_immobile"]
-        confs = [s.confidence for s in f.values() if s.status == "observed" and s.confidence]
+        confs = [
+            s.confidence for s in f.values() if s.status == "observed" and s.confidence
+        ]
         has_poi = loc.value and loc.value != NOT_STATED
         return CallFacts(
             location_hint=pois.poi_name(loc.value) if has_poi else None,
