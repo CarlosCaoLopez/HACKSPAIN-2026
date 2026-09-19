@@ -33,11 +33,7 @@ export function MapView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <ViewHeader view="mapa">
-        <span className="rounded-md border border-vela-edge px-2 py-0.5 text-xs text-vela-dim">
-          {anchor ? 'mapa real · OpenStreetMap' : `sin mapa · ${noMapReason(feedsState)}`}
-        </span>
-      </ViewHeader>
+      <ViewHeader view="mapa" />
       <div className="sticky top-0 z-[1000] bg-vela-panel">
         <ReplanBanner events={events} />
       </div>
