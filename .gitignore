@@ -66,3 +66,6 @@ docs/carlos/
 
 # worktrees de los subagentes de Claude
 .claude/worktrees/
+
+# tsc --build deja su caché de incrementales en el paquete del dashboard
+apps/dashboard/*.tsbuildinfo
