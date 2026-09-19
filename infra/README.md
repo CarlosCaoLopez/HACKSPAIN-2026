@@ -48,7 +48,7 @@ Verificado el 19 de septiembre contra un Paper real (build 130): `make world` ta
 
 - En el juego: seis carteles flotantes con los nombres de los POIs, dos camiones rojos y el
   dron en la base, la ambulancia en el hospital, aldeanos delante de los dos pueblos.
-- El fuego nace en `cell_18_7` (bloques x 72..75, z 28..31, junto a `wp_sur_01`): netherrack
+- El fuego nace en `cell_13_11` (bloques x 52..55, z 44..47, al suroeste del desvío sur): netherrack
   con fuego encima; lo quemado queda en `coal_block`. Con la vista `frente` se ve nacer.
 - A los 150 s el viento vira y el frente tira al sureste, hacia Pueblo B; a los 210 s la pista
   sur se pinta a franjas negras y amarillas con dos troncos cruzados; a los 240 s truck2 se para.
