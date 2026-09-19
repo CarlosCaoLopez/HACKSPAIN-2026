@@ -123,6 +123,8 @@ def apply(state: WorldState, ev: Event) -> WorldState:
                 source=p["source"],
                 severity=p["severity"],
                 t_sim=ev.t_sim,
+                kind=p.get("kind", "observed"),
+                call_id=p.get("call_id"),
             )
             return apply_fact(state.model_copy(update=update), fact)
         case EventType.HUMAN_OVERRIDE if p.get("kind") == "assert_fact":
@@ -184,6 +186,10 @@ def apply_fact(state: WorldState, fact: Fact) -> WorldState:
             roads = dict(state.roads)
             r = road_of(roads, edge_id)
             if r is not None:
+                # Regla 4: solo lo observado puede REABRIR una arista. Un hecho
+                # asumido o inferido sostiene la dirección segura (cortada) y no más.
+                if fact.kind != "observed" and r.cut and not bool(value):
+                    return state.model_copy(update={"facts": [*state.facts, fact]})
                 roads[r.id] = r.model_copy(update={"cut": bool(value)})
                 update["roads"] = roads
         case ["road", edge_id, "cause"]:

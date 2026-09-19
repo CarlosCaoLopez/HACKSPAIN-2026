@@ -149,3 +149,27 @@ def test_override_assert_fact():
         ),
     )
     assert s2.roads[EDGE].cut is True and s2.facts[-1].confidence == 1.0
+
+
+def test_only_an_observed_fact_can_reopen_a_cut_road():
+    """Regla 4: lo asumido sostiene la dirección segura (cortada), nunca la contraria."""
+    cut = apply_fact(initial_state("r", scenario()), fact(f"road:{EDGE}:cut", True))
+    assumed_open = fact(f"road:{EDGE}:cut", False).model_copy(update={"kind": "assumed_default"})
+    still_cut = apply_fact(cut, assumed_open)
+    assert still_cut.roads[EDGE].cut is True
+    assert still_cut.facts[-1].kind == "assumed_default"  # se registra, no se aplica
+    observed_open = apply_fact(cut, fact(f"road:{EDGE}:cut", False))
+    assert observed_open.roads[EDGE].cut is False
+
+
+def test_fact_event_carries_kind_and_call_id_into_the_state():
+    s = initial_state("r", scenario())
+    payload = {
+        "key": f"road:{EDGE}:cut", "value": True, "confidence": 0.3,
+        "source": "call:s1", "severity": "critical",
+        "kind": "assumed_default", "call_id": "s1",
+    }
+    last = apply(s, ev(EventType.WORLD_FACT_ASSERTED, payload)).facts[-1]
+    assert last.kind == "assumed_default" and last.call_id == "s1"
+    del payload["kind"], payload["call_id"]  # journals viejos: siguen siendo observados
+    assert apply(s, ev(EventType.WORLD_FACT_ASSERTED, payload)).facts[-1].kind == "observed"
