@@ -166,3 +166,11 @@ Nodos (ids de la versión 2):
 Cosas aprendidas de la API que no están en la documentación: las variables de un nodo se direccionan por su `persistent_id` (el de la versión original, no el de la bifurcación); los campos de un trigger Webhook cuelgan de `data.`; la API es la de la región de la organización (`platform.eu.happyrobot.ai`), la US rechaza la key; el hook responde `run_id`, no `call_id`; `update-a-node` es `PUT` y el `type` del cuerpo tiene que coincidir con el del nodo (el trigger creado en la UI es `action`).
 
 El entrante `citizen_report` (`ikdg6o9mjj9h`) está **publicado y vivo en development** desde la API: enlace de la web call `https://platform.eu.happyrobot.ai/deployments/development/ikdg6o9mjj9h`, sin login.
+
+## Anexo · plan B del entrante por teléfono: `citizen_report_phone`
+
+La wifi del evento bloquea UDP y la web call (WebRTC) no levanta el audio: el websocket de señalización conecta pero `could not establish pc connection`. Con hotspot del móvil debería ir. Como no puede depender de eso, hay una copia del entrante que se atiende **por teléfono**: workflow `citizen_report_phone` (`wyoxcfeop329`), trigger *Inbound to number* sobre el Twilio `+1 484 558 1911`, mismo agente, mismo prompt, mismo tool `report_fact` y mismos webhooks, **publicado y vivo en producción** (la lista de números del trigger solo cuenta como asignación de producción; el `Missing numbers` al publicar en development se resuelve desde la UI asignando el número a ese entorno).
+
+Uso: el vecino llama al `+1 484 558 1911` desde un móvil (llamada internacional a EE. UU., la paga quien llama). El resto es idéntico: tool → hechos → ack con plan → `call.ended`. El mismo número es el origen de la saliente `evacuation_order`; las dos cosas conviven.
+
+Montado por API: `POST /workflows/{slug}/duplicate` (solo copia; el trigger se sustituye a mano), `DELETE /versions/{v}/nodes/{id}` exige cuerpo JSON `{}`, el trigger copiado se actualiza con `type: "action"`, y `numbers` es una lista plana de `{id, name, number}` tal como la devuelve `available_options.phone_numbers`.
