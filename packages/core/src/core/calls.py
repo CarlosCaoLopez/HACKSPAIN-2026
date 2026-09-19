@@ -322,7 +322,7 @@ llamada útil es la que acaba en «voy» o «no puedo» y libera la línea."""
 
 def _situation_brief_crew(live: dict[str, str], hazard: str, donde: str) -> str:
     return (
-        f"Tiene un {hazard} declarado en {donde}. {live['fire_status'].capitalize()}. "
+        f"Tiene un {hazard} declarado {donde}. {live['fire_status'].capitalize()}. "
         f"{live['roads_status'].capitalize()}. Dígalo en dos frases, sin rodeos, y "
         "pregunte si pueden salir ya."
     )

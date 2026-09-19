@@ -1205,7 +1205,8 @@ async def test_fire_detected_calls_the_crew_once(
     assert r.facts["role"] == "fire_crew" and r.facts["callee"] == "el retén de bomberos"
     assert r.facts["unit_id"] == "unit_truck2"  # el camión que puede salir
     assert "incendio forestal" in r.facts["situation_brief"]
-    assert "Pueblo A" in r.facts["situation_brief"]  # dónde arde, en referencia humana
+    # Dónde arde, en referencia humana y con su preposición: nadie conduce a una celda.
+    assert "a " in r.facts["situation_brief"] and "Pueblo A" in r.facts["situation_brief"]
     assert "pueden salir" in r.facts["checklist"]
 
     # Un replan más no vuelve a llamar.
