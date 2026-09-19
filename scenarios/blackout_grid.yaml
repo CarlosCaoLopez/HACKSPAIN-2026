@@ -16,7 +16,7 @@ origin: [0, 0]
 
 hazard:
   kind: blackout
-  origin_cell: cell_7_7 # (28,28): al oeste del desvío sur, NO encima
+  origin_cell: cell_13_11 # (52,44): al suroeste del desvío sur, a 28 bloques
   cell_size: 4
   base_spread: 0.55 # celdas por minuto, isótropo
   wind:
