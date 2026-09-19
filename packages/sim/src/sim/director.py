@@ -35,6 +35,13 @@ HOLD_S = 9.0
 Menos de esto marea; más y se pierde la acción. Un inject o una llegada sí cortan
 en seco, porque son justo lo que hay que ver."""
 
+FOCO_S = 12.0
+"""Lo que un foco puntual manda sobre las heurísticas.
+
+Hay hitos que son un momento, no un estado —la llamada al pueblo, el replan, el
+pin del vecino—: cuando llega el evento, la cámara va allí y se queda este rato
+aunque el fuego siga ardiendo. Pasado el foco, vuelve a mandar lo que se mueve."""
+
 
 @dataclass
 class Escena:
@@ -46,6 +53,10 @@ class Escena:
     ardiendo: set[tuple[int, int]] = field(default_factory=set)
     pois: dict[str, tuple[float, float]] = field(default_factory=dict)
     cell_size: int = 4
+    calls_por_task: dict[str, str] = field(default_factory=dict)
+    """task_id → poi_id, de `call.requested`: `call.started` no trae el POI."""
+    ultima_orden: str | None = None
+    """La última unidad que recibió un `goto`: es la que acaba de girar."""
 
     def centro_del_fuego(self) -> tuple[float, float] | None:
         if not self.ardiendo:
@@ -85,6 +96,8 @@ class Director:
         self.zs = [p.z for p in s.pois] + [w.z for w in s.waypoints]
         self._ultimo_corte = 0.0
         self._plano = ""
+        self._foco: tuple[str, tuple] | None = None
+        self._foco_hasta = 0.0
 
     # --- leer el journal ---
 
@@ -120,14 +133,40 @@ class Director:
             return f"{p['unit_id']} llega a {p.get('waypoint_id')}"
         elif e == "action.requested":
             a = p.get("args", {})
+            if p.get("verb") == "goto" and a.get("unit_id"):
+                esc.ultima_orden = a["unit_id"]
             destino = a.get("waypoint_id") or (a.get("route") or [""])[-1]
             return f"orden: {p.get('verb')} {a.get('unit_id', '')} → {destino}"
         elif e == "action.failed":
             return f"falla una orden · {p.get('error')}"
         elif e == "plan.policy.emitted":
+            # Ver el tablero entero mientras el agente decide a qué frente ir.
+            self._set_foco("el valle · política", self._valle())
             return "el modelo emite política nueva"
+        elif e == "plan.replan.started":
+            self._set_foco("el valle · replan", self._valle())
+            return f"REPLAN · {p.get('reason', '')}"
+        elif e == "call.requested":
+            if p.get("task_id") and p.get("poi_id"):
+                esc.calls_por_task[p["task_id"]] = p["poi_id"]
+            return None
         elif e == "call.started":
-            return f"LLAMADA en curso · {p.get('to') or p.get('direction', '')}"
+            direction = p.get("direction")
+            poi_id = esc.calls_por_task.get(p.get("task_id") or "")
+            if direction == "outbound" and poi_id in esc.pois:
+                px, pz = esc.pois[poi_id]
+                self._set_foco(f"llamada a {poi_id}", plano_sobre(px, pz, 30, 14))
+                return f"LLAMADA saliente · {poi_id}"
+            if direction == "inbound":
+                self._set_foco("el valle · llamada entrante", self._valle())
+                return "LLAMADA entrante · ubicación desconocida"
+            return f"LLAMADA en curso · {p.get('to') or direction or ''}"
+        elif e == "citizen.location":
+            x, z = p.get("x"), p.get("z")
+            donde = p.get("poi_name") or p.get("poi_id") or "el pin"
+            if x is not None and z is not None:
+                self._set_foco(f"vecino · {donde}", plano_sobre(x, z, 30, 14))
+            return f"UBICACIÓN del vecino → {donde}"
         elif e == "call.ended":
             return "llamada terminada"
         elif e == "world.fact.asserted":
@@ -138,11 +177,33 @@ class Director:
 
     # --- decidir el plano ---
 
+    def _set_foco(self, nombre: str, plano: tuple) -> None:
+        """Fija un plano puntual que manda sobre las heurísticas durante `FOCO_S`."""
+        self._foco = (nombre, plano)
+        self._foco_hasta = time.monotonic() + FOCO_S
+
+    def _valle(self) -> tuple:
+        """Cenital que encuadra el valle entero. Es el plano de fondo y el de replan."""
+        cx = (min(self.xs) + max(self.xs)) / 2
+        cz = (min(self.zs) + max(self.zs)) / 2
+        alto = 1.15 * (max(self.zs) - min(self.zs)) / (2 * math.tan(math.radians(35)))
+        return (cx, GROUND_Y + alto, cz, -90, 90)
+
     def elegir(self, urgente: bool) -> tuple[str, tuple]:
         esc = self.escena
+
+        # Un foco puntual (llamada, replan, pin del vecino) manda mientras dura.
+        if self._foco and time.monotonic() < self._foco_hasta:
+            return self._foco
+
         fuego = esc.centro_del_fuego()
 
-        # Una unidad en marcha manda: es lo único que se mueve de verdad.
+        # La unidad que acaba de recibir orden es la que gira: síguela a ella.
+        if esc.ultima_orden in esc.moviendo and esc.ultima_orden in esc.unidades:
+            x, z = esc.unidades[esc.ultima_orden]
+            return f"siguiendo a {esc.ultima_orden}", plano_sobre(x, z, 34, 20)
+
+        # Si no, cualquier unidad en marcha: es lo único que se mueve de verdad.
         if esc.moviendo:
             u = min(esc.moviendo)
             if u in esc.unidades:
@@ -153,10 +214,7 @@ class Director:
             return "el frente de fuego", plano_sobre(*fuego, 48, 26)
 
         # Nada se mueve: plano general, que se vea el valle entero.
-        cx = (min(self.xs) + max(self.xs)) / 2
-        cz = (min(self.zs) + max(self.zs)) / 2
-        alto = 1.15 * (max(self.zs) - min(self.zs)) / (2 * math.tan(math.radians(35)))
-        return "el valle", (cx, GROUND_Y + alto, cz, -90, 90)
+        return "el valle", self._valle()
 
     async def correr(self, journal: Path) -> None:
         rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
