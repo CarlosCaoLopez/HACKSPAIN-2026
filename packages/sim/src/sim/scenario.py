@@ -108,6 +108,16 @@ def _check(s: Scenario, name: str) -> None:
     duplicates = _duplicated(s)
     errors.extend(f"id repetido: {d!r}" for d in duplicates)
 
+    # Los alias son lo que resuelve una llamada: uno que apunte a un id mal
+    # escrito falla aquí y no cuando el vecino dice "el molino" en la demo.
+    for alias, poi_id in s.poi_aliases.items():
+        if poi_id not in pois:
+            errors.append(f"poi_aliases: {alias!r} apunta a {poi_id!r}, que no existe")
+    roads = {r.id for r in s.roads}
+    for alias, edge_id in s.road_aliases.items():
+        if edge_id not in roads:
+            errors.append(f"road_aliases: {alias!r} apunta a {edge_id!r}, que no existe")
+
     if errors:
         raise ScenarioError(f"{name} es incoherente:\n  - " + "\n  - ".join(errors))
 
