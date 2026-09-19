@@ -9,6 +9,7 @@ import { useEventStream } from './hooks/useEventStream'
 import { useHealth } from './hooks/useHealth'
 import { useScenarioId } from './hooks/useScenario'
 import { useView } from './hooks/useView'
+import { useWorldView } from './hooks/useWorldView'
 import { Sidebar } from './components/Sidebar'
 import { RunsPanel } from './panels/RunsPanel'
 import { DashboardsView } from './views/DashboardsView'
@@ -22,6 +23,9 @@ export default function App() {
   // Lo que está simulado se anuncia solo (H5): si me callo que las llamadas son de
   // mentira, la pantalla miente por omisión.
   const health = useHealth(events)
+  // Una sola vista del mundo para el mapa y el panel Hechos (REQ-311): si cada uno plegara
+  // la suya, podrían enseñar dos posiciones distintas del mismo camión.
+  const worldView = useWorldView(state, events)
   const [view, setView] = useView()
   const [comparing, setComparing] = useState(false)
   // La llamada a la que lleva un clic en la persona que llama del mapa (REQ-310): se pasa
@@ -63,6 +67,7 @@ export default function App() {
             state={state}
             plan={plan}
             events={events}
+            worldView={worldView}
             awaitingSnapshot={awaitingSnapshot}
             focusCallId={focusCallId}
           />
@@ -71,6 +76,7 @@ export default function App() {
             state={state}
             plan={plan}
             events={events}
+            worldView={worldView}
             scenarioId={scenarioId}
             awaitingSnapshot={awaitingSnapshot}
             onOpenCall={openCall}

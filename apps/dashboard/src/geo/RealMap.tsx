@@ -9,7 +9,7 @@ import 'leaflet/dist/leaflet.css'
 
 import type { Feeds } from '../hooks/useFeeds'
 import { useScenario } from '../hooks/useScenario'
-import { useWorldView, type WorldView } from '../hooks/useWorldView'
+import type { WorldView } from '../hooks/useWorldView'
 import { problems } from './problems'
 import type { Event, Plan, UnitKind, VelaEvent, WorldState } from '../types'
 import type { FeedAnchor } from './anchor'
@@ -70,6 +70,7 @@ export function RealMap({
   state,
   plan,
   events,
+  worldView,
   scenarioId,
   anchor,
   feeds,
@@ -79,6 +80,8 @@ export function RealMap({
   state: WorldState | null
   plan: Plan | null
   events: Event[]
+  /** Se calcula en `App`, compartida con el panel Hechos (REQ-311). */
+  worldView: WorldView
   scenarioId: string | null
   anchor: FeedAnchor
   feeds: Feeds
@@ -86,7 +89,6 @@ export function RealMap({
   onOpenCall: (callId: string) => void
 }) {
   const layer = useScenario(scenarioId)
-  const worldView = useWorldView(state, events)
   const containerRef = useRef<HTMLDivElement>(null)
   const [scene, setScene] = useState<Scene | null>(null)
   const [tiles, setTiles] = useState({ loaded: 0, errors: 0 })

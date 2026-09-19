@@ -5,6 +5,7 @@
 // ancla NO se cae a otro mapa: se dice qué falta. Es degradación explícita, no un mapa
 // inventado (REQ-066: un mapa que no es real presentado como real es peor que ninguno).
 import type { Event, Plan, WorldState } from '../types'
+import type { WorldView } from '../hooks/useWorldView'
 import { ReplanBanner } from '../components/ReplanBanner'
 import { ViewHeader } from '../components/ViewIcon'
 import { RealMap } from '../geo/RealMap'
@@ -14,6 +15,7 @@ export function MapView({
   state,
   plan,
   events,
+  worldView,
   scenarioId,
   awaitingSnapshot,
   onOpenCall,
@@ -21,6 +23,7 @@ export function MapView({
   state: WorldState | null
   plan: Plan | null
   events: Event[]
+  worldView: WorldView
   scenarioId: string | null
   awaitingSnapshot: boolean
   onOpenCall: (callId: string) => void
@@ -44,6 +47,7 @@ export function MapView({
             state={state}
             plan={plan}
             events={events}
+            worldView={worldView}
             scenarioId={scenarioId}
             anchor={anchor}
             feeds={feedsState.feeds}
