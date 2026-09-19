@@ -6,118 +6,109 @@ Reglas personales, si existen en tu copia (gitignored, cada uno las suyas): @cla
 
 ## Estado del repo
 
-Solo hay diseño: `docs/backbone.md` y `docs/interfaces.md`. **Cero código.** El árbol de
-`packages/`, `apps/`, `scenarios/`, `fixtures/`, `infra/` está especificado en
-`docs/backbone.md` (sección *Estructura de carpetas*) pero aún no existe. Al implementar, crear
-esa estructura tal cual; no inventar otra.
+`vela`: agente de crisis para HackSpain 2026 (reto HappyRobot). Decide con un LLM + solver
+determinista, usa Minecraft por RCON como simulador, recibe y emite llamadas de voz y lo enseña en
+un dashboard. Hay código en `packages/`, `apps/`, `scenarios/`, `scripts/`, `infra/` y `tests/`;
+`fixtures/run_golden.jsonl` aún no existe (mientras, `fixtures/run_fake_v4.jsonl`).
 
-El proyecto es `vela`: un agente de crisis para HackSpain 2026 (reto HappyRobot). Decide con un
-LLM + solver determinista, usa Minecraft por RCON como simulador, recibe y emite llamadas de voz,
-y lo enseña en un dashboard.
+**La spec vigente es `docs/backbon_corrected.md` (rev. 2).** `docs/backbone.md` es la versión
+anterior y solo sirve de histórico: donde se contradigan, manda la corrected.
 
 ## Stack cerrado
 
-| Capa | Elección | Restricción real |
+| Capa | Elección | Nota |
 | --- | --- | --- |
-| Backend | Python **3.12 exacto** | `fenic` declara `Requires-Python >=3.10,<3.13`. No 3.13 |
-| Contratos | Pydantic v2 | Los mismos modelos son el esquema de `semantic.extract` |
-| Servidor | FastAPI + uvicorn, **un solo proceso** | API, webhooks y WS del dashboard juntos |
+| Backend | Python **3.12 exacto** | `fenic` declara `<3.13` |
+| Contratos | Pydantic v2 | Sin dependencias de terceros en `contracts` |
+| Servidor | FastAPI + uvicorn, **un solo proceso** | API, webhooks y WS juntos |
 | Bus | `asyncio` in-process + journal JSONL | Sin infra externa |
-| Ingesta | Typedef `fenic` | `semantic.extract` / `classify` / `join` |
-| Asignación | `scipy.optimize.linear_sum_assignment` | Determinista y explicable |
-| Mundo | Paper 1.21 + RCON (`mcrcon`) | Solo `/tp`, `/fill`, `/setblock`. Sin bots ni pathfinding |
-| Voz | HappyRobot en las dos direcciones (tool `report_fact` en llamada, *signals* de vuelta) + Humalike encima (`foresee`, `analyze`, `personas`) | Humalike no toca la telefonía. Todo REST, no hay SDK de Python |
-| Dashboard | Vite + React + TS + Tailwind | **Único sitio donde hay TypeScript** |
-| Deps | `uv` (Python) + `pnpm` (dashboard) | |
-
-Nada de Node en el servidor: mineflayer se descartó al descartar los agentes LLM dentro de Minecraft.
+| Percepción en llamada | **TypeSafe `jev-1.13`** (`typesafe-sdk`) | Elige entre ids del escenario (`Choice`/`Score`/`Noul`), cada 5 s en llamada y al colgar. Sin clave o con `VELA_NO_JEV=true`, cae a `fenic` con `Literal` |
+| Batch entre runs | Typedef `fenic` | Solo aprendizaje (`core/memory.py`) y plan B; ya no está en la ruta caliente |
+| Asignación | `scipy.optimize.linear_sum_assignment` | Determinista |
+| Mundo | Paper 1.21 + RCON (`mcrcon`) | Solo `/tp`, `/fill`, `/setblock`. Sin bots |
+| Voz | HappyRobot en las dos direcciones + Humalike encima (`foresee`, `analyze`, `personas`) | Humalike no toca la telefonía. Todo REST |
+| Dashboard | Vite + React + TS + Tailwind | **Único sitio con TypeScript** |
+| Deps | `uv` + `pnpm` | |
 
 ## Invariantes que no se rompen
 
 1. **El LLM nunca toca Minecraft.** Minecraft renderiza un estado que vive en nuestro modelo.
 2. **El LLM nunca asigna recursos.** Produce una `Policy` (pesos + restricciones duras); el solver
-   produce el `Plan`. **`Policy` no lleva nunca un campo `assignments`**, por tentador que sea.
-3. **Todo evento se escribe al journal antes de repartirse.** `publish` escribe y luego reparte,
-   en ese orden. Sin journal no hay replay.
-4. **Todos importan de `contracts`; nadie importa del paquete de otro.** La comunicación es el bus
-   (`publish` / `subscribe`). `from sim import ...` dentro de `core` rompe la arquitectura.
-   Excepción única: `apps/gateway` importa de todos, es su trabajo.
-5. **`WorldState` es inmutable.** `apply(state, ev) -> WorldState` devuelve uno nuevo; nadie muta en sitio.
-6. **El journal es append-only.** Nada se borra ni se edita: si algo cambia, se emite otro evento.
-7. **Una sola llamada al modelo de razonamiento por replan**, y solo si se levanta la bandera:
-   divergencia > 0,25, violación de restricción dura, o hecho con `severity: critical`. Si no, no
-   se llama al modelo.
+   produce el `Plan`. `Policy` no lleva nunca un campo `assignments`.
+3. **Todo evento se escribe al journal antes de repartirse** (`publish` escribe y luego reparte).
+4. **Todos importan de `contracts`; nadie importa del paquete de otro.** Se habla por el bus.
+   Excepción única: `apps/gateway`.
+5. **`WorldState` es inmutable.** `apply(state, ev)` devuelve uno nuevo.
+6. **El journal es append-only.** Si algo cambia, se emite otro evento.
+7. **Una sola llamada al modelo de razonamiento por replan**, y solo con bandera: divergencia > 0,25,
+   violación de restricción dura o hecho `severity: critical`.
+8. **Un hecho asumido nunca se disfraza de observado.** Todo `Fact` lleva `kind: observed | inferred |
+   assumed_default`. Solo `observed` puede fundar una restricción dura o reabrir una arista cortada;
+   un `assumed_default` entra a `PlanContext.assumptions` con peso alto y se pinta gris cursiva.
 
 ## Arquitectura
 
-Cinco paquetes que solo se hablan por eventos tipados, corriendo en un único proceso FastAPI:
-`contracts` (de nadie), `sim` (mundo + injects), `core` (belief · planner · solver · verifiers ·
-divergence), `voice` (telefonía), `journal` (writer · replay · score).
+Cinco paquetes que solo se hablan por eventos tipados: `contracts` (de nadie), `sim` (mundo +
+injects), `core` (belief · planner · solver · verifiers · divergence), `voice` (telefonía + percepción),
+`journal` (writer · replay · score).
 
-Ciclo de un tick: `sim` avanza 1 s simulado y publica `world.*` → `core.belief` reconstruye el
-`WorldState` → `core.divergence` lo compara contra `PlanContext.assumptions` → si hay bandera de
-replan, `planner` emite `Policy`, `solver` emite `Plan`, `verifiers` lo validan (dos vueltas máximo,
-luego se cae al plan del solver con pesos neutros) → `core` publica `action.*` → `sim` y `voice`
-ejecutan y confirman.
+Tick: `sim` publica `world.*` → `core.belief` reconstruye el `WorldState` → `divergence` lo compara
+con `PlanContext.assumptions` → con bandera, `planner` emite `Policy`, `solver` emite `Plan`,
+`verifiers` lo validan (dos vueltas, luego plan del solver con pesos neutros) → `core` publica
+`action.*` → `sim` y `voice` ejecutan.
 
-Los cinco niveles y su determinismo: estado (Pydantic, **sí**) · ingesta (`fenic`, no, pero acotada
-por esquema) · política (LLM, **no**) · asignación (`linear_sum_assignment`, **sí**) ·
-verificación (código puro, **sí**).
+Llamada: HappyRobot (SSE + tool `report_fact`, que es **solo disparador**) → `voice.perception` hace
+un tick de Jev → `budget` decide asertar, repreguntar (una a la vez, por *signal* `kind: followup`) o
+rellenar con el LLM (`gapfill`) al agotarse el presupuesto por gravedad → `world.fact.asserted` +
+`call.completeness`.
 
 ## Comandos
 
-Documentados en `docs/backbone.md` y `docs/interfaces.md`; **el Makefile todavía no existe**.
-
 | Comando | Qué hace |
 | --- | --- |
-| `make dev-core` | core + bus, con sim y voice leídos de `fixtures/run_golden.jsonl` |
-| `make dev-sim` | sim + bus + RCON, con un core tonto que manda `goto` en bucle |
-| `make dev-voice` | gateway + voice + túnel, con un core que pide una llamada cada 60 s |
-| `make dev-dash` | gateway + WS en modo replay |
-| `make demo` | todo de verdad · `make world` regenera el mundo por RCON (idempotente) |
-| `make replay RUN=<id>` | reproduce ese journal a velocidad real |
-| `make check` | mypy sobre `contracts` + replay de `run_golden.jsonl` por `apply` + test de que todo peso y restricción de `core/prompts/` existe en el catálogo |
-| `make types` | regenera `apps/dashboard/src/types.ts` desde `contracts` con `scripts/gen_ts_types.py` |
+| `make check` | mypy sobre `contracts` + `pytest` (replay, catálogo, voz, belief…). Verde en cada merge |
+| `make types` | regenera `apps/dashboard/src/types.ts` (**se genera, nunca a mano**) |
+| `make dev-core` / `dev-sim` / `dev-voice` / `dev-dash` | cada pieza sola, con el resto simulado |
+| `make demo` | todo de verdad · `FLAGS="--mock-calls"` / `"--no-minecraft"` son los planes B |
+| `make server` · `make world` · `make cam` | Paper local · regenera el mundo por RCON · cámara del pitch |
+| `make replay RUN=<id>` | reproduce un journal |
+| `uv run python -m voice.jev --gate` | puerta de Jev: 10 transcripciones en español contra la clave real |
 
-`types.ts` **se genera, nunca se escribe a mano**. Los merges a `main` van directos, sin PR, pero
-con `make check` verde.
+Los merges a `main` van directos, sin PR, con `make check` verde.
 
 ## Propiedad de ficheros
 
-Cada fichero tiene un dueño. Si necesitas algo de la carpeta de otro, pídelo por evento, no por import.
+Si necesitas algo de la carpeta de otro, pídelo por evento, no por import.
 
 | Ruta | Dueño |
 | --- | --- |
 | `packages/contracts/**` | Nadie: los cuatro, solo en la ventana de contrato |
-| `packages/core/**`, `packages/journal/**` | P1 |
-| `packages/sim/**`, `infra/**`, `scenarios/*.yaml` | P2 |
-| `packages/voice/**` | P3 |
-| `apps/gateway/**`, `apps/dashboard/**`, `scripts/demo.py` | P4 |
+| `packages/core/**`, `packages/journal/**`, `voice/happyrobot.py` | Carlos (P1) |
+| `packages/voice/**` (percepción, humalike, webhooks), `core/belief.py`, `core/ingest.py` | Hugo (P3) |
+| `packages/sim/**`, `infra/**`, `scenarios/*.yaml` | Luis (P2) |
+| `apps/gateway/**`, `apps/dashboard/**`, `scripts/demo.py` | Nacho (P4) |
 | `fixtures/**` | Quien lo genera; solo se añade, nunca se modifica |
 
-Cambios de contrato: **añadir un campo opcional con valor por defecto es libre** (commit + aviso).
-Renombrar, cambiar un tipo o hacer obligatorio un campo necesita a los cuatro. Borrar está prohibido.
+Contrato: **añadir un campo opcional con default es libre** (commit + aviso). Renombrar, cambiar un
+tipo o hacer obligatorio un campo necesita a los cuatro. Borrar está prohibido.
 
 ## Convenciones
 
-- **Antes de tocar nada: commit de lo que haya sin commitear (aunque sea `wip:`), y luego
-  `git pull --rebase origin <rama>`.** Nunca `stash` ni `--autostash` como rutina. Cuatro
-  personas cambian el repo cada hora; se trabaja siempre sobre lo último y con lo propio a salvo.
-- **Ids con prefijo**: `unit_truck1`, `poi_pueblo_a`, `wp_sur_03`, `cell_14_22`, `task_evac_a`.
-- **Coordenadas siempre del mundo Minecraft** (x, z, con y implícita). El core nunca piensa en píxeles.
-- **`t_sim`, segundos flotantes, es el tiempo del dominio.** `t_wall` solo depura y mide latencia real.
-- **`sim.execute` acepta exactamente cuatro verbos**: `goto`, `set_marker`, `announce`, `rescue`.
-  Cualquier otro emite `action.failed` con `error="unknown_verb"`. No se añaden verbos sin avisar.
-- **Un payload que no valida nunca tumba el proceso**: lanza en desarrollo, se registra como
-  `event.malformed` en la demo.
-- **Secretos en un `.env` en la raíz** (`.env.example` commiteado), cargados por
-  `contracts/settings.py` con `pydantic-settings`; cada paquete lee solo sus variables.
+- **Antes de tocar nada: commit de lo que haya (aunque sea `wip:`) y `git pull --rebase origin <rama>`.**
+  Nunca `stash` como rutina.
+- **Ids con prefijo**: `unit_truck1`, `poi_pueblo_a`, `wp_sur_03`, `cell_14_22`, `task_evac_a`; las
+  aristas son `road:wp_a-wp_b` (el id es su dirección).
+- **Coordenadas del mundo Minecraft** (x, z). `t_sim` (segundos) es el tiempo del dominio; `t_wall` solo depura.
+- **`sim.execute` acepta cuatro verbos**: `goto`, `set_marker`, `announce`, `rescue`. Otro emite
+  `action.failed` con `error="unknown_verb"`.
+- **Un payload que no valida nunca tumba el proceso**: lanza en desarrollo, `event.malformed` en la demo.
+- **Secretos en `.env`** (raíz, gitignored; `.env.example` commiteado), cargado por `contracts/settings.py`.
+- **Degradar a lo explícito**: un servicio caído (Jev, Humalike, HappyRobot) se anota y la demo sigue;
+  nunca un `except: pass`.
 
 ## Dónde está el detalle
 
-- `docs/backbone.md` — decisiones de stack, guion de la demo minuto a minuto, motor de decisión
-  (LLM-Modulo, verificadores, divergencia, aprendizaje entre runs), capa de simulación, telefonía,
-  estructura de carpetas, reparto y cronograma, riesgos y planes B.
-- `docs/interfaces.md` — catálogo completo de eventos, modelos de `contracts` (`world.py`, `plan.py`,
-  `calls.py`), firmas públicas de cada paquete, endpoints HTTP y protocolo del WebSocket, contrato
-  de `human.override`, variables de entorno.
+- `docs/backbon_corrected.md` — stack, guion de la demo, motor de decisión, percepción con Jev,
+  simulación, telefonía, reparto, riesgos y planes B.
+- `docs/interfaces.md` — catálogo de eventos, modelos de `contracts`, firmas por paquete, endpoints y
+  WebSocket, `human.override`, variables de entorno.

@@ -29,6 +29,7 @@ from contracts.plan import (
     is_known_constraint,
     parse_constraint,
 )
+from contracts.calls import Fact
 from contracts.factkeys import road_open_key
 from contracts.scenario import Scenario
 from contracts.world import POI, Cell, Task, Unit, WorldState
@@ -322,6 +323,25 @@ def _route_crosses_burning(route: list[str], state: WorldState, graph: RoadGraph
     return False
 
 
+ASSUMED_WEIGHT = 2.0
+"""Un `assumed_default` es una suposición pre-rota: el sistema la puso porque no hubo
+tiempo de preguntar, así que pesa el doble que una arista abierta y es la primera que
+hay que reevaluar cuando llega información nueva (regla 4)."""
+
+
+def _assumed_facts(state: WorldState) -> list[Assumption]:
+    """Una suposición por cada clave cuyo hecho VIGENTE sea `assumed_default`. Si después
+    entró uno observado, ya la falsó y no hay nada que vigilar."""
+    latest: dict[str, Fact] = {}
+    for f in state.facts:
+        latest[f.key] = f
+    return [
+        Assumption(key=f.key, expected=f.value, weight=ASSUMED_WEIGHT)
+        for f in latest.values()
+        if f.kind == "assumed_default"
+    ]
+
+
 def build_context(
     state: WorldState, assignments: list[Assignment], graph: RoadGraph
 ) -> PlanContext:
@@ -344,6 +364,7 @@ def build_context(
     assumptions.append(
         Assumption(key="wind:bearing_deg", expected=state.wind.bearing_deg, weight=0.5)
     )
+    assumptions.extend(_assumed_facts(state))
     return PlanContext(assumptions=assumptions, world_seq=state.seq)
 
 

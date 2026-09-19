@@ -87,3 +87,24 @@ def test_los_ids_sinteticos_de_antes_siguen_funcionando() -> None:
     assert road_of(st.roads, ROAD) is st.roads[ROAD]
     assert road_of(st.roads, "wp_sur_01-wp_sur_02") is st.roads[ROAD]
     assert road_of(st.roads, "nada") is None
+
+
+def test_un_assumed_default_entra_a_las_suposiciones_con_peso_alto_hasta_que_se_falsa() -> None:
+    """Regla 4: lo asumido es una suposición pre-rota. Pesa más que una arista abierta y
+    deja de vigilarse cuando un hecho observado la sustituye."""
+    from core.divergence import divergence
+    from core.solver import ASSUMED_WEIGHT
+
+    key = "poi:poi_pueblo_b:immobile"
+    st = apply_fact(
+        initial_state("r", SC),
+        _cut_fact(key).model_copy(update={"value": 1, "kind": "assumed_default"}),
+    )
+    ctx = build_context(st, [], RoadGraph.from_scenario(SC))
+    (assumed,) = [a for a in ctx.assumptions if a.key == key]
+    assert assumed.expected == 1 and assumed.weight == ASSUMED_WEIGHT > 1.0
+    assert divergence(st, ctx)[0] == 0.0
+
+    truth = apply_fact(st, _cut_fact(key).model_copy(update={"value": 3}))  # llega el dato observado: 3, no 1
+    assert key in divergence(truth, ctx)[1]
+    assert key not in [a.key for a in build_context(truth, [], RoadGraph.from_scenario(SC)).assumptions]

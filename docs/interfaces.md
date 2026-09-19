@@ -69,10 +69,11 @@ class Event(BaseModel):
 | `world.road.changed` | sim | `{edge_id, cut, cause}` | core, dashboard |
 | `world.civilians.changed` | sim | `{group_id, count, state, poi_id}` | core, dashboard |
 | `world.inject` | sim | `{inject_type, detail}` | core, dashboard |
-| `world.fact.asserted` | voice (tool `report_fact` en llamada, o `semantic.extract` al colgar), human | `{key, value, confidence, source, severity}` | core, dashboard |
+| `world.fact.asserted` | voice (tick de Jev en llamada y al colgar), human | `{key, value, confidence, source, severity, kind, call_id?}` · `kind`: `observed` \| `inferred` \| `assumed_default` (default `observed`) | core, dashboard |
 | `call.requested` | core | `CallRequest` | voice, dashboard |
 | `call.started` | voice | `{call_id, task_id, to, direction}` | dashboard |
 | `call.transcript.partial` | voice (SSE de la sesión de HappyRobot) | `{call_id, speaker, text}` | dashboard |
+| `call.completeness` | voice (`voice.perception`, tras cada tick de Jev) | `{call_id, budget_s?, elapsed_s, fields: list[{key, status: open\|asked\|observed\|assumed_default, value?, confidence?}]}` | dashboard |
 | `call.affect` | voice (Humalike `foresee`) | `{call_id, emotions: list[{type, intensity}], risk}` | dashboard |
 | `call.ended` | voice | `CallResult` (con `health_score` y hallazgos de `analyze` si llegaron) | core, dashboard |
 | `call.signal.requested` | core | `{call_id, key, payload}` · `causes` apunta al hecho que provocó el replan | voice, dashboard |
@@ -295,14 +296,15 @@ class CallResult(BaseModel):
     ended_t: float
     outcome: Literal["answered","no_answer","busy","failed","hung_up"]
     transcript: str
-    facts: CallFacts | None            # None si la extracción falló
+    facts: CallFacts | None            # None si no hubo percepción (sin Jev y sin fenic)
     audio_url: str | None = None
 
 class CallFacts(BaseModel):
-    """El esquema que consume fenic.semantic.extract.
-    Cada descripción del Field es parte del prompt: escribidlas bien."""
+    """Resultado de la percepción de una llamada, para `call.ended`. Se rellena desde el
+    catálogo de preguntas de Jev (`contracts/questions.py`, generado del escenario); con
+    `--no-jev`, desde `fenic.semantic.extract` con `Literal` sobre los mismos ids."""
     location_hint: str | None = Field(None, description="lugar mencionado, tal cual lo dice la persona")
-    resolved_poi_id: str | None = None           # lo rellena semantic.join después
+    resolved_poi_id: str | None = None           # el id elegido por el `Choice` de Jev
     road_blocked: str | None = Field(None, description="tramo o carretera impracticable")
     people_immobile: int | None = Field(None, description="personas que no pueden moverse solas")
     injuries: int | None = None
@@ -319,6 +321,8 @@ class Fact(BaseModel):
     source: str                        # "call:hl_8821"
     severity: Literal["low","medium","critical"]
     t_sim: float
+    kind: Literal["observed","inferred","assumed_default"] = "observed"  # regla 4
+    call_id: str | None = None
 ```
 
 ### La frontera exacta entre P3 y P1
@@ -331,8 +335,9 @@ class Fact(BaseModel):
 | Recibir el webhook de fin de llamada y montar `CallResult` | P3 |
 | Pedir una signal al agente cuando hay plan nuevo | P1 (core) |
 | Redactar la signal, refinarla con `foresee` y publicarla a `session.<id>` | P3 |
-| Ejecutar `semantic.extract` y producir `CallFacts` | P3 |
-| Traducir `CallFacts` a la lista de `Fact` | **P3**, con el mapa de claves que le da P1 |
+| Percibir la llamada (Jev cada 5 s y al colgar), llevar el presupuesto de completitud y producir `CallFacts` | P3 |
+| Traducir lo percibido a `Fact` con su `kind`, con el mapa de claves que le da P1 | **P3** |
+| Meter los `assumed_default` en `PlanContext.assumptions` con peso alto (`solver.ASSUMED_WEIGHT`) | P1 |
 | Aplicar los `Fact` al `WorldState` | P1 |
 
 El mapa de claves vive en `contracts/factkeys.py` y es una lista plana de strings con su tipo esperado. P1 lo escribe, P3 lo usa. Sin ese fichero, P3 inventa claves y P1 las ignora en silencio, que es el bug más caro que podéis tener el domingo.
@@ -341,7 +346,9 @@ El mapa de claves vive en `contracts/factkeys.py` y es una lista plana de string
 
 - Llamada saliente sin respuesta en 45 s: `outcome="no_answer"`, el core reintenta una vez y después escala a `human.override`.
 - El endpoint del tool publica los hechos **antes** de esperar a `foresee`; si `foresee` tarda más de 3 s (medido: 2,5 s), devuelve el ack en borrador. El replan nunca espera a Humalike.
-- `semantic.extract` por encima de 4 s: se emite `CallResult` con `facts=None` y la transcripción cruda va al dashboard marcada como *sin extraer*. La demo continúa.
+- Un tick de Jev tarda más de 1,5 s o falla: se pierde ese tick y la llamada sigue. Un 401 desactiva Jev para el resto del run y se cae a `--no-jev` (`fenic` con `Literal`, hechos `inferred`). Si tampoco hay `fenic`, `facts=None` y la transcripción cruda va al dashboard *sin extraer*.
+- Presupuesto de completitud por gravedad (`voice/budget.py`): `critical` 8 s, `medium` 25 s, `low` 60 s. Al agotarse, el LLM rellena los huecos como `assumed_default`; sin base no se inventa nada.
+- El *signal* `kind: followup` (campo `message`) lo tiene que locutar el workflow de HappyRobot.
 - `analyze` falla o devuelve `402`: `CallResult` sin `health_score`. Nada se bloquea.
 - Webhook duplicado (pasa): descartad por `call_id` ya visto. Idempotencia obligatoria.
 
@@ -402,11 +409,13 @@ class VoiceGateway:
     async def signal(self, call_id: str, key: str, payload: dict) -> str   # HappyRobot: POST /api/v2/signals a session.<id>
     async def foresee(self, call_id: str, draft: str) -> tuple[str, dict]  # Humalike: (refined_reply, mental_state); el borrador si tarda > 1,5 s
     async def analyze(self, call_id: str) -> dict | None                   # Humalike: health_score y hallazgos, al colgar
-    async def extract(self, transcript: str) -> CallFacts | None
-    def to_facts(self, cf: CallFacts, t_sim: float, call_id: str) -> list[Fact]
+    async def extract(self, transcript: str) -> CallFacts | None            # solo plan B (--no-jev): fenic con Literal
+    def to_facts(self, cf: CallFacts, t_sim: float, call_id: str) -> list[Fact]  # camino sin Jev: kind=inferred
 
 router: APIRouter    # /webhooks/happyrobot/fact (tool, en llamada) · /webhooks/happyrobot/call (fin)
 ```
+
+La percepción vive en `voice.perception.CallPerception` (Jev → `budget.Completeness` → hechos con `kind` → bus) y `voice.jev` (`JevClient`, `python -m voice.jev --gate`). El tool `report_fact` es solo un disparador: sus valores no entran al estado.
 
 `place_call` devuelve en cuanto la plataforma acepta, no cuando la llamada termina. El resultado llega por evento. Nadie espera a una llamada de forma bloqueante.
 
@@ -437,8 +446,8 @@ P4 decide el orden de arranque y apaga limpio. Expone `POST /control/*` y es el 
 | `POST /control/inject` | P4 | `{inject_type, payload}` dispara un inject a mano |
 | `POST /control/override` | P4 | La intervención humana, ver abajo |
 | `POST /control/pause` | P4 | Congela el tick, para explicar algo en el pitch |
-| `POST /webhooks/happyrobot/fact` | P3 | El tool `report_fact` del agente, **durante** la llamada. Publica los hechos y devuelve el ack |
-| `POST /webhooks/happyrobot/call` | P3 | Fin de llamada (nodo Webhook del workflow): `task_id`, `session_id`, estado, transcripción, extract |
+| `POST /webhooks/happyrobot/fact` | P3 | El tool `report_fact`, **durante** la llamada. Solo dispara un tick inmediato de Jev; publica los hechos y devuelve el ack |
+| `POST /webhooks/happyrobot/call` | P3 | Fin de llamada (nodo Webhook del workflow): `task_id`, `session_id`, estado, transcripción; al colgar hace el tick final de Jev |
 | `GET /api/runs` | P4 | Runs pasados con su puntuación, para el run 1 vs run 12 |
 | `WS /ws` | P4 | El chorro de eventos |
 
@@ -510,8 +519,11 @@ Un solo `.env` en la raíz, con `.env.example` commiteado. Las claves las carga 
 RCON_HOST=localhost                 # P2
 RCON_PORT=25575
 RCON_PASSWORD=
-OPENAI_API_KEY=                     # P3, fenic con gpt-5.6-luna (fin de llamada, sintéticas)
-ANTHROPIC_API_KEY=                  # P1 (planner, memoria); alternativa de fenic
+TYPESAFE_API_KEY=                   # P3, Jev (percepción en llamada). Sin ella: --no-jev
+TYPESAFE_MODEL=jev-1.13.0           # P3
+VELA_NO_JEV=false                   # P3, fuerza el plan B
+OPENAI_API_KEY=                     # P1 y P3, fenic (batch y plan B)
+ANTHROPIC_API_KEY=                  # P1 (planner, memoria) y P3 (gapfill); alternativa de fenic
 HAPPYROBOT_API_KEY=                 # P3
 HAPPYROBOT_HOOK_EVACUATION=         # P3, https://platform.happyrobot.ai/hooks/<slug>
 HAPPYROBOT_WEBCALL_URL=             # P3/P4, enlace de la web call del workflow entrante
