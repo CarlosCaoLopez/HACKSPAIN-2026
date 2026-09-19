@@ -54,7 +54,7 @@ async def fetch(
     source: str,
     days: int = 1,
     date: str | None = None,
-) -> str:
+) -> bytes:
     """El CSV de una fuente sobre el cuadro del ancla. Con `date` (YYYY-MM-DD) pide ese día
     y `days` a partir de él; sin ella, los últimos `days`."""
     west, south, east, north = bbox(anchor)
@@ -64,7 +64,7 @@ async def fetch(
     res.raise_for_status()
     # FIRMS contesta 200 con un texto de error cuando la clave no vale o se agota el cupo.
     # Aquí no hay cabecera de CSV: `parse_csv` lo convierte en un error legible.
-    return res.text
+    return res.content
 
 
 # --- parseo (puro) ---------------------------------------------------------------------

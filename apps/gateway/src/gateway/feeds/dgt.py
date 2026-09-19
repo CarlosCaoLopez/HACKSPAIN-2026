@@ -25,6 +25,7 @@ from gateway.feeds.anchor import EdgeRef, GeoAnchor
 # El de versión anterior (v3) está marcado «a extinguir 12/01/2026»: se pide el v3.6, que
 # el propio NAP redirige al 3.7.
 FEED_URL = "https://nap.dgt.es/datex2/v3/dgt/SituationPublication/datex2_v36.xml"
+TIMEOUT_S = 20.0  # el feed pesa ~3,4 MB: el timeout general de 10 s se queda corto
 
 SIT = "http://levelC/schema/3/situation"
 LOC = "http://levelC/schema/3/locationReferencing"
@@ -68,7 +69,7 @@ async def fetch(client: httpx.AsyncClient, etag: str | None = None) -> tuple[byt
     no cuesta nada más que el ancho de banda.
     """
     headers = {"If-None-Match": etag} if etag else {}
-    res = await client.get(FEED_URL, headers=headers, follow_redirects=True)
+    res = await client.get(FEED_URL, headers=headers, follow_redirects=True, timeout=TIMEOUT_S)
     if res.status_code == 304:
         return None, etag
     res.raise_for_status()

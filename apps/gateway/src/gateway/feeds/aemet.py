@@ -20,7 +20,7 @@ from __future__ import annotations
 import io
 import tarfile
 import xml.etree.ElementTree as ET  # CAP de un organismo oficial: sin dependencia nueva
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import NamedTuple
 
 import httpx
@@ -56,11 +56,27 @@ class CapAlert(NamedTuple):
 
 
 async def fetch(client: httpx.AsyncClient, api_key: str, area: str) -> bytes:
-    """Dos pasos: el endpoint devuelve `{estado, datos}` y `datos` es la URL del CAP."""
-    headers = {"api_key": api_key}
-    res = await client.get(
-        f"{BASE_URL}/api/avisos_cap/ultimoelaborado/area/{area}", headers=headers
+    """Los avisos vigentes del área."""
+    return await _two_steps(client, api_key, f"/api/avisos_cap/ultimoelaborado/area/{area}")
+
+
+async def fetch_archive(
+    client: httpx.AsyncClient, api_key: str, start: datetime, end: datetime
+) -> bytes:
+    """Los avisos emitidos entre dos instantes (modo fechado). AEMET pide las fechas como
+    `AAAA-MM-DDTHH:MM:SSUTC`."""
+    fmt = "%Y-%m-%dT%H:%M:%SUTC"
+    path = (
+        f"/api/avisos_cap/archivo/fechaini/{start.astimezone(UTC):{fmt}}"
+        f"/fechafin/{end.astimezone(UTC):{fmt}}"
     )
+    return await _two_steps(client, api_key, path)
+
+
+async def _two_steps(client: httpx.AsyncClient, api_key: str, path: str) -> bytes:
+    """El endpoint devuelve `{estado, datos}` y `datos` es la URL del CAP."""
+    headers = {"api_key": api_key}
+    res = await client.get(f"{BASE_URL}{path}", headers=headers)
     res.raise_for_status()
     body = res.json()
     if body.get("estado") != 200 or "datos" not in body:

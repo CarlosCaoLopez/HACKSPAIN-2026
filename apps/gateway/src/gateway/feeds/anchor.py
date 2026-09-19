@@ -69,6 +69,18 @@ class GeoAnchor(BaseModel):
         return value
 
 
+def anchor_view(anchor: GeoAnchor) -> dict[str, object]:
+    """Lo que el dashboard enseña del ancla (REQ-265): dónde, a qué escala y de qué día.
+    `fixed=false` es el marcador: el dashboard lo dice en vez de enseñar un sitio."""
+    return {
+        "id": anchor.id,
+        "place": anchor.place,
+        "fixed": anchor.fixed,
+        "meters_per_block": anchor.meters_per_block,
+        "reference_start": anchor.reference_start.isoformat() if anchor.reference_start else None,
+    }
+
+
 def load_anchor(scenario_id: str) -> GeoAnchor | None:
     """El ancla de un escenario, o `None` si no tiene (las fuentes quedan `off`)."""
     path = ANCHORS_DIR / f"{scenario_id}.yaml"
@@ -168,6 +180,7 @@ def edges_on_route(routes: Iterable[Sequence[str]], roads: Iterable[RoadEdge]) -
 __all__ = [
     "EdgeRef",
     "GeoAnchor",
+    "anchor_view",
     "bbox",
     "cell_id_at",
     "edges_on_route",
