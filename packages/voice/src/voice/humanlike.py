@@ -940,12 +940,14 @@ def parse_webhook(body: dict) -> CallResult:
     meta = (call.get("metadata") or {}).get("custom") if call else None
     meta = meta if isinstance(meta, dict) else {}
     call_id = str(body.get("session_id") or body.get("call_id") or call.get("id") or "")
-    if not call_id:
-        # Una saliente que no llegó a establecerse no tiene sesión: el run del
-        # workflow es el id que devolvió el hook, y con él casa el core.
-        call_id = str(body.get("run_id") or "")
-    task_id = body.get("task_id") or meta.get("task_id")
     direction = str(body.get("direction") or call.get("direction") or "inbound")
+    if direction == "outbound" and body.get("run_id"):
+        # En la saliente el id de la llamada es el `run_id` del workflow: es lo que
+        # devolvió el hook a `place_call` y lo que lleva `call.started`. Así la
+        # tarjeta abre y cierra con el mismo id, aunque la llamada no llegara a
+        # tener sesión (403 del operador, buzón, número inválido).
+        call_id = str(body["run_id"])
+    task_id = body.get("task_id") or meta.get("task_id")
     if direction not in ("inbound", "outbound"):
         direction = "inbound"
     status = str(body.get("status") or call.get("status") or "completed").lower()
