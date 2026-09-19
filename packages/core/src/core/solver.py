@@ -75,6 +75,16 @@ ALT_RADIUS = 2
 """Al buscar otra celda del mismo frente para el segundo camión se recorre el frente
 con el mismo vecindario dilatado con el que `tasks` lo forma."""
 
+ANCHOR_BIAS_M = 5_000.0
+"""Histéresis del emparejamiento en un frente de dos columnas (primary + alt). El
+óptimo global voltea qué camión va a cada columna cuando el fuego se extiende y los
+costes cambian unos metros: el segundo camión recibía `goto` sur_01→sur_02→sur_01 y
+rebotaba (`superseded` a mitad de camino). Se ancla cada columna a un camión estable
+—el más cercano por carretera a su waypoint, desempate por `unit.id`— sumando este
+margen al camión ancla en la columna del otro. Grande para que la deriva de coste no
+lo voltee, pero por debajo de `HOLD_PENALTY_M` (una permanencia mínima manda más) y
+sin tocar el reparto entre frentes distintos: solo sesga las dos columnas del mismo."""
+
 
 class RoadGraph:
     """Copia de solo lectura del grafo de carreteras, propiedad de core.
@@ -451,14 +461,21 @@ def cost_matrix(
     # segunda columna de un frente se trabaja desde otro waypoint si lo hay.
     col_wp: list[str | None] = []
     offroad: list[float] = []
-    seen_tasks: set[str] = set()
-    for task in tasks:
+    seen_tasks: dict[str, int] = {}
+    # Frentes con dos columnas: (col primary, col alt). Se anclan al final para que el
+    # emparejamiento no voltee qué camión toma cada una (`ANCHOR_BIAS_M`).
+    front_pairs: list[tuple[int, int]] = []
+    for j, task in enumerate(tasks):
         wp = _task_waypoint(state, task, graph)
         cell_id = task.target_cell
         if task.id in seen_tasks:
             wp, alt_cell = _alt_target(state, task, wp, graph)
             cell_id = alt_cell or cell_id
-        seen_tasks.add(task.id)
+            primary_j = seen_tasks[task.id]
+            if wp is not None and wp != col_wp[primary_j]:
+                front_pairs.append((primary_j, j))
+        else:
+            seen_tasks[task.id] = j
         col_wp.append(wp)
         offroad.append(_offroad_m(state, cell_id, wp, graph) if wp else 0.0)
 
@@ -493,7 +510,42 @@ def cost_matrix(
             row_routes.append(route)
         matrix.append(row)
         routes.append(row_routes)
+
+    _anchor_front_pairs(matrix, routes, units, graph, front_pairs)
     return matrix, units, tasks, routes
+
+
+def _anchor_front_pairs(
+    matrix: list[list[float]],
+    routes: list[list[list[str]]],
+    units: list[Unit],
+    graph: RoadGraph,
+    front_pairs: list[tuple[int, int]],
+) -> None:
+    """Histéresis por frente de dos columnas, in situ. A cada columna se le fija un
+    camión ancla —el más cercano por carretera a su waypoint, desempate por `unit.id`—
+    y se le suma `ANCHOR_BIAS_M` al ancla de una columna en la columna de la otra, para
+    que el óptimo global no los intercambie cuando la deriva de coste es de unos metros.
+    Solo mira los camiones factibles para AMBAS columnas: el que solo llega a una no
+    entra en la disputa."""
+    for primary_j, alt_k in front_pairs:
+        eligible = [
+            i
+            for i in range(len(units))
+            if math.isfinite(matrix[i][primary_j]) and math.isfinite(matrix[i][alt_k])
+        ]
+        if len(eligible) < 2:
+            continue
+        anchor_p = min(
+            eligible,
+            key=lambda i: (graph.route_length_m(routes[i][primary_j]), units[i].id),
+        )
+        anchor_a = min(
+            (i for i in eligible if i != anchor_p),
+            key=lambda i: (graph.route_length_m(routes[i][alt_k]), units[i].id),
+        )
+        matrix[anchor_p][alt_k] += ANCHOR_BIAS_M
+        matrix[anchor_a][primary_j] += ANCHOR_BIAS_M
 
 
 def apply_hard_constraints(
@@ -703,6 +755,15 @@ def _match(matrix: list[list[float]]) -> list[tuple[int, int]]:
     finite = arr[np.isfinite(arr)]
     big = (float(finite.max()) + 1.0) * (arr.size + 1.0) if finite.size else 1.0
     solvable = np.where(np.isfinite(arr), arr, big)
+
+    # Desempate reproducible: una perturbación minúscula y estable por celda (i, j) para
+    # que un empate exacto resuelva siempre igual entre replans. Muy por debajo de
+    # cualquier coste real y de `ANCHOR_BIAS_M`; solo ordena empates, no cambia óptimos.
+    ncols = solvable.shape[1]
+    tiebreak = np.fromfunction(
+        lambda i, j: (i * ncols + j) * 1e-9, solvable.shape, dtype=float
+    )
+    solvable = solvable + tiebreak
 
     rows, cols = linear_sum_assignment(solvable)
     return [

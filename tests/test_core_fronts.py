@@ -568,3 +568,60 @@ def test_waiting_target_only_moves_if_the_new_contact_is_clearly_sooner() -> Non
     st, changed = _folded(st, graph)
     assert [t.target_cell for t in changed] == ["cell_17_7"]
     assert solver.attack_waypoint(70, 30, st.wind, graph) == "wp_b"
+
+
+# --- (f) el segundo camión no rebota: anclaje estable de las dos columnas del frente
+
+
+def _pair_graph() -> solver.RoadGraph:
+    """Grafo mínimo: dos waypoints en línea, wp_p al oeste y wp_a al este."""
+    sc = Scenario(
+        id="sc_anchor",
+        name="anchor",
+        origin=(0.0, 0.0),
+        hazard=HazardSpec(
+            kind="wildfire",
+            origin_cell="cell_0_0",
+            cell_size=4,
+            wind=Wind(bearing_deg=270, speed=1.0),
+        ),
+        waypoints=[Waypoint(id="wp_p", x=0, z=0), Waypoint(id="wp_a", x=100, z=0)],
+        roads=[RoadEdge(id="road:wp_p-wp_a", a="wp_p", b="wp_a", length_m=100)],
+        pois=[],
+        units=[],
+    )
+    return solver.RoadGraph.from_scenario(sc)
+
+
+def test_front_pair_anchor_keeps_the_same_truck_on_the_primary_column() -> None:
+    """Diagnosticado en `runs/run_f789f40c4f1f.jsonl`: con un frente atacable desde dos
+    waypoints, el óptimo global volteaba qué camión iba a cada columna cuando el fuego
+    se extendía y el coste cambiaba unos metros, y el segundo camión recibía
+    sur_01→sur_02→sur_01 y rebotaba (`superseded`). El anclaje fija cada columna al
+    camión más cercano por carretera, y la deriva ya no lo voltea."""
+    graph = _pair_graph()
+    u1 = Unit(id="unit_truck1", kind="fire_truck", x=0, z=0, capabilities=["extinguish"])
+    u2 = Unit(id="unit_truck2", kind="fire_truck", x=100, z=0, capabilities=["extinguish"])
+    units = [u1, u2]
+    # col 0 = primary (se ataca desde wp_p), col 1 = alt (desde wp_a).
+    routes = [
+        [["wp_p"], ["wp_p", "wp_a"]],  # u1: pegado a wp_p
+        [["wp_a", "wp_p"], ["wp_a"]],  # u2: pegado a wp_a
+    ]
+
+    def solved(drift: float) -> list[tuple[int, int]]:
+        # Costes base casi empatados; `drift` abarata el anti-diagonal, como haría la
+        # deriva de unos metros al extenderse el fuego.
+        matrix = [
+            [10.0, 20.0 - drift],
+            [20.0 - drift, 10.0],
+        ]
+        solver._anchor_front_pairs(matrix, routes, units, graph, [(0, 1)])
+        return solver._match(matrix)
+
+    # Sin anclaje, un drift de 11 voltea el óptimo (anti 18 < diag 20).
+    assert solver._match([[10.0, 9.0], [9.0, 10.0]]) == [(0, 1), (1, 0)]
+    # Con anclaje, el camión cercano a wp_p (u1) se queda en la columna primary en
+    # ambos casos: sin deriva y con la deriva que antes lo volteaba.
+    assert solved(0.0) == [(0, 0), (1, 1)]
+    assert solved(11.0) == [(0, 0), (1, 1)]
