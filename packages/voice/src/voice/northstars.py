@@ -49,21 +49,12 @@ Priority = Literal["low", "medium", "high"]
 def _rich(texto: str) -> dict[str, Any]:
     """Un bloque de `description` / `*_examples`.
 
-    La API los declara como registros libres (`additionalProperties: {}`) y acepta
-    cualquier forma —probado: `{"text": ...}`, un párrafo de editor y hasta
-    `{"description": ...}` entran los tres con 201—. No hay forma canónica
-    documentada y no hay ninguna Northstar creada desde la UI de la que copiarla,
-    así que esto cubre a los dos lectores plausibles: un renderizador plano lee
-    `text`, uno de editor rico recorre `content`. Las claves de más son inocuas.
-
-    Si al mirarlas en la UI salen en blanco, la forma buena es solo una de las dos
-    y aquí se recorta.
+    La forma es la de Slate —`children`, no `content`—, copiada de las Northstars
+    que genera la propia plataforma. La API declara el campo como registro libre y
+    acepta cualquier cosa (un `{"text": ...}` suelto entra con 201), así que esto
+    no lo dice el esquema: se sabe leyendo una suya.
     """
-    return {
-        "type": "paragraph",
-        "text": texto,
-        "content": [{"type": "text", "text": texto}],
-    }
+    return {"type": "paragraph", "children": [{"text": texto}]}
 
 
 @dataclass(frozen=True)

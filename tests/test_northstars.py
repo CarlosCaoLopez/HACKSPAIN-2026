@@ -10,13 +10,15 @@ def test_payload_lleva_lo_obligatorio():
     assert p["version_id"] == "v1"
 
 
-def test_description_va_en_registros_no_en_strings():
-    """La API rechaza strings sueltos con 400 `expected record, received string`."""
+def test_description_va_en_registros_con_forma_de_slate():
+    """La API rechaza strings sueltos con 400 `expected record, received string`,
+    y la forma que usa la plataforma para los suyos es Slate: un párrafo con
+    `children`, no `content`. Acepta otras, pero entonces la UI no los pinta."""
     p = ENTRANTE[0].payload("v1")
     for campo in ("description", "positive_examples", "negative_examples"):
         for bloque in p[campo]:
-            assert isinstance(bloque, dict)
-            assert bloque["text"]
+            assert bloque["type"] == "paragraph"
+            assert bloque["children"][0]["text"]
 
 
 def test_categorias_y_prioridades_son_las_de_la_api():
