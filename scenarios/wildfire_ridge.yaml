@@ -71,6 +71,13 @@ pois:
     x: -33
     z: 77
     waypoint_id: wp_refugio
+  - id: poi_molino
+    name: El molino viejo
+    kind: landmark
+    description: "The old mill, a lone house on the south track just outside village A; callers name it by sight, not by village"
+    x: 162
+    z: 44
+    waypoint_id: wp_sur_02
 
 # 2 camiones, 1 ambulancia, 1 dron. `capabilities` es lo que el solver cruza con
 # `Task.required_capability` para poner coste infinito: una ambulancia no extingue.
