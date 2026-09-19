@@ -65,7 +65,9 @@ def test_civiles_por_grupo_y_no_por_evento() -> None:
     score = score_fallback.count(FIXTURE).score
     # El grupo de Pueblo A llega a `safe` una sola vez, con el `count` que declara el YAML:
     # contar eventos y no grupos daría más.
-    pueblo_a = next(c for c in load_scenario("wildfire_ridge").civilians if c.id == "civ_pueblo_a")
+    pueblo_a = next(
+        c for c in load_scenario("wildfire_ridge").civilians if c.id == "civ_pueblo_a"
+    )
     assert score.civilians_safe == pueblo_a.count
     assert score.civilians_exposed_end == 0
 
@@ -78,7 +80,9 @@ def test_total_sale_vacio() -> None:
 # --- el número del pitch -------------------------------------------------------------
 
 
-def _ev(seq: int, type_: EventType, t_wall: datetime, causes: list[int] | None = None) -> Event:
+def _ev(
+    seq: int, type_: EventType, t_wall: datetime, causes: list[int] | None = None
+) -> Event:
     payloads = {
         EventType.CALL_ENDED: {
             "call_id": "c1",
@@ -129,7 +133,10 @@ def test_una_orden_sin_cadena_no_se_empareja() -> None:
     base = datetime(2026, 9, 20, 12, 0, 0, tzinfo=UTC)
     turns = score_fallback.HangupToTurn()
     turns.feed(_ev(1, EventType.CALL_ENDED, base))
-    assert turns.feed(_ev(2, EventType.ACTION_REQUESTED, base + timedelta(seconds=0.2))) is None
+    assert (
+        turns.feed(_ev(2, EventType.ACTION_REQUESTED, base + timedelta(seconds=0.2)))
+        is None
+    )
     assert turns.unresolved == 1
     assert turns.mean_s is None  # ninguna resuelta es None, nunca 0.0
 
@@ -140,7 +147,10 @@ def test_solo_la_primera_orden_cuenta_como_giro() -> None:
     turns = score_fallback.HangupToTurn()
     turns.feed(_ev(1, EventType.CALL_ENDED, base))
     turns.feed(_ev(2, EventType.ACTION_REQUESTED, base + timedelta(seconds=1.0), [1]))
-    assert turns.feed(_ev(3, EventType.ACTION_REQUESTED, base + timedelta(seconds=9.0), [1])) is None
+    assert (
+        turns.feed(_ev(3, EventType.ACTION_REQUESTED, base + timedelta(seconds=9.0), [1]))
+        is None
+    )
     assert len(turns.turns) == 1
 
 

@@ -50,7 +50,9 @@ class Rcon(Protocol):
         self, command: str, priority: Priority = HIGH, timeout: float | None = None
     ) -> str: ...
     async def send_many(
-        self, commands: list[str], priority: Priority = HIGH,
+        self,
+        commands: list[str],
+        priority: Priority = HIGH,
         timeout: float | None = None,
     ) -> list[str]: ...
 
@@ -137,7 +139,9 @@ class RconClient:
         return await fut
 
     async def send_many(
-        self, commands: list[str], priority: Priority = HIGH,
+        self,
+        commands: list[str],
+        priority: Priority = HIGH,
         timeout: float | None = None,
     ) -> list[str]:
         """Lote en orden. Para worldgen, que son 200 comandos seguidos."""
@@ -232,7 +236,9 @@ class FakeRcon:
         return ""
 
     async def send_many(
-        self, commands: list[str], priority: Priority = HIGH,
+        self,
+        commands: list[str],
+        priority: Priority = HIGH,
         timeout: float | None = None,
     ) -> list[str]:
         return [await self.send(c, priority, timeout) for c in commands]
@@ -261,7 +267,9 @@ class PrintRcon:
 
     async def close(self) -> None:
         if self.limit is not None and self.sent > self.limit:
-            print(f"rcon: {self.sent} comandos en total ({self.sent - self.limit} sin imprimir)")
+            print(
+                f"rcon: {self.sent} comandos en total ({self.sent - self.limit} sin imprimir)"
+            )
 
     async def send(
         self, command: str, priority: Priority = HIGH, timeout: float | None = None
@@ -272,7 +280,9 @@ class PrintRcon:
         return ""
 
     async def send_many(
-        self, commands: list[str], priority: Priority = HIGH,
+        self,
+        commands: list[str],
+        priority: Priority = HIGH,
         timeout: float | None = None,
     ) -> list[str]:
         return [await self.send(c, priority, timeout) for c in commands]

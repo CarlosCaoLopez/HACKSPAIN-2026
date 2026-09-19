@@ -6,6 +6,7 @@
 // inventado (REQ-066: un mapa que no es real presentado como real es peor que ninguno).
 import type { Event, Plan, WorldState } from '../types'
 import type { WorldView } from '../hooks/useWorldView'
+import { Medios } from '../components/Medios'
 import { ReplanBanner } from '../components/ReplanBanner'
 import { ViewHeader } from '../components/ViewIcon'
 import { RealMap } from '../geo/RealMap'
@@ -33,7 +34,12 @@ export function MapView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <ViewHeader view="mapa" />
+      {/* La misma luz que en Dashboards, y aquí importa más: cuando entra la llamada la
+          sala está mirando el mapa, y «no queda ninguna ambulancia» es lo que explica lo
+          que el agente hace a continuación. */}
+      <ViewHeader view="mapa">
+        <Medios state={state} events={events} />
+      </ViewHeader>
       <div className="sticky top-0 z-[1000] bg-vela-panel">
         <ReplanBanner events={events} />
       </div>

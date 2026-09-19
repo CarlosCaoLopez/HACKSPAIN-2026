@@ -5,7 +5,8 @@
 // CERRADA — seis cosas:
 //
 //   1. posición y rumbo de unidad     (world.unit.position)
-//   2. estado de unidad               (world.unit.status)
+//   2. estado de unidad               (world.unit.status Y world.fact.asserted
+//                                      con clave `unit:<id>:available`)
 //   3. estado de celda y su causa     (world.cell.changed, world.fire.detected)
 //   4. corte de carretera             (world.road.changed)
 //   5. grupos de civiles              (world.civilians.changed)
@@ -69,10 +70,15 @@ export interface WorldView {
   units: Map<string, UnitView>
   cells: Map<string, CellState>
   /** Por qué cambió cada celda la última vez, si el evento lo dijo. `extinguished` es la
-   *  que importa pintar: una celda que apagó un camión no es una que se quemó sola. El
-   *  snapshot no trae causa (`Cell` no la lleva), así que tras un `seed` se parte de cero. */
+   *  que importa pintar: una celda que apagó un camión no es una que se quemó sola.
+   *
+   *  LIMITACIÓN ASUMIDA: el snapshot no trae causa (`Cell` no la lleva), así que tras un
+   *  `seed` (recarga, reconexión, hueco en `seq`) las celdas apagadas vuelven a pintarse
+   *  como `burnt` a secas. Es pérdida de color, no de verdad: el estado sigue siendo
+   *  `burnt`. Inventar la causa desde otro sitio sería pintar lo que no sabemos. */
   cellCauses: Map<string, CellCause>
-  /** Pins de vecinos por Telegram, por `call_id` (`tg_<chat>`). Solo los que traen (x, z). */
+  /** Pins de vecinos por Telegram, por `call_id` (`tg_<chat>`). Solo los que traen (x, z).
+   *  Tras un snapshot se reconstruyen desde `WorldState.facts` (`seed`). */
   citizens: Map<string, CitizenView>
   /** `edge_id` → causa del corte (`null` si no se dijo). Solo los cortados. */
   cutRoads: Map<string, string | null>
@@ -146,6 +152,40 @@ function seed(d: Derived, state: WorldState): void {
   d.tSim = state.t_sim
   d.lastSeq = state.seq
   d.seededUnits = state.units
+  seedCitizens(d, state)
+}
+
+/** El pin de Telegram no está en el snapshot como tal, pero sí su huella: el hecho
+ *  `poi:<id>:confirmed` con `source: call:tg_<chat>` y `kind: observed` que el core
+ *  asertó al anclarlo (`voice/telegram.py`). De ahí se rehace el pin en las coordenadas
+ *  del POI, para que una recarga a mitad de demo no borre al vecino del mapa. Solo
+ *  `observed` (invariante 8), solo `true`, y solo si el POI existe en el estado. Un pin
+ *  que no se ancló a ningún POI no deja hecho y no se rehace: no se sabe dónde ponerlo.
+ *  Si luego llega un `citizen.location` del mismo chat, `fold` lo sustituye. */
+function seedCitizens(d: Derived, state: WorldState): void {
+  for (const fact of state.facts) {
+    if (fact.kind !== 'observed' || fact.value !== true) continue
+    const confirmed = /^poi:([^:]+):confirmed$/.exec(fact.key)
+    if (!confirmed?.[1]) continue
+    const callId = fact.source.startsWith('call:tg_')
+      ? fact.source.slice('call:'.length)
+      : fact.call_id?.startsWith('tg_')
+        ? fact.call_id
+        : null
+    if (!callId) continue
+    const poi = state.pois[confirmed[1]]
+    if (!poi) continue
+    // El hecho más reciente del mismo chat gana: `facts` está en orden de aserción.
+    d.citizens.set(callId, {
+      callId,
+      x: poi.x,
+      z: poi.z,
+      poiId: poi.id,
+      poiName: poi.name,
+      live: false,
+      tSim: fact.t_sim,
+    })
+  }
 }
 
 function fold(d: Derived, envelope: Event): void {
@@ -172,6 +212,26 @@ function fold(d: Derived, envelope: Event): void {
       const p = ev.payload
       const before = d.units.get(p.unit_id)
       if (before) d.units.set(p.unit_id, { ...before, status: p.status })
+      break
+    }
+    // La OTRA mitad del punto 2. El estado de una unidad no siempre cambia por
+    // `world.unit.status`: cuando una dotación dice por teléfono que no puede salir,
+    // `voice/webhooks.py` asierta `unit:<id>:available=false` y quien la pone
+    // `unavailable` es `belief.apply_fact` DENTRO del core, sin emitir ningún
+    // `world.unit.status`. Sin esto, el camión que acaba de decir que no sigue
+    // pintándose en el mapa como si estuviera disponible y *Hechos* lo lista libre,
+    // justo en el minuto del guion en el que se está hablando de él.
+    //
+    // No es un séptimo punto de la lista cerrada ni es rehacer `belief`: es la misma
+    // línea de `belief.apply_fact` (`idle` si `true`, `unavailable` si no) para el
+    // único campo que este hook ya lleva. Los demás hechos siguen siendo de P1 y los
+    // pinta *Hechos* como texto.
+    case 'world.fact.asserted': {
+      const m = /^unit:([^:]+):available$/.exec(ev.payload.key)
+      if (!m?.[1]) return
+      const before = d.units.get(m[1])
+      if (!before) return
+      d.units.set(m[1], { ...before, status: ev.payload.value ? 'idle' : 'unavailable' })
       break
     }
     case 'world.cell.changed': {

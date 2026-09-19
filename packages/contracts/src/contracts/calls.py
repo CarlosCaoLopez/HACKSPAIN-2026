@@ -15,6 +15,9 @@ CallIntent = Literal[
     "resource_request",
     "status_check",
     "shelter_confirm",
+    "neighbor_alert",  # aviso al pueblo vecino: puede llegarle gente que huye del fuego
+    "fire_crew_dispatch",  # al retén: hay fuego, ¿pueden salir?
+    "ambulance_dispatch",  # a la ambulancia, solo si alguien la ha pedido y está libre
 ]
 CallOutcome = Literal["answered", "no_answer", "busy", "failed", "hung_up"]
 Severity = Literal["low", "medium", "critical"]
@@ -33,7 +36,9 @@ class CallRequest(BaseModel):
     intent: CallIntent
     urgency: Urgency
     facts: dict[str, str] = {}  # variables del guion: poi_name, route_name,
-    #                             deadline_min, hazard_kind
+    #                             deadline_min, hazard_kind, role, situation_brief,
+    #                             checklist (ver core.calls: el guion condicional de
+    #                             la llamada vive aquí, no en la plataforma)
     expect: list[str] = []  # qué queremos sacar: "confirmation",
     #                         "road_status", "headcount"
 

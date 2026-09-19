@@ -165,7 +165,11 @@ def _run_journal(tmp_path: Path, name: str) -> Path:
         )
     )
     w.write(
-        _ev(6, EventType.WORLD_CELL_CHANGED, {"cell_id": "cell_1_1", "state": "burnt", "hazard": "fire"})
+        _ev(
+            6,
+            EventType.WORLD_CELL_CHANGED,
+            {"cell_id": "cell_1_1", "state": "burnt", "hazard": "fire"},
+        )
     )
     w.close()
     return w.path

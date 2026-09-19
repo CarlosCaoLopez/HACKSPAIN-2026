@@ -39,7 +39,10 @@ def graph() -> RoadGraph:
 
 def test_la_ruta_corta_es_la_sur(graph):
     assert graph.shortest_path("wp_base", "wp_pueblo") == [
-        "wp_base", "wp_cruce", "wp_sur_01", "wp_pueblo",
+        "wp_base",
+        "wp_cruce",
+        "wp_sur_01",
+        "wp_pueblo",
     ]
     assert graph.route_length_m(graph.shortest_path("wp_base", "wp_pueblo")) == 330
 
@@ -48,7 +51,11 @@ def test_cortar_el_sur_manda_el_camion_por_el_norte(graph):
     """El mecanismo del replan, en una aserción."""
     graph.cut("wp_sur_01-wp_pueblo", "árbol caído")
     assert graph.shortest_path("wp_base", "wp_pueblo") == [
-        "wp_base", "wp_cruce", "wp_nor_01", "wp_nor_02", "wp_pueblo",
+        "wp_base",
+        "wp_cruce",
+        "wp_nor_01",
+        "wp_nor_02",
+        "wp_pueblo",
     ]
     assert graph.is_cut("wp_sur_01-wp_pueblo")
 
@@ -113,6 +120,7 @@ def test_una_arista_huerfana_falla_al_construir():
 
 
 # --- nombrar una carretera desde fuera ---
+
 
 def test_resolve_edge_acepta_las_formas_que_circulan(graph):
     """Quien nombra una carretera desde fuera —una llamada, un `human.override`,

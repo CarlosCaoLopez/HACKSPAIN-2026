@@ -72,6 +72,29 @@ def height_to_frame(width: float, depth: float) -> float:
     return 1.1 * max(depth / (2 * half), width / (2 * half * ASPECT))
 
 
+def aim(x: float, y: float, z: float, ox: float, oz: float) -> tuple[float, float]:
+    """(yaw, pitch) para que una cámara en (x, y, z) mire a (ox, GROUND_Y, oz).
+
+    En Minecraft yaw 0 es sur y crece hacia el oeste; de ahí el `-dx`. Existe para
+    no escribir los ángulos a mano: un encuadre nuevo se define por dónde está la
+    cámara y qué mira, y los grados salen solos."""
+    dx, dz = ox - x, oz - z
+    return (
+        math.degrees(math.atan2(-dx, dz)),
+        math.degrees(math.atan2(y - GROUND_Y, math.hypot(dx, dz))),
+    )
+
+
+def looking_at(ox: float, oz: float, dist: float, alto: float) -> tuple[float, ...]:
+    """Cámara a `dist` al suroeste del objetivo y `alto` por encima, mirándolo.
+
+    El suroeste es la diagonal que deja el valle de frente con el norte arriba, que
+    es como se lee el mapa en el pitch."""
+    x, z = ox - dist * 0.7, oz + dist * 0.7
+    y = GROUND_Y + alto
+    return (x, y, z, *aim(x, y, z, ox, oz))
+
+
 def shots(scenario: Scenario) -> dict[str, Shot]:
     """Los tres del backbone, más el escorzo que se ve mejor que el cenital."""
     # La cenital encuadra **el corredor de carreteras**, no todos los POIs: el
@@ -82,6 +105,11 @@ def shots(scenario: Scenario) -> dict[str, Shot]:
     cx, cz = (min(rxs) + max(rxs)) / 2, (min(rzs) + max(rzs)) / 2
 
     pueblo = next((p for p in scenario.pois if p.kind == "village"), scenario.pois[0])
+    # Los dos sitios donde una unidad ESPERA al teléfono. Desde que el core retiene a
+    # una unidad hasta que su dotación confirma, lo que hay que enseñar no es a dónde
+    # va sino que **no se mueve**, y eso pasa en el parque y en el hospital.
+    base = next((p for p in scenario.pois if p.kind == "base"), pueblo)
+    hospital = next((p for p in scenario.pois if p.kind == "hospital"), base)
     fx, fz = parse_cell(scenario.hazard.origin_cell)
     fx, fz = fx * scenario.hazard.cell_size, fz * scenario.hazard.cell_size
 
@@ -126,6 +154,16 @@ def shots(scenario: Scenario) -> dict[str, Shot]:
                 fz + 17,
                 -45,
                 8,
+            ),
+            Shot(
+                "parque",
+                "el parque · los camiones que esperan a que conteste el retén",
+                *looking_at(base.x, base.z, 30, 13),
+            ),
+            Shot(
+                "hospital",
+                "el hospital · la ambulancia que no arranca hasta que confirman",
+                *looking_at(hospital.x, hospital.z, 26, 11),
             ),
         ]
     }
@@ -242,7 +280,9 @@ async def live(catalogue: dict[str, Shot], who: str) -> None:
             "para mandar un encuadre suelto: python -m sim.camera valle --who <jugador>"
         )
 
-    keys = dict(zip("1234", catalogue.values(), strict=False))
+    # Numeradas por posición, no contra una cadena fija: con `zip("1234", ...)` un
+    # plano nuevo se caía en silencio por el `strict=False`.
+    keys = {str(i + 1): shot for i, shot in enumerate(catalogue.values())}
     rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
     await rcon.connect()
     if who not in ("@a", "@s"):

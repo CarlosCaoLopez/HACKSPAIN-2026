@@ -292,6 +292,14 @@ class ActionRequested(BaseModel):
     action_id: str
     verb: Verb
     args: dict = {}
+    dispatch_confirmed: bool | None = None
+    """Si la unidad salió con el «vamos» del medio al otro lado del teléfono.
+
+    `None`: la acción no estaba condicionada a ninguna llamada (el caso normal).
+    `True`: el retén o la dotación contestaron y la unidad salió al colgar.
+    `False`: se agotó el plazo o la llamada no se pudo cerrar, y la unidad salió
+    igual porque una demo congelada no es una degradación aceptable. Se anota, que
+    es la regla: nunca un `except: pass`."""
 
 
 class ActionCompleted(BaseModel):

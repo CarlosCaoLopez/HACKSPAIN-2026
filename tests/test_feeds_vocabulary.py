@@ -43,7 +43,9 @@ def published_keys() -> set[str]:
         edges={"road:wp_a-wp_b": EdgeRef(road_name="A-8005", pk_from=1.0, pk_to=2.5)},
     )
     ctx = FeedContext(origin_cell="cell_18_7", cell_size=4)
-    meteo = open_meteo.parse_hourly(json.loads((FIX / "open_meteo_hourly.json").read_text()))
+    meteo = open_meteo.parse_hourly(
+        json.loads((FIX / "open_meteo_hourly.json").read_text())
+    )
     cut = dgt.parse_situations((FIX / "dgt_sample.xml").read_bytes())
     fires = firms.parse_csv((FIX / "firms_viirs_synthetic.csv").read_text())
     obs = (
@@ -86,13 +88,21 @@ def test_toda_entrada_del_entorno_del_sim_esta_en_el_vocabulario_o_tiene_motivo(
     del lado real: o entra en `ENVIRONMENT` con su fuente, o entra en `SIM_ONLY` con su motivo."""
     in_vocabulary = {e.sim_input for e in ENVIRONMENT}
     undecided = set(SIM_INJECTS) - in_vocabulary - set(SIM_ONLY)
-    assert undecided == set(), f"inject del sim sin decidir del lado real: {sorted(undecided)}"
+    assert undecided == set(), (
+        f"inject del sim sin decidir del lado real: {sorted(undecided)}"
+    )
 
 
 def test_solo_minecraft_lleva_un_motivo_y_no_es_un_hueco_disfrazado():
-    assert set(SIM_ONLY) <= set(SIM_INJECTS), "SIM_ONLY nombra algo que el sim ya no tiene"
-    assert all(len(reason) > 20 for reason in SIM_ONLY.values()), "un motivo de verdad, no una etiqueta"
-    assert not set(SIM_ONLY) & {e.sim_input for e in ENVIRONMENT}, "o es de los dos, o solo del sim"
+    assert set(SIM_ONLY) <= set(SIM_INJECTS), (
+        "SIM_ONLY nombra algo que el sim ya no tiene"
+    )
+    assert all(len(reason) > 20 for reason in SIM_ONLY.values()), (
+        "un motivo de verdad, no una etiqueta"
+    )
+    assert not set(SIM_ONLY) & {e.sim_input for e in ENVIRONMENT}, (
+        "o es de los dos, o solo del sim"
+    )
 
 
 def test_las_plantillas_del_vocabulario_son_claves_validas_del_contrato():
@@ -101,7 +111,9 @@ def test_las_plantillas_del_vocabulario_son_claves_validas_del_contrato():
     from contracts.factkeys import FACT_KEYS
 
     for info in ENVIRONMENT:
-        assert info.fact_key in FACT_KEYS, f"{info.fact_key} no está en contracts.factkeys"
+        assert info.fact_key in FACT_KEYS, (
+            f"{info.fact_key} no está en contracts.factkeys"
+        )
 
 
 def test_lo_retirado_por_la_correspondencia_no_vuelve_a_colarse():

@@ -15,14 +15,17 @@ import type { Event, Plan, UnitKind, VelaEvent, WorldState } from '../types'
 import type { FeedAnchor } from './anchor'
 import { activeCallers } from './callers'
 import { firmsFoci } from './firms'
+import { knownTasks } from '../story/tasks'
 import {
   CALLER_ICON,
   CELL_ICON,
+  CITIZEN_ICON,
   FIRMS_ICON,
   POI_ICON,
   ROAD_CUT_ICON,
   TASK_ICON,
   UNIT_ICON,
+  WET_CELL_ICON,
 } from './icons'
 import { Legend, type LegendItem } from './Legend'
 import { Scene } from './scene'
@@ -99,7 +102,7 @@ export function RealMap({
   const view: WorldView = useMemo(
     () =>
       awaitingSnapshot
-        ? { ...worldView, units: new Map(), civilians: new Map() }
+        ? { ...worldView, units: new Map(), civilians: new Map(), citizens: new Map() }
         : worldView,
     [worldView, awaitingSnapshot],
   )
@@ -146,6 +149,9 @@ export function RealMap({
     () => activeCallers(events, layer?.pois ?? [], view.tSim),
     [events, layer, view.tSim],
   )
+  // Las tareas del snapshot más los `task.changed` posteriores: la insignia del destino
+  // de una ruta necesita el `kind` de un frente que quizá nació después de conectar.
+  const tasks = useMemo(() => knownTasks(state, events), [state, events])
   const unitKinds = useMemo(() => {
     const kinds = new Map<string, UnitKind>()
     for (const u of layer?.units ?? []) kinds.set(u.id, u.kind)
@@ -157,12 +163,12 @@ export function RealMap({
     scene?.sync({
       view,
       plan: awaitingSnapshot ? null : plan,
-      tasks: state?.tasks ?? {},
+      tasks,
       unitKinds,
       foci,
       callers,
     })
-  }, [scene, view, plan, state, unitKinds, foci, callers, awaitingSnapshot])
+  }, [scene, view, plan, tasks, unitKinds, foci, callers, awaitingSnapshot])
 
   const legendItems = useMemo<LegendItem[]>(() => {
     if (!layer) return []
@@ -178,16 +184,22 @@ export function RealMap({
       if (kind) add(`unit:${kind}`, UNIT_ICON[kind])
     }
     for (const p of layer.pois) add(`poi:${p.kind}`, POI_ICON[p.kind])
-    for (const s of view.cells.values()) if (s !== 'intact') add(`cell:${s}`, CELL_ICON[s])
+    for (const [id, s] of view.cells) {
+      if (s === 'intact') continue
+      // La celda que apagó un camión se pinta «mojada», y la leyenda lo dice aparte.
+      if (s === 'burnt' && view.cellCauses.get(id) === 'extinguished') add('cell:wet', WET_CELL_ICON)
+      else add(`cell:${s}`, CELL_ICON[s])
+    }
     if (view.cutRoads.size > 0) add('cut', ROAD_CUT_ICON)
     if (foci.length > 0) add('firms', FIRMS_ICON)
     if (callers.placed.length > 0) add('caller', CALLER_ICON)
+    if (view.citizens.size > 0) add('citizen', CITIZEN_ICON)
     for (const a of plan?.assignments ?? []) {
-      const kind = state?.tasks[a.task_id]?.kind
+      const kind = tasks[a.task_id]?.kind
       if (kind) add(`task:${kind}`, TASK_ICON[kind])
     }
     return out
-  }, [layer, view, unitKinds, foci, callers, plan, state])
+  }, [layer, view, unitKinds, foci, callers, plan, tasks])
 
   const trouble = useMemo(
     () => (layer && !awaitingSnapshot ? problems(view, layer, plan) : []),

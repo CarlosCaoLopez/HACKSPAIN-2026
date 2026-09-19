@@ -439,6 +439,14 @@ class CallState:
         None  # con Web Call no hay caller_number: lo da el vecino
     )
     last_jev_len: int = 0  # turnos que ya vio el último tick de Jev
+    started_seq: int | None = (
+        None  # seq del `call.started`: lo que un pin de Telegram declara en `causes`
+    )
+    ended_t: float = 0.0  # cuándo se colgó (0 = sigue viva)
+    pending_facts: dict[str, int] = field(
+        default_factory=dict
+    )  # hechos del tool sin POI (`immobile`, `injuries`…): los publica el pin de Telegram
+    pending_severity: str = "medium"
 
     def __post_init__(self) -> None:
         self.call_id = self.call_id or self.session_id
@@ -455,6 +463,23 @@ def draft_for(key: str, payload: dict) -> str:
         m, s = divmod(eta, 60)
         when = f"{m} min {s} s" if m else f"{s} segundos"
         return f"Ya va {unit} por {route}, llega en {when}. No se mueva de donde está."
+    if key == "queued":
+        # El mensaje lo redacta el core con la respuesta de la ambulancia: aquí no se
+        # inventa nada, solo se le pone la voz del operador si viene vacío.
+        return str(
+            payload.get("message")
+            or "Sigo con ello; la ambulancia está ocupada y le aviso en cuanto se libere."
+        )
+    if key == "location_received":
+        # Confirmar la recepción es media conversación: el vecino ha hecho algo en
+        # otra app y necesita saber que ha servido. Si además reconocemos el sitio,
+        # se le nombra: es la prueba de que la ubicación ha entrado de verdad.
+        poi = payload.get("poi_name")
+        sitio = f", junto a {poi}" if poi else ""
+        return (
+            f"Ya tengo su ubicación{sitio}. La estoy pasando a los equipos. "
+            "No se mueva de donde está."
+        )
     if key == "coach":
         return str(payload.get("say") or NEUTRAL_DRAFT)
     return str(payload.get("message") or payload.get("say") or NEUTRAL_DRAFT)
@@ -565,6 +590,7 @@ class ConversationMonitor:
     async def close(self) -> dict | None:
         """Al colgar: `analyze`. Devuelve el informe o None."""
         self.state.ended = True
+        self.state.ended_t = time.time()
         if self._task and not self._task.done():
             self._task.cancel()
         for t in list(self._bg):
@@ -908,8 +934,18 @@ def get_or_start(session_id: str, run_id: str) -> ConversationMonitor:
     return mon
 
 
+RECENT_ENDED: dict[str, CallState] = {}
+"""Las últimas llamadas colgadas (solo el estado, sin monitor): un pin de Telegram que
+llega justo después de colgar todavía se cuelga de ellas (`voice.telegram`)."""
+RECENT_ENDED_MAX = 20
+
+
 def forget(session_id: str) -> None:
-    MONITORS.pop(session_id, None)
+    mon = MONITORS.pop(session_id, None)
+    if mon is not None:
+        RECENT_ENDED[session_id] = mon.state
+        while len(RECENT_ENDED) > RECENT_ENDED_MAX:
+            RECENT_ENDED.pop(next(iter(RECENT_ENDED)))
 
 
 async def signal_dispatcher() -> None:

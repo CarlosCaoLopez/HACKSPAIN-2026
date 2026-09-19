@@ -74,12 +74,19 @@ class _SpyVoice:
 
 @pytest.fixture
 async def gateway(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setenv("VELA_MODE", "dev")  # el bus, en dev, lanza si un payload no valida
+    monkeypatch.setenv(
+        "VELA_MODE", "dev"
+    )  # el bus, en dev, lanza si un payload no valida
     monkeypatch.setattr(settings, "vela_mode", "dev")
     monkeypatch.setattr(settings, "vela_bridges", True)
     for key in SECRETS:
         monkeypatch.setattr(settings, key, "")
-    for env in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "HAPPYROBOT_API_KEY", "HUMALIKE_API_KEY"):
+    for env in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "HAPPYROBOT_API_KEY",
+        "HUMALIKE_API_KEY",
+    ):
         monkeypatch.delenv(env, raising=False)
 
     async def _sin_red(prompt: str):
@@ -95,7 +102,9 @@ async def gateway(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     bus.reset()
     async with gateway_main.lifespan(app):
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://vela") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://vela"
+        ) as client:
             yield client, app.state.runtime, warmups
     bus.reset()
 
@@ -122,7 +131,9 @@ async def _wait_for(path: Path, type_: EventType, n: int = 1) -> list[Event]:
                 return evs
         await asyncio.sleep(0.05)
     tipos = [e.type.value for e in _events(path)] if path.exists() else "sin journal"
-    raise AssertionError(f"no llegaron {n} × {type_.value} en {WAIT_S}s · journal: {tipos}")
+    raise AssertionError(
+        f"no llegaron {n} × {type_.value} en {WAIT_S}s · journal: {tipos}"
+    )
 
 
 async def _publish(type_: EventType, payload: dict[str, Any]) -> Event:
@@ -164,7 +175,9 @@ async def test_el_run_fluye_de_sim_a_core_y_al_dashboard(gateway) -> None:
     for comp in ("bus", "journal", "sim", "core", "voice"):
         assert health["components"][comp] == "up", (comp, health["notes"].get(comp))
     assert health["notes"]["bridges"].startswith("encendidos")
-    assert re.match(r"\d+ POIs", health["notes"]["voice-pois"]), health["notes"]["voice-pois"]
+    assert re.match(r"\d+ POIs", health["notes"]["voice-pois"]), health["notes"][
+        "voice-pois"
+    ]
     assert warmups == [True], "voice.warmup() se llama una vez por proceso"
 
     # Puente 1: action.requested → Sim.execute, y el sim contesta por el bus.

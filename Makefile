@@ -9,7 +9,7 @@ FLAGS ?=
 # falso de `scripts/fake_journal.py` — el v3, que lleva los ids de carretera de hoy y la
 # voz en vivo de P3; los v2 y v1 quedan como históricos (el escenario ya no los produce).
 # El día que Luis grabe el golden, este target cambia solo y nadie tiene que acordarse.
-FAKE_REPLAY := $(firstword $(wildcard fixtures/run_fake_v4.jsonl fixtures/run_fake_v3.jsonl fixtures/run_fake_v2.jsonl fixtures/run_fake.jsonl))
+FAKE_REPLAY := $(firstword $(wildcard fixtures/run_fake_v5.jsonl fixtures/run_fake_v4.jsonl fixtures/run_fake_v3.jsonl fixtures/run_fake_v2.jsonl fixtures/run_fake.jsonl))
 REPLAY ?= $(if $(wildcard fixtures/run_golden.jsonl),fixtures/run_golden.jsonl,$(FAKE_REPLAY))
 
 help:
@@ -49,16 +49,30 @@ demo: ## todo de verdad, 6 minutos · make demo FLAGS="--mock-calls --no-minecra
 #   nivel 3 (falla Minecraft):   make demo FLAGS="--no-minecraft"
 # Se ensayan los dos, de punta a punta. Un plan B que no se ha corrido es una intención.
 
+levanta: ## comprobación previa + levanta lo que falte · make levanta [PLAYER=<u>]
+	uv run python scripts/levanta.py --scenario $(SCENARIO) $(if $(PLAYER),--player $(PLAYER),)
+# Antes de cada ensayo. Caza lo que no da error y arruina el run: un gateway huérfano
+# en el 8000 (se mide contra código viejo), dos directores peleándose por la cámara,
+# la URL de ngrok desincronizada de HappyRobot, el mundo vacío y nadie conectado.
+# `--check` solo diagnostica; `--demo` lanza además la demo con llamadas reales.
+
 server: ## levanta Paper 1.21 en local (jar pelado, sin Docker). Déjalo en su terminal
 	./infra/server/start.sh
 
-cam: ## cámara del pitch · 1-4 EN ESTA TERMINAL, Minecraft en la 2ª pantalla
+cam: ## cámara del pitch · 1-6 EN ESTA TERMINAL, Minecraft en la 2ª pantalla
 	@test -n "$(PLAYER)" || { echo "falta PLAYER=<tu usuario de Minecraft>"; exit 1; }
 	uv run python -m sim.camera --live --who $(PLAYER) --scenario scenarios/$(SCENARIO).yaml
 
 director: ## cámara automática + narración en vivo · make director PLAYER=<usuario>
 	@test -n "$(PLAYER)" || { echo "falta PLAYER=<tu usuario de Minecraft>"; exit 1; }
 	uv run python -m sim.director --player $(PLAYER) --scenario scenarios/$(SCENARIO).yaml
+
+narra: ## SOLO narración, sin tocar la cámara · para correr A LA VEZ que `make cam`
+	@test -n "$(PLAYER)" || { echo "falta PLAYER=<tu usuario de Minecraft>"; exit 1; }
+	uv run python -m sim.director --narrar-solo --player $(PLAYER) --scenario scenarios/$(SCENARIO).yaml
+# `cam` y `director` mandan los dos /tp al MISMO jugador y no se coordinan: si corren
+# a la vez, un evento urgente del director te roba el plano en medio segundo. Elige
+# uno de los dos — o `cam` + `narra`, que es la pareja que sí convive.
 
 world: ## regenera el mundo por RCON (idempotente: /kill @e[tag=vela] y otra vez)
 	uv run python -m sim.worldgen --scenario scenarios/$(SCENARIO).yaml

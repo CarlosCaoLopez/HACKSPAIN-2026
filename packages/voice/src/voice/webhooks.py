@@ -1,6 +1,6 @@
 """Los routers FastAPI de telefonía. P3 los registra; no toca `main.py`.
 
-Dos rutas, las dos de HappyRobot:
+Tres rutas, las tres de HappyRobot:
 
 - `POST /webhooks/happyrobot/fact`: el tool `report_fact` del agente, **durante**
   la llamada. Es solo un **disparador**: sus valores no se creen (los rellena el LLM
@@ -8,11 +8,18 @@ Dos rutas, las dos de HappyRobot:
   que publica los hechos; luego pide a Humalike el ack refinado (1,5 s) y responde.
   El replan arranca con los hechos; nunca espera al ack. Con Jev caído (`--no-jev`),
   degrada explícitamente al camino anterior y los hechos salen como `inferred`.
+- `POST /webhooks/happyrobot/village`: el tool `reportar_situacion` del agente que
+  llama a un pueblo (orden de evacuación o aviso al vecino), **durante** la llamada.
+  A diferencia del tool anterior, aquí el POI ya se conoce (`core.calls` lo pone en
+  el cuerpo del hook): no hace falta resolverlo por texto, así que los hechos salen
+  `observed` sin pasar por Jev. Si hay inmóviles, `core.tasks._rescue` crea el
+  rescate solo y el agente puede decir "vamos a mandarle una ambulancia" sabiendo
+  que es verdad.
 - `POST /webhooks/happyrobot/call`: inicio y fin de llamada (nodo Webhook del
   workflow o outbound webhook de la plataforma). Al colgar: último tick de Jev
   (`fenic` si Jev no está), `analyze` de Humalike, `call.ended`.
 
-Autenticación: token compartido en la cabecera, porque estas dos rutas van por un
+Autenticación: token compartido en la cabecera, porque estas tres rutas van por un
 túnel y un escaneo aleatorio no debe disparar nada a mitad del pitch.
 """
 
@@ -20,14 +27,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
+from collections.abc import Iterable
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import ValidationError
 
 from contracts.bus import current_run_id, current_t_sim, make_event, publish
-from contracts.calls import CallFacts, Fact
+from contracts.calls import CallFacts, Fact, Severity
 from contracts.events import Event, EventType
+from contracts.factkeys import validate_fact_key
 from contracts.settings import settings
 from voice import humanlike, pois
 from voice.perception import CallPerception
@@ -57,7 +67,12 @@ def ack_draft(
     immobile: int | None,
     injuries: int | None = None,
 ) -> str:
-    """Lo que el agente le repite al vecino. Humalike lo refina si llega a tiempo."""
+    """Lo que el agente le repite al vecino. Humalike lo refina si llega a tiempo.
+
+    Abre calmando y cierra diciendo que va una patrulla a por él: quien llama viendo
+    fuego y sin saber qué hacer necesita las dos cosas antes que el detalle. El
+    detalle va en medio, porque repetirle lo que ha dicho es lo que le demuestra que
+    alguien le ha entendido."""
     parts: list[str] = ["Anotado"]
     if poi_name:
         parts.append(poi_name)
@@ -67,7 +82,11 @@ def ack_draft(
         parts.append(f"{immobile} personas sin movilidad")
     if injuries:
         parts.append(f"{injuries} heridos")
-    return ", ".join(parts) + ". Estoy avisando a los equipos, no cuelgue."
+    return (
+        "Mantenga la calma, ya le estamos ayudando. "
+        + ", ".join(parts)
+        + ". Va una patrulla a recogerle: no se mueva de donde está y no cuelgue."
+    )
 
 
 def telegram_bot() -> str | None:
@@ -88,11 +107,53 @@ def telegram_hint(bot: str) -> str:
     )
 
 
-def needs_telegram(resolved_poi_id: str | None) -> bool:
-    """Cuando la llamada no ha podido ubicar al vecino contra el escenario: sin
-    `location_hint`, o con uno que no resuelve (o resuelve por debajo del umbral de
-    percepción, que es lo mismo: `resolved_poi_id` queda a None)."""
-    return resolved_poi_id is None
+_LOST_RE = re.compile(
+    r"\b(estoy|estamos|me he|nos hemos)\s+perdid|"
+    r"\bno s[eé] d[oó]nde (estoy|estamos|me encuentro|nos encontramos)\b|"
+    r"\bno reconozco (nada|d[oó]nde)\b",
+    re.IGNORECASE,
+)
+"""El vecino dice, con todas las letras, que no sabe dónde está."""
+
+
+def says_lost(transcript: Iterable[dict[str, str]]) -> bool:
+    """¿Ha dicho el **vecino** que está perdido?
+
+    Solo cuenta lo que dice él. Si la frase sale del agente —repitiendo el `message`
+    del ack, que es lo que le manda hacer su prompt— no es una declaración del vecino
+    y realimentaría la condición en cada vuelta del tool.
+    """
+    return any(
+        t.get("speaker") == humanlike.CALLER_NAME and _LOST_RE.search(t.get("text") or "")
+        for t in transcript
+    )
+
+
+def needs_telegram(
+    resolved_poi_id: str | None, transcript: Iterable[dict[str, str]] = ()
+) -> bool:
+    """¿Hay que pedirle al vecino su ubicación por Telegram?
+
+    Dos motivos:
+
+    1. **No hemos podido ubicarlo**: sin `location_hint`, o con uno que no resuelve
+       (o resuelve por debajo del umbral de percepción: `resolved_poi_id` a None).
+       Es la condición original y no cambia.
+
+    2. **Él dice que está perdido.** Aunque el `location_hint` haya resuelto. Porque
+       resolver no es acertar: `resolve_poi_local` cae, como último recurso, en un
+       solape de tokens que se conforma con **uno solo**, y «al final de una pista,
+       junto a unas casas» —el ejemplo que usa la propia documentación para describir
+       a alguien que NO sabe ubicarse— aterriza en `poi_pueblo_a` porque comparte la
+       preposición «a», que no está en `STOPWORDS`. Un perdido que describa su
+       entorno queda ubicado con total confianza en el pueblo equivocado.
+
+       Ese fallo del resolutor no se toca aquí a propósito: arreglarlo cambiaría
+       cómo se ubican todas las llamadas. Lo que se hace es más estrecho: si el
+       vecino dice que está perdido, su palabra pesa más que nuestra conjetura, y se
+       le pide el punto exacto.
+    """
+    return resolved_poi_id is None or says_lost(transcript)
 
 
 def with_telegram_hint(draft: str, bot: str | None, hint: bool) -> str:
@@ -131,6 +192,10 @@ async def happyrobot_fact(
     cb = params.pop("callback_number", None) or body.get("caller_number")
     if cb and str(cb).strip() and str(cb) != "web":
         mon.state.callback_number = str(cb).strip()
+    if mon.state.started_seq is None:
+        # El tool ha llegado antes que (o sin) el webhook de inicio: la llamada existe
+        # desde ahora en el journal. Un pin de Telegram posterior apunta a este seq.
+        await _publish_started(mon, task_id=None, direction="inbound")
     h = mon.tool_hash(params)
     cached = mon.state.seen_tool_hashes.get(h)
     if cached is not None:
@@ -175,9 +240,9 @@ async def _fact_by_jev(mon: humanlike.ConversationMonitor, params: dict) -> dict
     cf = mon.perception.call_facts()
     n = mon.perception.facts_published
     road = pois.road_label(cf.road_blocked) if cf.road_blocked else None
-    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id)
+    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id, mon.state.transcript)
     draft = with_telegram_hint(
-        ack_draft(cf.location_hint, road, cf.people_immobile), bot, hint
+        ack_draft(cf.location_hint, road, cf.people_immobile, cf.injuries), bot, hint
     )
     message, got_plan = await _ack(mon, draft, t0, n)
     return {
@@ -209,11 +274,16 @@ async def _fact_without_jev(
     for f in facts:
         await publish(_fact_event(f, session_id))
         mon.state.tool_facts_keys.add(f.key)
+    if cf.resolved_poi_id is None:
+        # «Dos que no pueden andar» sin saber dónde: no entra al estado (hecho sin
+        # ubicar), pero no se pierde. El pin de Telegram lo coloca (`voice.telegram`).
+        mon.state.pending_facts = pending_counts(cf)
+        mon.state.pending_severity = cf.urgency
     if not mon.state.transcript:
         mon.add_turn("user", _pseudo_turn(cf))
     edge = pois.resolve_edge_local(cf.road_blocked)
     road = pois.road_label(edge) if edge else None
-    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id)
+    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id, mon.state.transcript)
     draft = with_telegram_hint(
         ack_draft(name, road, cf.people_immobile, cf.injuries), bot, hint
     )
@@ -227,6 +297,39 @@ async def _fact_without_jev(
         "telegram_hint": bool(hint and bot),
         "telegram_bot": bot,
     }
+
+
+def pending_counts(cf: CallFacts) -> dict[str, int]:
+    """Los recuentos del tool que se quedan sin POI: sufijo de `poi:<id>:<sufijo>` →
+    valor. Los publica el pin de Telegram con el POI al que se ancla."""
+    out: dict[str, int] = {}
+    if cf.people_immobile:
+        out["immobile"] = int(cf.people_immobile)
+    if cf.injuries:
+        out["injuries"] = int(cf.injuries)
+    if cf.headcount:
+        out["headcount"] = int(cf.headcount)
+    return out
+
+
+async def _publish_started(
+    mon: humanlike.ConversationMonitor, task_id: str | None, direction: str, to: str = ""
+) -> int:
+    """`call.started` de una llamada de voz, una vez: el seq se guarda en el estado
+    para que un `citizen.location` posterior pueda declararlo en `causes`."""
+    ev = make_event(
+        EventType.CALL_STARTED,
+        {
+            "call_id": mon.state.call_id,
+            "task_id": task_id,
+            "to": to or mon.state.callback_number or "",
+            "direction": direction,
+        },
+        source="voice",
+    )
+    await publish(ev)
+    mon.state.started_seq = ev.seq
+    return ev.seq
 
 
 def _fact_event(f: Fact, session_id: str) -> Event:
@@ -287,6 +390,253 @@ def _coerce(params: dict) -> dict:
     return out
 
 
+_VILLAGE_INT_FIELDS = (
+    "headcount",
+    "people_immobile",
+    "injuries",
+    "available_after_min",
+)
+_VILLAGE_BOOL_FIELDS = ("confirmed_order", "capacity_available")
+# params del tool → sufijo de `poi:<poi_id>:<sufijo>` (contracts.factkeys). Un campo
+# fuera de este mapa (p. ej. `notes`, texto libre para el registro) no se publica.
+_VILLAGE_FACT_SUFFIX = {
+    "headcount": "headcount",
+    "people_immobile": "immobile",
+    "injuries": "injuries",
+    "confirmed_order": "confirmed",
+    "capacity_available": "shelter_ready",
+}
+
+
+def _coerce_village(params: dict) -> dict:
+    """Los mismos vacíos-a-None y strings-a-tipo de `_coerce`, más las dos claves
+    booleanas nuevas del guion al pueblo (aceptar la orden, tener sitio)."""
+    out: dict = {}
+    for k, v in params.items():
+        if v in ("", None, "null"):
+            continue
+        if k in _VILLAGE_INT_FIELDS and isinstance(v, str):
+            digits = "".join(c for c in v if c.isdigit())
+            out[k] = int(digits) if digits else None
+        elif k in _VILLAGE_BOOL_FIELDS and isinstance(v, str):
+            out[k] = v.strip().lower() in ("true", "sí", "si", "yes", "1")
+        else:
+            out[k] = v
+    return {k: v for k, v in out.items() if v is not None}
+
+
+SIGNAL_QUEUED = "queued"
+
+
+def queued_message(minutos: int | None, va: bool | None, prioritario: bool) -> str:
+    """Lo que se le dice a quien lleva esperando al teléfono desde que pidió la
+    ambulancia. Es la razón de ser de la llamada en espera: sin esto, el que espera
+    solo oye silencio mientras alguien decide por él."""
+    if va is False:
+        return (
+            "La ambulancia no va a poder ir. Estamos buscando otro medio; "
+            "no cuelgue, le digo algo en cuanto lo tenga."
+        )
+    if minutos:
+        cuando = "un minuto" if minutos == 1 else f"unos {minutos} minutos"
+        cola = (
+            " Es usted el siguiente: en cuanto termine, va directa allí."
+            if prioritario
+            else " En cuanto quede libre, va para allá."
+        )
+        return f"Ya he hablado con la ambulancia: estará libre en {cuando}.{cola}"
+    return (
+        "Ya he hablado con la ambulancia: está ocupada ahora mismo, pero irá en "
+        "cuanto termine. No se mueva de donde está."
+    )
+
+
+def crew_ack(role: str, disponible: bool | None, ruta: str = "") -> str:
+    """Lo que se le contesta a un medio al que se acaba de movilizar. Un «no puedo»
+    no se discute por teléfono: se anota y el plan se rehace sin él.
+
+    La respuesta del tool es el ÚNICO canal que llega a una llamada saliente en
+    curso: las signals solo funcionan en las entrantes (el despachador se indexa por
+    `session_id` y una saliente propaga el `run_id` del hook). Por eso la ruta se
+    dice aquí, y por eso este ack dejó de prometer «les mandamos la ruta» sin
+    mandarla."""
+    quien = "la ambulancia" if role == "ambulance" else "el retén"
+    if disponible is False:
+        return (
+            f"Entendido, anotamos que {quien} no puede salir ahora. Reasignamos con "
+            "los medios que quedan. Gracias."
+        )
+    if disponible is True:
+        por = f" Salen por {ruta}." if ruta else ""
+        return f"Recibido, quedan movilizados.{por} Gracias."
+    return "Recibido, queda anotado. Gracias."
+
+
+def village_ack(role: str, immobile: int | None, capacity: bool | None) -> str:
+    """Lo que el agente le dice al alcalde en cuanto anota su respuesta: nunca
+    promete nada que el estado no vaya a cumplir (si hay inmóviles, el rescate ya se
+    ha creado antes de que esta frase salga)."""
+    if role == "neighbor_alert":
+        if capacity is False:
+            return (
+                "Entendido, tomamos nota de que ahora mismo no tienen sitio; "
+                "buscaremos una alternativa para quien llegue."
+            )
+        if capacity is True:
+            return (
+                "Gracias, quedamos en que pueden acoger a quien llegue. Les "
+                "avisaremos si hace falta algo más."
+            )
+        return "Gracias por la información, quedamos atentos y les avisaremos."
+    if immobile:
+        return (
+            f"Entendido. Vamos a mandarle una ambulancia para las {immobile} "
+            "personas que no pueden moverse; manténgalas donde están hasta que "
+            "lleguen."
+        )
+    return (
+        "Anotado, gracias. Si surge algo más antes de que lleguen las unidades, "
+        "puede volver a llamarnos."
+    )
+
+
+@router.post("/happyrobot/village")
+async def happyrobot_village(
+    request: Request, x_vela_token: str = Header(default="")
+) -> dict:
+    """El tool `reportar_situacion`, en la llamada a un pueblo. Cuerpo del nodo
+    Webhook del tool: `{"poi_id", "role", "run_id", "params": {...}}` (`poi_id` y
+    `role` los pone `core.calls`/`voice.happyrobot.trigger`, no el LLM: no hay nada
+    que resolver por texto). Sin `params` anidado, el cuerpo entero son los
+    parámetros salvo las claves de encaminamiento."""
+    _check_token(x_vela_token)
+    body = await request.json()
+    poi_id = str(body.get("poi_id") or "")
+    role = str(body.get("role") or "evacuation")
+    call_id = str(
+        body.get("call_id") or body.get("session_id") or body.get("run_id") or ""
+    )
+    params = body.get("params")
+    if not isinstance(params, dict):
+        params = {
+            k: v
+            for k, v in body.items()
+            if k not in ("poi_id", "role", "run_id", "session_id", "call_id", "task_id")
+        }
+    coerced = _coerce_village(params)
+    unit_id = str(body.get("unit_id") or "")
+
+    if unit_id and role == "ambulance_queued":
+        # No queda ninguna libre: esta llamada existe para sacarle minutos a la
+        # dotación y devolvérselos a quien sigue esperando al teléfono.
+        va = coerced.get("confirmed_order")
+        minutos = coerced.get("available_after_min")
+        prioritario = str(body.get("must_go_next") or "").lower() in ("sí", "si", "true")
+        esperando = str(body.get("waiting_call_id") or "")
+        n = 0
+        if va is False:
+            await publish(
+                _village_fact_event(
+                    f"unit:{unit_id}:available", False, call_id, "critical"
+                )
+            )
+            n = 1
+        if esperando:
+            await publish(
+                make_event(
+                    EventType.CALL_SIGNAL_REQUESTED,
+                    {
+                        "call_id": esperando,
+                        "key": SIGNAL_QUEUED,
+                        "payload": {
+                            "message": queued_message(minutos, va, prioritario),
+                            "minutes": minutos,
+                            "unit_id": unit_id,
+                        },
+                    },
+                    source="voice",
+                )
+            )
+        else:
+            log.info("respuesta de %s sin llamada en espera a la que contársela", unit_id)
+        return {
+            "ok": True,
+            "facts_published": n,
+            "ambulance_dispatched": bool(va),
+            "message": (
+                "Entendido, queda anotado y se lo digo ahora mismo a quien está "
+                "esperando. Gracias."
+            ),
+        }
+
+    if unit_id:
+        # Llamada a un medio (retén, ambulancia): lo único que cambia el mundo es si
+        # pueden salir. `unit:<id>:available` es clave de contrato y `belief` la
+        # aplica: un «no podemos» saca a esa unidad del reparto en el siguiente plan.
+        disponible = coerced.get("confirmed_order")
+        n = 0
+        if disponible is not None:
+            await publish(
+                _village_fact_event(
+                    f"unit:{unit_id}:available",
+                    bool(disponible),
+                    call_id,
+                    "critical" if not disponible else "medium",
+                )
+            )
+            n = 1
+        return {
+            "ok": True,
+            "facts_published": n,
+            "ambulance_dispatched": bool(disponible) and role == "ambulance",
+            "message": crew_ack(role, disponible, str(body.get("route_name") or "")),
+        }
+
+    n = 0
+    if not poi_id:
+        log.warning("village %s sin poi_id: nada que publicar", call_id or "?")
+    else:
+        for field, value in coerced.items():
+            suffix = _VILLAGE_FACT_SUFFIX.get(field)
+            if suffix is None:
+                continue  # `notes` y cualquier otro campo libre: no es un hecho
+            key = f"poi:{poi_id}:{suffix}"
+            if validate_fact_key(key) is None:
+                continue
+            severity: Severity = (
+                "critical" if suffix in ("immobile", "injuries") and value else "medium"
+            )
+            await publish(_village_fact_event(key, value, call_id, severity))
+            n += 1
+
+    immobile = coerced.get("people_immobile")
+    capacity = coerced.get("capacity_available")
+    return {
+        "ok": True,
+        "facts_published": n,
+        "ambulance_dispatched": bool(immobile),
+        "message": village_ack(role, immobile, capacity),
+    }
+
+
+def _village_fact_event(
+    key: str, value: object, call_id: str, severity: Severity
+) -> Event:
+    return make_event(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": key,
+            "value": value,
+            "confidence": 0.9,
+            "source": f"call:{call_id}",
+            "severity": severity,
+            "kind": "observed",
+            "call_id": call_id,
+        },
+        source=f"call:{call_id}",
+    )
+
+
 @router.post("/happyrobot/call")
 async def happyrobot_call(
     request: Request, x_vela_token: str = Header(default="")
@@ -309,17 +659,13 @@ async def _on_start(body: dict) -> dict:
     if not session_id:
         raise HTTPException(status_code=422, detail="session_id")
     mon = humanlike.get_or_start(session_id, run_id)
-    await publish(
-        make_event(
-            EventType.CALL_STARTED,
-            {
-                "call_id": mon.state.call_id,
-                "task_id": body.get("task_id"),
-                "to": str(body.get("to") or body.get("caller_number") or ""),
-                "direction": body.get("direction") or "inbound",
-            },
-            source="voice",
-        )
+    if mon.state.started_seq is not None:
+        return {"ok": True, "dup": True}  # el tool ya la dio por empezada
+    await _publish_started(
+        mon,
+        task_id=body.get("task_id"),
+        direction=str(body.get("direction") or "inbound"),
+        to=str(body.get("to") or body.get("caller_number") or ""),
     )
     return {"ok": True}
 

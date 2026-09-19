@@ -156,8 +156,14 @@ def _check_voice(rt: Runtime) -> None:
 
         if "voice-telegram" not in rt.tasks:
             rt.spawn("voice-telegram", telegram.signal_dispatcher())
+        notes = []
         if not settings.telegram_bot_token or settings.vela_no_telegram:
-            rt.notes["telegram"] = "sin token: el bot no contesta (canal ausente)"
+            notes.append("sin token: el bot no contesta (canal ausente)")
+        if not settings.telegram_secret_token:
+            # La ruta no se deja abierta por olvidar una variable: responde 401 y se ve.
+            notes.append("sin TELEGRAM_SECRET_TOKEN: /webhooks/telegram responde 401")
+        if notes:
+            rt.notes["telegram"] = " · ".join(notes)
 
 
 async def _shutdown(rt: Runtime) -> None:
@@ -171,7 +177,9 @@ async def _shutdown(rt: Runtime) -> None:
         with contextlib.suppress(Exception):
             await stop_run(rt)
 
-    await rt.stop_tasks("feeds", "voice-telegram", "voice-signals", "voice", "bridges", "core")
+    await rt.stop_tasks(
+        "feeds", "voice-telegram", "voice-signals", "voice", "bridges", "core"
+    )
     if rt.sim is not None:
         with contextlib.suppress(Exception):
             await asyncio.wait_for(rt.sim.stop(), timeout=SHUTDOWN_GRACE_S)
@@ -400,12 +408,22 @@ app = FastAPI(title="vela", lifespan=lifespan)
 
 TELEGRAM_WEBHOOK_PATH = "/webhooks/telegram"
 """Telegram no puede mandar `X-Vela-Token`: esa ruta trae su propio secreto
-(`X-Telegram-Bot-Api-Secret-Token`) y lo comprueba `voice.telegram`."""
+(`X-Telegram-Bot-Api-Secret-Token`) y lo comprueba `voice.telegram`. Se la exime del
+token compartido **solo si ese secreto está configurado**; sin él, 401 y se anota."""
+TELEGRAM_NO_SECRET_DETAIL = "sin TELEGRAM_SECRET_TOKEN"
 
 
 async def _webhook_guard(request: Request, call_next):
     if request.url.path == TELEGRAM_WEBHOOK_PATH:
-        return await call_next(request)
+        if settings.telegram_secret_token:
+            return await call_next(request)  # la ruta comprueba su propio secreto
+        rt = getattr(request.app.state, "runtime", None)
+        if rt is not None:
+            rt.webhook_rejected += 1
+        log.warning("webhook de Telegram rechazado: %s", TELEGRAM_NO_SECRET_DETAIL)
+        return JSONResponse(
+            status_code=401, content={"detail": TELEGRAM_NO_SECRET_DETAIL}
+        )
     return await webhook_token_guard(request, call_next)
 
 

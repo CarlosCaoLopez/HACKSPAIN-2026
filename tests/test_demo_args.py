@@ -48,7 +48,15 @@ demo = _load_demo()
 def test_las_cuatro_banderas(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "sys.argv",
-        ["demo.py", "--scenario", "blackout_grid", "--mock-calls", "--speed", "4", "--no-minecraft"],
+        [
+            "demo.py",
+            "--scenario",
+            "blackout_grid",
+            "--mock-calls",
+            "--speed",
+            "4",
+            "--no-minecraft",
+        ],
     )
     args = demo.parse_args()
     assert args.scenario == "blackout_grid"
@@ -107,7 +115,9 @@ def test_sin_minecraft_no_se_construye_un_cliente_rcon(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _patch_sim(monkeypatch)
-    res = client.post("/api/run", json={"scenario_id": "wildfire_ridge", "minecraft": False})
+    res = client.post(
+        "/api/run", json={"scenario_id": "wildfire_ridge", "minecraft": False}
+    )
     assert res.status_code == 200
     assert res.json()["minecraft"] is False
     assert isinstance(_SpySim.last_rcon, NullRcon), "el sim ha recibido un RCON de verdad"
@@ -183,7 +193,9 @@ async def test_el_sim_de_verdad_corre_contra_null_rcon() -> None:
         assert "high" in rcon.by_priority
     finally:
         await sim.stop()
-    fallos = [e.payload for e in runner_mod._FALLBACK if e.type == EventType.ACTION_FAILED]
+    fallos = [
+        e.payload for e in runner_mod._FALLBACK if e.type == EventType.ACTION_FAILED
+    ]
     assert fallos == [], fallos
     assert sim.units["unit_truck1"].status == "moving"
 

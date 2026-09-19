@@ -68,7 +68,9 @@ def test_el_solver_emite_suposiciones_que_la_divergencia_sabe_evaluar() -> None:
         eta_s=1.0,
         cost=1.0,
     )
-    keys = [a.key for a in build_context(st, [route], RoadGraph.from_scenario(SC)).assumptions]
+    keys = [
+        a.key for a in build_context(st, [route], RoadGraph.from_scenario(SC)).assumptions
+    ]
     assert road_open_key(ROAD) in keys
     assert not any("road:road" in k for k in keys), keys
 
@@ -89,7 +91,9 @@ def test_los_ids_sinteticos_de_antes_siguen_funcionando() -> None:
     assert road_of(st.roads, "nada") is None
 
 
-def test_un_assumed_default_entra_a_las_suposiciones_con_peso_alto_hasta_que_se_falsa() -> None:
+def test_un_assumed_default_entra_a_las_suposiciones_con_peso_alto_hasta_que_se_falsa() -> (
+    None
+):
     """Regla 4: lo asumido es una suposición pre-rota. Pesa más que una arista abierta y
     deja de vigilarse cuando un hecho observado la sustituye."""
     from core.divergence import divergence
@@ -105,6 +109,10 @@ def test_un_assumed_default_entra_a_las_suposiciones_con_peso_alto_hasta_que_se_
     assert assumed.expected == 1 and assumed.weight == ASSUMED_WEIGHT > 1.0
     assert divergence(st, ctx)[0] == 0.0
 
-    truth = apply_fact(st, _cut_fact(key).model_copy(update={"value": 3}))  # llega el dato observado: 3, no 1
+    truth = apply_fact(
+        st, _cut_fact(key).model_copy(update={"value": 3})
+    )  # llega el dato observado: 3, no 1
     assert key in divergence(truth, ctx)[1]
-    assert key not in [a.key for a in build_context(truth, [], RoadGraph.from_scenario(SC)).assumptions]
+    assert key not in [
+        a.key for a in build_context(truth, [], RoadGraph.from_scenario(SC)).assumptions
+    ]

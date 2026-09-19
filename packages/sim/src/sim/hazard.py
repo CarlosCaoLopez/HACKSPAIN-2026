@@ -65,9 +65,7 @@ SECONDS_PER_MINUTE = 60.0
 probabilidad por segundo multiplica el ritmo por sesenta: el mapa entero arde en
 90 segundos."""
 
-NEIGHBOURS_8 = [
-    (dx, dz) for dx in (-1, 0, 1) for dz in (-1, 0, 1) if (dx, dz) != (0, 0)
-]
+NEIGHBOURS_8 = [(dx, dz) for dx in (-1, 0, 1) for dz in (-1, 0, 1) if (dx, dz) != (0, 0)]
 """Ocho vecinas, para un frente que avanza por el aire. Con cuatro sale en rombo."""
 
 NEIGHBOURS_4 = [(1, 0), (-1, 0), (0, 1), (0, -1)]
@@ -136,7 +134,6 @@ def wind_vector(bearing_deg: float) -> tuple[float, float]:
     """
     towards = math.radians(bearing_deg + 180.0)
     return math.sin(towards), -math.cos(towards)
-
 
 
 class CellularHazard:
@@ -228,7 +225,9 @@ class CellularHazard:
         """Cambiar el viento es cambiar un vector en memoria."""
         self.wind = wind
 
-    def suppress(self, positions: list[tuple[float, float]], dt: float) -> list[CellChange]:
+    def suppress(
+        self, positions: list[tuple[float, float]], dt: float
+    ) -> list[CellChange]:
         """Sofocar desde la carretera. Devuelve las celdas apagadas en este tick.
 
         Cada unidad con capacidad trabaja las celdas `burning` a menos de
@@ -250,7 +249,8 @@ class CellularHazard:
 
         for x, z in positions:
             alcance = [
-                cid for cid in sorted(self._active_for)
+                cid
+                for cid in sorted(self._active_for)
                 if math.dist((x, z), self.center_of(cid)) <= reach
             ]
             if not alcance:
@@ -321,9 +321,7 @@ class CellularHazard:
                 continue  # fuera del valle no hay nada que arder
             distance = math.hypot(dx, dz)
             rate = self._rate(dx, dz, distance) * fuel
-            out.append(
-                (neighbour, max(0.0, rate) / distance / SECONDS_PER_MINUTE)
-            )
+            out.append((neighbour, max(0.0, rate) / distance / SECONDS_PER_MINUTE))
         return out
 
     def _fuel_at(self, cx: int, cz: int) -> float:
@@ -359,9 +357,7 @@ class CellularHazard:
     def _change(
         self, cid: str, state: CellState, cause: Cause | None = None
     ) -> CellChange:
-        return CellChange(
-            cell_id=cid, state=state, hazard=self.spec.kind, cause=cause
-        )
+        return CellChange(cell_id=cid, state=state, hazard=self.spec.kind, cause=cause)
 
 
 class Wildfire(CellularHazard):
@@ -474,7 +470,5 @@ def build_hazard(
 ) -> Hazard:
     """`spec.kind` → la implementación. Falla fuerte si no existe."""
     if spec.kind not in HAZARDS:
-        raise ValueError(
-            f"peligro desconocido: {spec.kind!r}. Hay {sorted(HAZARDS)}"
-        )
+        raise ValueError(f"peligro desconocido: {spec.kind!r}. Hay {sorted(HAZARDS)}")
     return HAZARDS[spec.kind](spec, seed, burnable)

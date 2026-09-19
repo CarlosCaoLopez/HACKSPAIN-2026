@@ -40,9 +40,9 @@ def _ev(seq: int, run_id: str = "run_test") -> Event:
         t_sim=float(seq),
         type=EventType.WORLD_TICK,
         source="sim",
-        payload=WorldTick(t_sim=float(seq), wind=Wind(bearing_deg=270, speed=1.2)).model_dump(
-            mode="json"
-        ),
+        payload=WorldTick(
+            t_sim=float(seq), wind=Wind(bearing_deg=270, speed=1.2)
+        ).model_dump(mode="json"),
     )
 
 
@@ -97,7 +97,9 @@ def replay_client(monkeypatch: pytest.MonkeyPatch):
     Es el camino real de `make dev-dash`: sin sim, sin core y sin voz.
     """
     if not FAKE.exists():
-        pytest.skip("falta fixtures/run_fake.jsonl · uv run python scripts/fake_journal.py")
+        pytest.skip(
+            "falta fixtures/run_fake.jsonl · uv run python scripts/fake_journal.py"
+        )
     monkeypatch.setattr(settings, "vela_mode", "replay")
     monkeypatch.setattr(settings, "vela_replay_file", str(FAKE))
     monkeypatch.setattr(settings, "vela_replay_speed", 60.0)
@@ -179,7 +181,9 @@ def test_arranque_degradado(dev_client: TestClient) -> None:
     health = dev_client.get("/api/health").json()
     assert health["mode"] == "dev"
     assert health["run_id"] is None
-    assert {"bus", "journal", "sim", "core", "voice", "replay"} <= set(health["components"])
+    assert {"bus", "journal", "sim", "core", "voice", "replay"} <= set(
+        health["components"]
+    )
     assert dev_client.get("/api/state").json()["kind"] == "snapshot"
     assert dev_client.get("/api/plan").json() is None
 
@@ -190,7 +194,9 @@ def test_escenarios(dev_client: TestClient) -> None:
 
 
 def test_run_404_409_y_stop_idempotente(dev_client: TestClient) -> None:
-    assert dev_client.post("/api/run", json={"scenario_id": "no_existe"}).status_code == 404
+    assert (
+        dev_client.post("/api/run", json={"scenario_id": "no_existe"}).status_code == 404
+    )
 
     first = dev_client.post("/api/run", json={"scenario_id": "wildfire_ridge"})
     assert first.status_code == 200

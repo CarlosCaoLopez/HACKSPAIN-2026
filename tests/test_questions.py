@@ -37,8 +37,14 @@ def test_every_question_says_caller_only() -> None:
 
 
 def test_fact_kind_defaults_keep_old_journals_valid() -> None:
-    f = Fact(key="poi:poi_a:immobile", value=3, confidence=0.9, source="call:x",
-             severity="critical", t_sim=1.0)
+    f = Fact(
+        key="poi:poi_a:immobile",
+        value=3,
+        confidence=0.9,
+        source="call:x",
+        severity="critical",
+        t_sim=1.0,
+    )
     assert f.kind == "observed" and f.call_id is None
     old = {"key": "k", "value": 1, "confidence": 1.0, "source": "s", "severity": "low"}
     PAYLOAD_MODELS[EventType.WORLD_FACT_ASSERTED].model_validate(old)

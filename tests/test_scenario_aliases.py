@@ -74,6 +74,7 @@ def test_un_alias_a_un_id_inventado_falla_al_cargar(tmp_path):
 
 # --- `make dev-sim` sin Minecraft ---
 
+
 async def test_print_rcon_cumple_el_protocolo(capsys):
     rcon: Rcon = PrintRcon(limit=1)
     await rcon.connect()
@@ -94,8 +95,12 @@ async def test_el_core_tonto_manda_un_camion_al_fuego():
     assert action_id == "act_dummy_0001"
     # Derivado del escenario, no escrito a mano: mover la ignición en el YAML es
     # una decisión de P2 y no debería romper un test del core tonto.
-    ox, oz = (int(v) * sim.scenario.hazard.cell_size
-              for v in sim.scenario.hazard.origin_cell.split("_")[1:])
-    esperado = min(sim.graph.waypoint_ids,
-                   key=lambda w: math.dist(sim.graph.position_of(w), (ox, oz)))
+    ox, oz = (
+        int(v) * sim.scenario.hazard.cell_size
+        for v in sim.scenario.hazard.origin_cell.split("_")[1:]
+    )
+    esperado = min(
+        sim.graph.waypoint_ids,
+        key=lambda w: math.dist(sim.graph.position_of(w), (ox, oz)),
+    )
     assert movement.route[-1] == esperado, "el waypoint más cercano al origen"

@@ -92,7 +92,9 @@ def _check(s: Scenario, name: str) -> None:
             )
     for group in s.civilians:
         if group.poi_id not in pois:
-            errors.append(f"civiles {group.id!r} viven en {group.poi_id!r}, que no existe")
+            errors.append(
+                f"civiles {group.id!r} viven en {group.poi_id!r}, que no existe"
+            )
         if group.immobile > group.count:
             errors.append(
                 f"civiles {group.id!r}: {group.immobile} inmóviles de {group.count}"

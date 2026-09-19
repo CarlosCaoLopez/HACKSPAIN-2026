@@ -5,7 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd ../.. && pwd)"
 
-[ -f paper-1.21.jar ] || { echo "falta infra/server/paper-1.21.jar"; exit 1; }
+# El jar tiene que ser de la MISMA versión que el cliente (1.21 y 1.21.11 hablan
+# protocolos distintos y el cliente dice «outdated server»). Se coge el más nuevo que
+# haya; para cambiar de versión, bajar el jar de fill.papermc.io y borrar el viejo.
+JAR="$(ls -t paper-*.jar 2>/dev/null | head -1)"
+[ -n "$JAR" ] || { echo "falta un infra/server/paper-<version>.jar"; exit 1; }
 [ -f "$ROOT/.env" ]   || { echo "falta .env en la raíz: cp .env.example .env"; exit 1; }
 
 # Solo las tres variables de RCON: el .env lleva claves largas de otros servicios y
@@ -62,4 +66,5 @@ if ! es_java_21_o_mas "$JAVA_BIN"; then
 fi
 es_java_21_o_mas "$JAVA_BIN" || { echo "no hay Java 21+: brew install openjdk@21"; exit 1; }
 echo "java: $JAVA_BIN ($("$JAVA_BIN" -version 2>&1 | head -1))"
-exec "$JAVA_BIN" -Xms2G -Xmx4G -jar paper-1.21.jar --nogui
+echo "jar: $JAR"
+exec "$JAVA_BIN" -Xms2G -Xmx4G -jar "$JAR" --nogui

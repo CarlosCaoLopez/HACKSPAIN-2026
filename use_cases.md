@@ -4,16 +4,54 @@ Guion segundo-a-segundo del pitch de HackSpain 2026. Escenario `wildfire_ridge` 
 (sim + RCON + Jev + HappyRobot reales), llamada entrante **real** del vecino de Pueblo B. Cada beat
 justifica **qué mostramos y qué pregunta del jurado contesta**.
 
-Fuente: `docs/backbon_corrected.md` (rev. 2), tabla L92–107 + reencuadre L569–571. Injects reales que
+Fuente: `docs/backbon_corrected.md` (rev. 2), tabla L92–107 + reencuadre L574–576. Injects reales que
 mandan el guion (`scenarios/wildfire_ridge.yaml`):
 - `wind_shift` bearing 270→300 a **150 s** (2:30)
 - `road_cut` `road:wp_sur_01-wp_sur_02` "árbol caído" a **210 s** (3:30)
 - `unit_failure` `unit_truck2` "avería de bomba" a **240 s** (4:00)
 
+> **Manda el código, no la spec.** `backbon_corrected.md:311` dice *«no hay llamada saliente a un
+> tercero»*; eso quedó superado por las revisiones v11/v12/v14 de `docs/happyrobot-citizen-report.md`.
+> Hoy el run hace **cuatro salientes y una entrante**, verificado en journal. Si el guion y la spec se
+> contradicen, gana lo que el journal enseña.
+
 Geografía: POIs `poi_base` `poi_pueblo_a`(24 civ,3 inmóviles) `poi_pueblo_b`(15 civ,1 inmóvil)
-`poi_hospital` `poi_refugio`. Unidades `unit_truck1` `unit_truck2` `unit_ambulance` `unit_drone`.
-Red en Y: desvío **sur** (`wp_sur_01`/`wp_sur_02`, 162 m, el que se corta) y desvío **norte**
-(`wp_nor_01`/`wp_nor_02`, 210 m, el alternativo).
+`poi_hospital` `poi_refugio`. Unidades `unit_truck1` `unit_truck2`, **cuatro ambulancias**
+(`unit_ambulance`…`unit_ambulance4`, todas en el hospital) y `unit_drone`. Red en Y: desvío **sur** (`wp_sur_01`/`wp_sur_02`, 162 m, el que se corta) y desvío
+**norte** (`wp_nor_01`/`wp_nor_02`, 210 m, el alternativo).
+
+## Las cinco llamadas
+
+| # | Dirección | A quién | `role` | Teléfono | Qué se le dice |
+| --- | --- | --- | --- | --- | --- |
+| 1 | saliente | retén de bomberos | `fire_crew` | `PHONE_FIRE_CREW` | **lo que pide el solver**: qué camiones, a qué frente, por qué ruta y en cuánto; y lo que queda sin cubrir |
+| 2 | saliente | dotación de la ambulancia | `ambulance` | `PHONE_AMBULANCE` | la misma petición, para el rescate. **Solo si alguien la ha pedido**: un rescate nace de un `poi:<id>:immobile` o `:injuries` que ha entrado por una llamada. Si no hay ninguna libre, `ambulance_queued`: *cuándo* la habrá |
+| 3 | saliente | responsable de Pueblo A | `evacuation` | `PHONE_PUEBLO_A` | la orden de evacuación, **con los medios que ya han confirmado** |
+| 4 | saliente | Pueblo B (vecino) | `neighbor_alert` | `PHONE_PUEBLO_B` | puede llegarle gente huyendo; ¿tienen sitio? |
+| 5 | **entrante** | un vecino de Pueblo B | — | web call / 112 | lo que ve en el terreno; luego manda el pin por **Telegram** |
+
+**El número es del interlocutor, no del papel.** `PHONE_<POI>` (`PHONE_PUEBLO_A`,
+`PHONE_PUEBLO_B`) y, para los medios, `PHONE_FIRE_CREW` y `PHONE_AMBULANCE`. Importa
+porque el papel cambia con el viento: a Pueblo B se le avisa de que puede llegarle
+gente y, cuando el frente gira, se le ordena salir — pero quien coge el teléfono es la
+misma persona. Con el reparto por papel que había antes (`JUDGE_PHONE` ganaba a todos)
+el mismo móvil recibía las dos órdenes, una como Pueblo A y otra como Pueblo B: medido
+en `runs/run_1dfefd9171f8.jsonl`, seq 169 y 568. `PHONE_OVERRIDE` sigue mandándolo todo
+a un móvil para los cinco minutos antes de salir al escenario.
+
+Las cuatro salientes van por **un solo hook** de HappyRobot (`HAPPYROBOT_HOOK_EVACUATION`): la rama la
+decide el campo `role` del cuerpo, no el workflow (`voice/happyrobot.py:21-41`).
+
+**El orden importa y es lo nuevo:** primero se piden los medios (1 y 2), las unidades **no se mueven**
+hasta que su dotación cuelga, y solo entonces se dicta la orden al pueblo (3) con lo que va de verdad.
+El agente no le promete ayuda a un pueblo hasta que sabe que la ayuda existe.
+
+**Y la ambulancia no sale porque arda un pueblo.** Evacuar es ir andando: al pueblo se le avisa, se le
+dicta por dónde salir y la gente se va sola —la tarea `evacuate` no pide vehículo
+(`required_capability: self_evacuate`, ninguna unidad la tiene)—. La ambulancia queda para quien **no
+puede** moverse, y solo sale cuando una persona lo ha dicho por teléfono. Comprobado en
+`runs/run_7129388df828.jsonl`: el único `goto` de ambulancia sin `dispatch_confirmed` de todo el run
+es una vuelta al hospital.
 
 ## Los dos ejes del reto → dónde vive cada uno
 
@@ -22,7 +60,7 @@ Red en Y: desvío **sur** (`wp_sur_01`/`wp_sur_02`, 162 m, el que se corta) y de
 | --- | --- | --- |
 | Qué información importa | `WhatChangedPanel` | filtra ruido (`isSignificant`), deja solo lo que cambia algo |
 | Qué va primero | `PriorityQueue` | rationale de la Policy + orden por severidad |
-| A quién se avisa y cuándo | `CallsPanel` | saliente (orden evac Pueblo A) + entrante (vecino Pueblo B, por voz y por Telegram) |
+| A quién se avisa y cuándo | `CallsPanel` | cuatro salientes con guion distinto (retén, ambulancia, Pueblo A, Pueblo B) + la entrante, por voz y por Telegram |
 | Dónde van los recursos | `MapPanel` | flechas de asignación del solver |
 | Qué se hace ahora | `ActionLog` | cada verbo (`goto`/`rescue`/`announce`) + latencia de respuesta |
 | Cuándo tirar el plan | `DivergenceChart` | cruza 0,25 → banner REPLAN |
@@ -59,22 +97,25 @@ espectador vía OBS). Se narra desde el dashboard y se corta a Minecraft en los 
 
 | T | Minecraft [MC] | Dashboard (panel → qué) | Llamada | Narración / qué pregunta contesta |
 | --- | --- | --- | --- | --- |
-| **0:00** | Humo en `cell_18_7` (cresta O); POIs en verde `lime` | `WhatChangedPanel`: 1ª fila "incendio detectado" (`world.fire.detected`) | — | "Entra el primer aviso." → **Enterarse** |
+| **0:00** | Humo en `cell_13_11` (cresta O); POIs en verde `lime` | `WhatChangedPanel`: 1ª fila "incendio detectado" (`world.fire.detected`) | — | "Entra el primer aviso." → **Enterarse** |
 | **0:05** | Fuego pinta celdas (netherrack/coal) | `WhatChangedPanel` filtra los `world.tick` (muted): de cien líneas, deja las 3 que cambian algo | — | **Qué información importa**: "Llegan cien mensajes y solo tres cambian algo; el sistema se queda con esos tres y tira el resto." |
 | **0:15** | Fuego avanza O→E con viento 270° | `PriorityQueue`: rationale de la Policy ("civiles a sotavento primero") + barras `life_safety`/`immobile_first`; badges `hard_constraints` (`no_unit_into_burning_cell`) | — | **Qué va primero**: el LLM dice *qué importa*, no *quién va*. La Policy **no** tiene campo `assignments` (invariante 2). |
-| **0:25** | — | `MapPanel`: 3 flechas de asignación (`plan.emitted`): truck1→frente Pueblo A, truck2→reserva, ambulance→hospital | — | **Dónde van los recursos**: "unidades y sitios que las piden; mandarlas a un lado es dejar el otro esperando." Solver (`scipy linear_sum_assignment`) en 0,04 s. |
-| **0:30** | **[MC]** Camiones arrancan; `/tp` interpola a 5 Hz, giro suave | `ActionLog`: `goto unit_truck1 → wp_pueblo_a` … "hecha, 0,X s en responder" | — | **Qué se hace ahora** + **Coordinar**: el sistema *mueve* cosas, no solo las propone. |
-| **1:00** | **[MC]** `poi_pueblo_a` → `orange` (evacuating) | `CallsPanel`: tarjeta "ORDEN DEL AGENTE" · en curso (`call.started` outbound, workflow `evacuation_order`) | **Saliente real**: vela llama a Pueblo A, voz HappyRobot dicta orden (`{{poi_name}}`,`{{deadline_min}}`) | **A quién se avisa y cuándo**: "un vecino, un bombero y un responsable no necesitan lo mismo." |
-| **1:45** | — | `CallsPanel`: tarjeta → *completed*; `WhatChangedPanel`: FACT "orden confirmada" | Cuelga | Cierre limpio del aviso saliente. |
+| **0:25** | — | `MapPanel`: 2 flechas de asignación (`plan.emitted`): truck1 y truck2 al frente de Pueblo A. Las ambulancias **no** tienen flecha: nadie las ha pedido todavía | — | **Dónde van los recursos**: "unidades y sitios que las piden; mandarlas a un lado es dejar el otro esperando." Solver (`scipy linear_sum_assignment`) en 0,04 s. |
+| **0:02** | **[MC] los camiones NO se mueven.** Siguen en el parque con el motor parado | `CallsPanel`: tarjeta "RETÉN DE BOMBEROS" · en curso | **Saliente 1 real**: *"Les pedimos 2 camiones: camión 1 por la pista sur, un minuto; camión 2 por la pista sur, un minuto"* | **Pedir, no avisar**: la petición sale del solver (`requested_units`), no de un guion. Y **nadie sale hasta que digan «vamos»** — se ve en pantalla, que es lo que lo hace un beat. |
+| **0:30** | **[MC]** El retén confirma → los dos camiones **arrancan a la vez**; `/tp` interpola a 5 Hz | `ActionLog`: `goto unit_truck1` · **"con el «vamos» de la dotación"** | Cuelga. El ack les dicta la ruta: *"Recibido, quedan movilizados. Salen por la pista sur."* | **Coordinar de verdad**: la llamada *decide*, no decora. Medido: `goto` en `seq` **posterior** al `call.ended`, no treinta segundos antes. |
+| **0:35** | **[MC]** `poi_pueblo_a` → `orange` (evacuating) | `CallsPanel`: tarjeta "ORDEN DE EVACUACIÓN · PUEBLO A" · en curso | **Saliente 3 real**: la orden, y detrás *"Medios en camino: van 2 ambulancias, 2 camiones…"* | **A quién se avisa y cuándo**: "un vecino, un bombero y un responsable no necesitan lo mismo" — y aquí se ven los tres con guion distinto. Al pueblo no se le promete ayuda hasta saber que existe. |
+| **0:35** | — | `CallsPanel`: tarjeta "AVISO AL VECINO · PUEBLO B" | **Saliente 4 real**: *"pueden llegarles del orden de 24 personas, ¿tienen sitio?"* | El cuarto interlocutor, y el que enseña que el mensaje se adapta: al que no arde no se le da una orden, se le avisa. |
+| **1:00** | — | `CallsPanel`: tarjetas → *completed*; `WhatChangedPanel`: FACT "orden confirmada" | Cuelgan | Cierre limpio de las salientes. |
 | **2:30** | **[MC]** El humo **gira**: viento 270→300, fuego vira al NE hacia Pueblo B | `DivergenceChart`: línea **cruza 0,25**, número rojo; banner REPLAN | — | **Cuándo tirar el plan** + **Adaptarse**: "cambia el viento y el plan de hace veinte minutos ya no vale. ¿Se da cuenta?" Sí: `plan.divergence` con `broken:[...]`. |
 | **2:35** | **[MC]** Camiones frenan y **cambian destino** | `PriorityQueue` recarga (nueva Policy); `MapPanel` flechas apuntan distinto | — | Una **sola** llamada al modelo por replan (invariante 7), solo por bandera. |
 | **3:30** | **[MC]** El desvío **sur** se pinta a rayas negro/amarillo, troncos cruzados (inject `road_cut`) | `CallsPanel`: tarjeta "AVISO DEL VECINO" (📞 voz) · en curso; transcripción SSE en vivo, línea a línea | **Entrante real**: vecino de Pueblo B llama al 112. HappyRobot SSE stream | **Enterarse** por canal humano. El mundo **no se mueve** hasta que cuelgue (solo el Core trabaja). |
 | **3:35** | — | `CompletenessPanel`: 5 campos en gris (open); barra de presupuesto | 1er tick de Jev sobre parcial: `urgency=critical` → presupuesto **8 s** | Jev (`jev-1.13`) cada 5 s manda **todas** las preguntas a la vez, devuelve vector de completitud sin texto. |
 | **3:50** | — | `CompletenessPanel`: `road_blocked` → **sólido** (observed ≥0,85); `people_immobile` y **`location_hint` siguen gris** | El vecino **no sabe ubicarse bien**: "estoy cerca de unas casas, al final de la pista, no sé el nombre". Jev fija `road_blocked` pero **no** `location_hint`. Presupuesto obliga a **una** repregunta: "¿hay alguien que no pueda moverse?" (*signal* `kind: followup`, una a la vez) | **Priorizar la escucha** + el límite del canal de voz: se pregunta lo que más reduce incertidumbre, pero la **ubicación precisa** no la puede dar. El hueco queda visible, no inventado. |
+| **3:58** | **[MC]** Las cuatro ambulancias siguen en el hospital, **quietas desde el segundo 0** | `CallsPanel`: tarjeta "DOTACIÓN DE AMBULANCIA"; `ActionLog` sin `goto` para ella todavía | **Saliente 2 real**: el rescate nace del `immobile` que acaba de entrar por la llamada del vecino → *"les pedimos la ambulancia en Pueblo A, hay 2 personas que no pueden moverse"* | Mismo patrón que el retén, ahora **disparado por la llamada entrante**: un ciudadano informa, el solver decide, se pide el medio, y la ambulancia no sale hasta que la dotación lo confirma. |
 | **4:00** | **[MC]** `unit_truck2` se para (inject `unit_failure`); marcador → `unavailable` | `CompletenessPanel`: `people_immobile` se rellena **gris cursiva** (`assumed_default`); `WhatChangedPanel`: FACT gris cursiva | Presupuesto agotado → `gapfill` (LLM) rellena `people_immobile` como `assumed_default`, **no** observado | **Invariante 8** en pantalla: "un hecho asumido nunca se disfraza de observado; va en gris y cursiva. Si ese número está mal, el plan falla y volvemos a replanificar." |
 | **4:10** | **[MC]** (truck2 caído) → truck1 y ambulance **giran al desvío norte** en <3 s | `DivergenceChart`: pico rojo + marca de replan; banner "pista sur cortada, confirmado por llamada entrante"; `PriorityQueue` reparte con los medios que **quedan** | Cuelga → `road_blocked` asertado como hard fact | **Adaptarse**: el `road_blocked` **observado** funda restricción dura (solo `observed` puede, inv. 8). `route_feasible` rechaza la ruta sur → replan. **SLA <1 s** de colgar a girar (backbone L122). **Priorizar con los medios que quedan, no los que harían falta.** |
 | **4:25** | **[MC]** Marcador del ciudadano cae en el mapa junto a Pueblo B | `MapPanel`: **pin del ciudadano** en su `(x,z)` exacto; `CallsPanel`: tarjeta "AVISO DEL VECINO" con badge **✈ Telegram**; `CompletenessPanel`: `location_hint` pasa de gris a **sólido** (observed) | **Telegram entrante**: ya colgado, el vecino **comparte su ubicación** por el bot. Pin GPS → `citizen.location` + `world.fact.asserted` anclado a `poi_pueblo_b` (`kind: observed`) | **La voz da el *qué*, Telegram da el *dónde* exacto.** Cierra el hueco de `location_hint` que la llamada dejó abierto **sin adivinar**: un pin no se resuelve por *fuzzy match*. Inv. 8: observado, funda/ancla la restricción dura. |
-| **5:00** | **[MC]** truck1 llega a Pueblo A; `rescue`: villagers `/tp` al `poi_refugio` con `glowing`; `poi_pueblo_b` → `safe` por ruta norte | `ActionLog`: `rescue shelter=poi_refugio` "hecha"; `DivergenceChart` baja | — | **Qué se hace ahora** cerrado. Meta cumplida. |
+| **5:00** | **[MC]** los villagers de Pueblo A `/tp` al `poi_refugio` con `glowing` **en cuanto el alcalde acepta la orden**, sin esperar a ningún vehículo; la ambulancia llega detrás a por los 3 inmóviles | `ActionLog`: `rescue shelter=poi_refugio` "hecha"; `DivergenceChart` baja | — | **Qué se hace ahora** cerrado. Lo que mueve el mundo es la llamada, no un camión que llega: `poi:<id>:confirmed` cierra la `evacuate` y dispara el verbo `rescue`. Meta cumplida, 39 civiles a salvo. |
 
 ## Cierre de la parte Minecraft — de simulación a producción (5:00 → 5:45)
 
@@ -145,7 +186,17 @@ Guion idéntico, se degrada por capas (backbone L574–581) y se **anota** en el
 - Jev cae → `--no-jev` (**fenic con `Literal`**, sin loop en llamada; el beat 3:50 pierde la
   repregunta, el 4:00 sigue mostrando `assumed_default`).
 - HappyRobot cae → `--mock-calls` (SSE replay de `fixtures/transcripts/`, badge "llamadas simuladas";
-  el endpoint `/webhooks/happyrobot/fact` sigue siendo real, budget+completeness intactos).
+  el endpoint `/webhooks/happyrobot/fact` sigue siendo real, budget+completeness intactos). **Las
+  cinco llamadas tienen guion enlatado** (`evacuation_order`, `neighbor_alert`, `fire_crew_dispatch`,
+  `ambulance_dispatch`, `ambulance_queued`, `status_check`): un intent sin guion dejaría a sus
+  unidades retenidas hasta agotar el plazo, así que ahora una llamada que no se puede simular se
+  cierra igual con `outcome="failed"` y las unidades salen. El guion se busca **por `role`** y, si no
+  hay uno suyo, por `intent`: sin eso una llamada «no queda ninguna libre» se simulaba con el guion
+  de la ambulancia que sí va.
+- **Nadie contesta al teléfono** → a los 45 s de sim (`DISPATCH_RING_S`; si descuelgan, otros 150 de
+  `DISPATCH_TALK_S`) las unidades salen igual y el
+  `ActionLog` lo pinta: **"salió SIN confirmar"** (`dispatch_confirmed=false`). La demo nunca se queda
+  con los camiones congelados, y la degradación se ve en vez de esconderse.
 - Minecraft cae → `--no-minecraft` (mapa 2D del `MapPanel` — que además ya es el cierre de sala de
   control, así que degradar no se nota).
 - Telegram cae / sin token → `VELA_NO_TELEGRAM=true` (canal ausente, badge lo anota en el header); el
@@ -156,8 +207,31 @@ Guion idéntico, se degrada por capas (backbone L574–581) y se **anota** en el
 
 1. `make server` → Paper 1.21, RCON 25575.
 2. `make world SCENARIO=wildfire_ridge` → geografía idempotente (POIs, unidades, 20 villagers).
-3. `make cam PLAYER=<usuario> SCENARIO=wildfire_ridge` → teclas 1–4 = `valle`/`escorzo`/`pueblo`/
-   `frente`. `escorzo` para apertura, `valle` para el plano de cierre.
+3. `make cam PLAYER=<usuario> SCENARIO=wildfire_ridge` → teclas **1-6** =
+   `valle`/`escorzo`/`pueblo`/`frente`/`parque`/`hospital`. Las dos últimas son los sitios donde una
+   unidad **espera al teléfono**, que es el beat nuevo y no se podía enseñar con las cuatro de antes.
+
+   **Quién conduce la cámara.** `make cam` y `make director` mandan los dos `/tp` al mismo jugador y
+   no se coordinan: un evento urgente del director roba el plano en medio segundo, y su
+   `gamemode spectator` de arranque rompe el `--follow`. Elige uno:
+   - **`make director PLAYER=<u>`** — conduce él solo, siguiendo el journal. Cubre los beats de
+     despacho: se queda en el parque los treinta segundos de la llamada al retén y corta en seco
+     cuando cuelgan y arrancan los camiones.
+   - **`make cam` + `make narra PLAYER=<u>`** — conduces tú con las teclas y el director te va
+     diciendo por consola qué deberías estar mirando (`[cámara sugerida: …]`) sin tocar nada.
+
+   Señales de cámara por beat, para el que conduce a mano:
+
+   | Beat | Tecla | Por qué |
+   | --- | --- | --- |
+   | −0:20 apertura | **2** `escorzo` | el reencuadre: «esto es el simulador» |
+   | 0:02 se pide al retén | **5** `parque` | los dos camiones quietos con el teléfono sonando |
+   | 0:30 confirman | **5** y aguanta | arrancan los dos a la vez: el pago de la espera |
+   | 0:35 orden a Pueblo A | **3** `pueblo` | escala humana, los 24 civiles |
+   | 2:30 giro de viento | **1** `valle` | las dos pistas a la vez, o el replan no se lee |
+   | 3:58 se pide la ambulancia | **6** `hospital` | la ambulancia que no arranca |
+   | 4:10 colgar → giro | **1** `valle` | el SLA de <1 s, y hay que ver las dos pistas |
+   | 5:00 rescate | **3** `pueblo` | cierre |
 4. `uv run python -m voice.jev --gate` → 10 transcripciones ES con clave real; **si falla, ir a
    `--no-jev`** antes de empezar.
 5. `make demo` (con `HAPPYROBOT_API_KEY`, `HUMALIKE_API_KEY`, `TYPESAFE_API_KEY` en `.env`) → correr
@@ -165,11 +239,48 @@ Guion idéntico, se degrada por capas (backbone L574–581) y se **anota** en el
 6. Verificar en el dashboard contra `runs/<run_id>.jsonl` que aparezcan ≥1 vez: `plan.divergence`,
    `plan.replan.started`, `world.fact.asserted` con `kind:assumed_default`, `call.completeness` con un
    campo `observed` y otro `assumed_default`.
+6b. **El invariante del despacho**, que es lo que hay que comprobar de un vistazo: el `seq` del
+   `action.requested` de un camión tiene que ser **mayor** que el del `call.ended` del retén.
+
+   ```
+   python3 - runs/<run_id>.jsonl <<'EOF'
+   import json,sys
+   ev=[json.loads(l) for l in open(sys.argv[1])]
+   fin=[e['seq'] for e in ev if e['type']=='call.ended']
+   go=[(e['seq'],e['payload']['args'].get('unit_id'),e['payload'].get('dispatch_confirmed'),
+        e['payload']['args'].get('route',[None])[-1])
+       for e in ev if e['type']=='action.requested' and e['payload']['verb']=='goto']
+   print('primer call.ended:', min(fin) if fin else None)
+   for s,u,c,dest in go[:8]: print(f'  goto {u} seq={s} confirmado={c} destino={dest}')
+   # Y el invariante nuevo: ninguna ambulancia sale sin confirmar salvo la vuelta a base.
+   sueltas=[(s,u,dest) for s,u,c,dest in go if u and 'ambulance' in u and c is None
+            and dest!='wp_hospital']
+   print('ambulancias sin confirmar:', sueltas or 'ninguna')
+   EOF
+   ```
+
+   Y en los cuerpos: la llamada al retén **no** puede decir "todavía no hay ninguna unidad asignada"
+   en `unit_eta`, tiene que traer `requested_units` y `coverage`, y la de evacuación
+   `committed_resources`. Medido el 19/09 en `runs/run_7129388df828.jsonl` (`--mock-calls`):
+   `call.req fire_crew` seq 30 → `call.ended` → `goto unit_truck1` y `goto unit_truck2`
+   `CONFIRMADO` → `call.req evacuation` seq 124 y `neighbor_alert` seq 125.
+
+   Y el de la ambulancia, que es el nuevo: `poi:poi_pueblo_a:confirmed` seq 375 (el alcalde acepta y
+   el pueblo sale andando) e `:immobile` por la misma llamada → `call.req ambulance_dispatch` seq 453
+   → `call.ended` → `goto unit_ambulance` seq 1044 **CONFIRMADO**. Cuando el fuego llega a Pueblo B,
+   este recibe **su propia** orden (seq 1045) y su propia ambulancia (seq 1971): el aviso al vecino no
+   suplanta a la orden. En todo el run no hay un solo `goto` de ambulancia sin confirmar que no sea la
+   vuelta al hospital. Puntuación: `civilians_safe` 39, `civilians_exposed_end` 0.
+
+   > Ojo con la cita anterior (`run_726b7bab939a`): en ese journal las ambulancias salían en seq 18 y
+   > 19, **antes** de que empezara la llamada al retén y sin `dispatch_confirmed`. Servía para el
+   > invariante del camión, no para el del despacho entero.
 7. Automejora: `runs/` con ≥2 journals buenos → correr `harvest` de `core/memory.py`, comprobar que
    `memory/rules/` se puebla (un fichero por regla, con `trigger`/`support`/`confidence`/`lineage`) y
    que `select` inyecta al planner solo las reglas cuyo `trigger` casa con el estado. Correr los 12
    runs (backbone L537) para tener el run 1 vs run 12.
-8. Ensayar el corte MC↔dashboard en los beats **[MC]** (0:30, 1:00, 2:30, 3:30, 4:00, 4:10, 4:25, 5:00)
+8. Ensayar el corte MC↔dashboard en los beats **[MC]** (0:02, 0:30, 0:35, 2:30, 3:30, 3:58, 4:00,
+   4:10, 4:25, 5:00) con la tabla de teclas del paso 3
    y el cierre a `MapPanel` full-screen.
 9. Telegram (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_SECRET_TOKEN` en `.env`, `setWebhook` sobre el mismo túnel
    de las llamadas): desde el móvil, colgar la llamada y **compartir ubicación** + un texto; comprobar

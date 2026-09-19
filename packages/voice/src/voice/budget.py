@@ -37,9 +37,17 @@ low. El mapa es 1:1 por orden: `medium` es el `high` del backbone (25 s) y `low`
 
 ASSUMED_CONFIDENCE = 0.3
 
-TRACKED: tuple[str, ...] = ("road_blocked", "people_immobile", "location_hint", "urgency")
+TRACKED: tuple[str, ...] = (
+    "road_blocked",
+    "people_immobile",
+    "injuries",
+    "location_hint",
+    "urgency",
+)
 """Campos que el presupuesto persigue, en orden de prioridad de pregunta: lo que cambia
-rutas primero, luego a quién rescatar, luego dónde. `urgency` no se pregunta: se mide."""
+rutas primero, luego a quién rescatar, luego dónde. `urgency` no se pregunta: se mide.
+`injuries` se observa pero no se pregunta ni se asume (no está en `ASK_PRIORITY`): el
+operador ya lo pide y un herido nunca se da por supuesto."""
 
 ASK_PRIORITY: tuple[str, ...] = ("road_blocked", "people_immobile", "location_hint")
 
@@ -222,6 +230,23 @@ class Completeness:
                 else "observed"
             )
             add(f"poi:{loc.value}:immobile", count, imm, kind)
+
+        inj = self.fields["injuries"]
+        if (
+            loc.value
+            and loc.value != NOT_STATED
+            and loc.status in ("observed", "assumed_default")
+            and inj.value
+            and inj.value != NOT_STATED
+            and inj.status in ("observed", "assumed_default")
+        ):
+            count = 5 if inj.value == "5plus" else int(inj.value)
+            kind = (
+                "assumed_default"
+                if "assumed_default" in (loc.status, inj.status)
+                else "observed"
+            )
+            add(f"poi:{loc.value}:injuries", count, inj, kind)
         return out
 
 
@@ -231,9 +256,16 @@ def _kind(st: FieldState) -> FactKind:
 
 def safe_default(key: str, st: FieldState) -> str | None:
     """Lo que se asume si el LLM no contesta: la dirección segura, y nada si no hay
-    base. Un candidato medio-confiado gana a cualquier invento."""
+    base. Un candidato medio-confiado gana a cualquier invento.
+
+    `people_immobile` es el único con invento, y se queda: prepararse para alguien que
+    quizá no puede moverse es la dirección segura, va marcado `assumed_default` (no
+    funda rescate, `tasks._rescue`) y es lo que el dashboard pinta en gris cursiva. Lo
+    que NO puede hacer es salir por la boca del agente como si el vecino lo hubiera
+    dicho: de eso se encarga `CallPerception.call_facts`, que solo devuelve lo
+    observado."""
     if st.value and st.value != NOT_STATED:
         return st.value
     if key == "people_immobile":
         return "1"  # puede haber alguien: se prepara el rescate y se falsa después
-    return None  # road_blocked / location_hint sin candidato: no se inventa nada
+    return None  # el resto sin candidato: no se inventa nada

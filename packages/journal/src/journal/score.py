@@ -86,9 +86,7 @@ def score(path: Path) -> RunScore:
         c for c, s in civ_state.values() if s in ("exposed", "trapped")
     )
     cells_burnt = sum(1 for s in cell_state.values() if s == "burnt")
-    mean_htt = (
-        sum(hangup_to_turn) / len(hangup_to_turn) if hangup_to_turn else None
-    )
+    mean_htt = sum(hangup_to_turn) / len(hangup_to_turn) if hangup_to_turn else None
 
     total = (
         replan_score

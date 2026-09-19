@@ -47,7 +47,9 @@ def client(routes: dict[str, bytes | Exception]) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
-async def run_probe(tmp_path: Path, routes, *, capture=False, a=None, **kw) -> tuple[int, str]:
+async def run_probe(
+    tmp_path: Path, routes, *, capture=False, a=None, **kw
+) -> tuple[int, str]:
     lines: list[str] = []
     code = await probe(
         a or anchor(),
@@ -67,7 +69,11 @@ async def run_probe(tmp_path: Path, routes, *, capture=False, a=None, **kw) -> t
 
 def test_override_con_y_sin_fecha():
     assert parse_override("40.5,-4.2") == (40.5, -4.2, None)
-    assert parse_override("40.5, -4.2, 2025-08-14") == (40.5, -4.2, datetime(2025, 8, 14, tzinfo=UTC))
+    assert parse_override("40.5, -4.2, 2025-08-14") == (
+        40.5,
+        -4.2,
+        datetime(2025, 8, 14, tzinfo=UTC),
+    )
 
 
 @pytest.mark.parametrize("bad", ["40.5", "a,b", "91,0", "40,-4,ayer", "1,2,3,4"])
@@ -79,7 +85,9 @@ def test_override_mal_formado_lanza_con_un_mensaje(bad: str):
 # --- la sonda ---------------------------------------------------------------------------------
 
 
-async def test_todo_responde_sale_con_0_e_imprime_los_hechos_que_publicaria(tmp_path: Path):
+async def test_todo_responde_sale_con_0_e_imprime_los_hechos_que_publicaria(
+    tmp_path: Path,
+):
     code, out = await run_probe(tmp_path, {"nap.dgt.es": DGT, "open-meteo": CURRENT})
     assert code == 0, out
     assert "road:wp_a-wp_b:cut = True" in out and "wind:bearing_deg = 270.0" in out

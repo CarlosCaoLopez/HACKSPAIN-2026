@@ -79,3 +79,23 @@ async def test_new_hard_violation_still_replans_after_gap(
         if e.payload.get("trigger") == "hard_violation"
     ]
     assert len(replans) == 1, "una violación nueva sí replanifica, y una sola vez"
+
+
+async def test_divergence_is_published_only_when_it_changes(
+    journal, fixed_planner
+) -> None:
+    """`plan.divergence` era el 46 % del journal (1831 informes con 0.0 seguidos):
+    ahora sale solo cuando cambia el valor o lo que está roto."""
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    await _ticks(core, 20)
+    assert len(_of(journal, EventType.PLAN_DIVERGENCE)) == 1
+    turned = _ev(
+        EventType.WORLD_TICK,
+        {"t_sim": 30.0, "wind": {"bearing_deg": 90, "speed": 1.0}},
+        t_sim=30.0,
+    )
+    await bus.publish(turned)
+    await core.on_event(turned)
+    reports = _of(journal, EventType.PLAN_DIVERGENCE)
+    assert len(reports) == 2 and reports[-1].payload["value"] > 0

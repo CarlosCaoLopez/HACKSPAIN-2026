@@ -241,8 +241,7 @@ def harvest(runs_dir: Path) -> list[Rule]:
             continue
         run_id = events[0].run_id
         transcript = "\n".join(
-            f"seq={e.seq} t_sim={e.t_sim:.0f} {e.type.value} {e.payload}"
-            for e in events
+            f"seq={e.seq} t_sim={e.t_sim:.0f} {e.type.value} {e.payload}" for e in events
         )
         rows.append({"run_id": run_id, "transcript": transcript})
 

@@ -35,6 +35,10 @@ export function activeCallers(events: Event[], pois: POI[], tSim: number): Calle
   let unplaced = 0
 
   for (const call of callCards(events)) {
+    // Un chat de Telegram no es una persona llamando: su marcador es el pin del vecino
+    // (`WorldView.citizens`, en el (x, z) real), y no cuelga nunca, así que aquí sería
+    // «1 llamada sin ubicar» toda la demo con el pin a la vista.
+    if (call.channel === 'telegram') continue
     if (call.ended && tSim - call.ended.t_sim > LINGER_SIM_S) continue
 
     let poiId = call.poiId

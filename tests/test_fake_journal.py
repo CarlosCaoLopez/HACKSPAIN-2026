@@ -18,12 +18,12 @@ from contracts.events import PAYLOAD_MODELS, Event, EventType
 # El fixture vigente es el v4 (v3 = sin la percepción con Jev). Los v1, v2 y v3 están congelados (`fixtures/**` solo se añade)
 # con los ids de carretera de antes del renombrado a `road:wp_a-wp_b` y sin los tres
 # eventos de voz de P3: ya no se pueden regenerar, así que no se prueban aquí.
-FAKE = Path("fixtures/run_fake_v4.jsonl")
+FAKE = Path("fixtures/run_fake_v5.jsonl")
 GEN = Path("scripts/fake_journal.py")
 
 pytestmark = pytest.mark.skipif(
     not FAKE.exists(),
-    reason="falta fixtures/run_fake_v4.jsonl · uv run python scripts/fake_journal.py",
+    reason="falta fixtures/run_fake_v5.jsonl · uv run python scripts/fake_journal.py",
 )
 
 
@@ -155,9 +155,9 @@ def test_la_voz_en_vivo_esta_encadenada() -> None:
     requested = next(ev for ev in events if ev.type == EventType.CALL_SIGNAL_REQUESTED)
     sent = next(ev for ev in events if ev.type == EventType.CALL_SIGNAL_SENT)
     assert requested.seq in sent.causes, "la señal enviada no cuelga de la pedida"
-    assert any(
-        by_seq[c].type == EventType.PLAN_EMITTED for c in requested.causes
-    ), "la señal pedida no cuelga de un plan"
+    assert any(by_seq[c].type == EventType.PLAN_EMITTED for c in requested.causes), (
+        "la señal pedida no cuelga de un plan"
+    )
 
     call_id = sent.payload["call_id"]
     ended = next(
@@ -179,9 +179,12 @@ def test_las_carreteras_usan_el_id_de_la_arista() -> None:
     keys = [
         ev.payload["key"]
         for ev in _events()
-        if ev.type == EventType.WORLD_FACT_ASSERTED and ev.payload["key"].startswith("road")
+        if ev.type == EventType.WORLD_FACT_ASSERTED
+        and ev.payload["key"].startswith("road")
     ]
     assert keys, "el fixture no trae ningún hecho de carretera"
     assert all(k.startswith("road:wp_") and "road:road" not in k for k in keys), keys
     # Con la comilla delante: `rd_` a secas casa con `ha`**`rd_`**`constraints`.
-    assert not any('"rd_' in ev.model_dump_json() for ev in _events()), "queda un id `rd_*`"
+    assert not any('"rd_' in ev.model_dump_json() for ev in _events()), (
+        "queda un id `rd_*`"
+    )

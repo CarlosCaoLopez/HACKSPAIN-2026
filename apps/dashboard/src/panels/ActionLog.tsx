@@ -70,7 +70,7 @@ export function ActionLog({
                   primary={row.verb ? `${capital(VERB[row.verb])} · ${row.what}` : row.what}
                   status={status}
                   tone={tone}
-                  meta={row.closed?.text || undefined}
+                  meta={[dispatch(row), row.closed?.text].filter(Boolean).join(' · ') || undefined}
                   hint={row.actionId}
                 />
               )
@@ -92,6 +92,15 @@ function outcome(row: Action, lastT: number): { status: string; tone?: DataTone 
       : { status: 'falló', tone: 'urgent' }
   }
   return { status: isStale(row, lastT) ? 'sin confirmar' : 'pedida' }
+}
+
+/** El despacho por teléfono, cuando lo hubo. Una unidad que salió sin que su dotación
+ *  confirmara no puede pintarse igual que una que salió con el «vamos»: es la
+ *  degradación y se anota, que es la regla de la casa. */
+function dispatch(row: Action): string {
+  if (row.dispatchConfirmed === true) return 'con el «vamos» de la dotación'
+  if (row.dispatchConfirmed === false) return 'salió SIN confirmar'
+  return ''
 }
 
 function capital(text: string): string {

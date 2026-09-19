@@ -20,6 +20,15 @@ WORKFLOW_BROADCAST = "status_broadcast"
 
 _INTENT_WORKFLOW: dict[str, str] = {
     "evacuation_order": WORKFLOW_EVACUATION,
+    # El aviso al pueblo vecino sale por el mismo workflow y el mismo número que la
+    # orden de evacuación: solo hay un hook y un número saliente configurados. El
+    # guion se distingue por la variable `role` que lleva el cuerpo del hook, no por
+    # el workflow (ver `core.calls`: ahí vive la rama, no en la plataforma).
+    "neighbor_alert": WORKFLOW_EVACUATION,
+    # Los medios (retén, ambulancia) salen por el mismo hook: el guion lo trae el
+    # cuerpo y el número lo elige el core.
+    "fire_crew_dispatch": WORKFLOW_EVACUATION,
+    "ambulance_dispatch": WORKFLOW_EVACUATION,
     "resource_request": WORKFLOW_RESOURCE,
     "status_check": WORKFLOW_BROADCAST,
     "shelter_confirm": WORKFLOW_BROADCAST,
@@ -59,18 +68,52 @@ async def trigger(req: CallRequest, run_id: str) -> str:
         raise ValueError(f"workflow sin incoming hook configurado: {workflow!r}")
 
     # Las variables del guion salen de `req.facts`; el resto, de la intención.
+    # `situation_brief` y `checklist` llevan la rama condicional ya resuelta (quién
+    # es, qué pueblo arde, qué hay que preguntar): el prompt de la plataforma es el
+    # mismo para una orden de evacuación y para un aviso al vecino, y la diferencia
+    # la trae el cuerpo del hook, no dos workflows.
     body = {
         "run_id": run_id,
         "task_id": req.task_id,
+        "poi_id": req.poi_id,
         "to": req.to,
+        "role": req.facts.get("role", "evacuation"),
+        "callee": req.facts.get("callee", ""),
+        "unit_id": req.facts.get("unit_id", ""),
+        "must_go_next": req.facts.get("must_go_next", ""),
+        "waiting_call_id": req.facts.get("waiting_call_id", ""),
+        "immobile": req.facts.get("immobile", ""),
+        # `injuries` y `base_name` los produce `core.calls` y se quedaban aquí: un
+        # campo que no está en el cuerpo no existe para el prompt, por mucho que el
+        # core lo calcule.
+        "injuries": req.facts.get("injuries", ""),
+        "base_name": req.facts.get("base_name", ""),
         "poi_name": req.facts.get("poi_name", ""),
+        "source_poi_name": req.facts.get("source_poi_name", ""),
         "route_name": req.facts.get("route_name", ""),
         "deadline_min": req.facts.get("deadline_min", ""),
         "hazard_kind": req.facts.get("hazard_kind", ""),
+        "situation_brief": req.facts.get("situation_brief", ""),
+        "checklist": req.facts.get("checklist", ""),
+        "advice_rules": req.facts.get("advice_rules", ""),
+        # El estado del mundo en el segundo en que se pide la llamada: es lo que
+        # convierte al agente en un operador que recomienda con datos y no en un
+        # contestador con un guion.
+        "resources": req.facts.get("resources", ""),
+        # Lo que el SOLVER pide (`requested_units`), lo que se queda sin cubrir
+        # (`coverage`) y lo que va confirmado (`committed_resources`). Sin estas tres
+        # la llamada a un medio era un aviso, no una petición.
+        "requested_units": req.facts.get("requested_units", ""),
+        "coverage": req.facts.get("coverage", ""),
+        "committed_resources": req.facts.get("committed_resources", ""),
+        "fire_status": req.facts.get("fire_status", ""),
+        "roads_status": req.facts.get("roads_status", ""),
+        "unit_eta": req.facts.get("unit_eta", ""),
+        "incoming_people": req.facts.get("incoming_people", ""),
         "severity": req.urgency,
         # Casa la llamada con la tarea sin estado en la plataforma: es de donde el
         # webhook de retorno saca el `task_id`.
-        "metadata": {"custom": {"task_id": req.task_id}},
+        "metadata": {"custom": {"task_id": req.task_id, "poi_id": req.poi_id}},
     }
     headers = {
         "Content-Type": "application/json",

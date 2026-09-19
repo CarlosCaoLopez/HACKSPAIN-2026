@@ -98,7 +98,9 @@ def test_los_fill_de_limpieza_respetan_el_limite(scenario):
 
 def test_el_forceload_cubre_todo_el_escenario(scenario):
     x1, _z1, _x2, z2 = bounds(scenario)
-    tiles = [c.split() for c in forceload_commands(scenario) if c.startswith("forceload add")]
+    tiles = [
+        c.split() for c in forceload_commands(scenario) if c.startswith("forceload add")
+    ]
     assert min(int(t[2]) for t in tiles) == x1
     assert max(int(t[5]) for t in tiles) == z2
 

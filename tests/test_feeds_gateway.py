@@ -118,15 +118,23 @@ def test_sin_red_las_cuatro_fuentes_se_degradan_y_el_run_sigue(
 
     start_run(client)
     assert wait_for(
-        lambda: {s["status"] for s in client.get("/api/feeds").json()["sources"].values()}
-        == {"degraded"}
+        lambda: (
+            {s["status"] for s in client.get("/api/feeds").json()["sources"].values()}
+            == {"degraded"}
+        )
     ), client.get("/api/feeds").json()
 
     body = client.get("/api/feeds").json()
     assert all("sin red" in s["last_error"] for s in body["sources"].values())
-    assert all(s["next_poll_s"] is not None for s in body["sources"].values())  # reintentan
+    assert all(
+        s["next_poll_s"] is not None for s in body["sources"].values()
+    )  # reintentan
     health = client.get("/api/health").json()
-    assert health["run_id"] and health["feeds"] == "live" and health["components"]["feeds"] == "up"
+    assert (
+        health["run_id"]
+        and health["feeds"] == "live"
+        and health["components"]["feeds"] == "up"
+    )
 
     stop = client.post("/api/run/stop").json()
     assert stop["stopped"] is True
@@ -148,23 +156,35 @@ def test_recorded_publica_los_hechos_firmados_como_feeds(
 
     seen = rt_of(client).hub.register()  # antes de arrancar: lo que se publique le llega
     start_run(client)
-    assert wait_for(lambda: client.get("/api/feeds").json()["sources"]["dgt"]["published"] == 1)
+    assert wait_for(
+        lambda: client.get("/api/feeds").json()["sources"]["dgt"]["published"] == 1
+    )
 
     facts = []
     while not seen.queue.empty():
         ev = seen.queue.get_nowait()
         if ev.type == "world.fact.asserted":
             facts.append(ev)
-    assert {f.payload["key"] for f in facts} == {"road:wp_a-wp_b:cut"}  # un solo hecho: sin causa
+    assert {f.payload["key"] for f in facts} == {
+        "road:wp_a-wp_b:cut"
+    }  # un solo hecho: sin causa
     assert {f.source for f in facts} == {"feeds"}  # la envoltura (REQ-236)
     assert all(f.payload["source"].startswith("api:dgt:") for f in facts)
     assert all(f.payload["kind"] == "observed" for f in facts)
 
     body = client.get("/api/feeds").json()
     assert body["mode"] == "recorded"
-    assert body["anchor"]["place"] == "Sitio de prueba" and body["anchor"]["fixed"] is True
-    assert isinstance(body["anchor"]["lat0"], float) and isinstance(body["anchor"]["lon0"], float)
-    assert body["sources"]["firms"] == {**body["sources"]["firms"], "status": "off", "note": "sin capturas"}
+    assert (
+        body["anchor"]["place"] == "Sitio de prueba" and body["anchor"]["fixed"] is True
+    )
+    assert isinstance(body["anchor"]["lat0"], float) and isinstance(
+        body["anchor"]["lon0"], float
+    )
+    assert body["sources"]["firms"] == {
+        **body["sources"]["firms"],
+        "status": "off",
+        "note": "sin capturas",
+    }
     client.post("/api/run/stop")
 
 
@@ -174,7 +194,9 @@ def test_recorded_publica_los_hechos_firmados_como_feeds(
 @pytest.fixture
 def replay_client(monkeypatch: pytest.MonkeyPatch):
     if not FAKE.exists():
-        pytest.skip("falta fixtures/run_fake.jsonl · uv run python scripts/fake_journal.py")
+        pytest.skip(
+            "falta fixtures/run_fake.jsonl · uv run python scripts/fake_journal.py"
+        )
     monkeypatch.setattr(settings, "vela_mode", "replay")
     monkeypatch.setattr(settings, "vela_replay_file", str(FAKE))
     monkeypatch.setattr(settings, "vela_replay_speed", 60.0)
@@ -185,7 +207,9 @@ def replay_client(monkeypatch: pytest.MonkeyPatch):
         yield c
 
 
-def test_en_replay_no_arrancan_fuentes_pero_el_ancla_se_sirve(replay_client: TestClient) -> None:
+def test_en_replay_no_arrancan_fuentes_pero_el_ancla_se_sirve(
+    replay_client: TestClient,
+) -> None:
     assert "feeds" not in rt_of(replay_client).tasks
     body = replay_client.get("/api/feeds").json()
     assert body["mode"] == "replay"
