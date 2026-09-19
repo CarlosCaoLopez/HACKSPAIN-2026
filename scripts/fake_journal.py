@@ -65,6 +65,7 @@ from contracts.events import (
     RunStarted,
     SignalRequested,
     SignalSent,
+    TaskChanged,
     TranscriptPartial,
     UnitArrived,
     UnitPosition,
@@ -81,7 +82,7 @@ from contracts.plan import (
     Violation,
 )
 from contracts.scenario import Scenario
-from contracts.world import Wind
+from contracts.world import Task, Wind
 from gateway.scenarios import load_scenario
 
 # v1 (`run_fake.jsonl`, H2/H3) y v2 (`run_fake_v2.jsonl`, H4) están CONGELADOS: los
@@ -408,6 +409,43 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
         EventType.WORLD_CELL_CHANGED,
         CellChanged(cell_id=origin, state="burning", hazard=sc.hazard.kind),
         "sim",
+        causes=("fire",),
+    )
+
+    # El core mantiene `WorldState.tasks`: cada alta se publica como `task.changed`
+    # (el estado es inmutable y el journal append-only) antes del primer plan.
+    tl.add(
+        3.0,
+        EventType.TASK_CHANGED,
+        TaskChanged(
+            task=Task(
+                id=TASK_EXTINGUISH,
+                kind="extinguish",
+                target_cell=origin,
+                required_capability="extinguish",
+                severity="high",
+                created_t=3.0,
+            )
+        ),
+        "core",
+        label="task_ext",
+        causes=("fire",),
+    )
+    tl.add(
+        3.5,
+        EventType.TASK_CHANGED,
+        TaskChanged(
+            task=Task(
+                id=TASK_EVAC_A,
+                kind="evacuate",
+                target_poi=PUEBLO_A,
+                required_capability="transport",
+                severity="critical",
+                created_t=3.5,
+            )
+        ),
+        "core",
+        label="task_evac",
         causes=("fire",),
     )
 

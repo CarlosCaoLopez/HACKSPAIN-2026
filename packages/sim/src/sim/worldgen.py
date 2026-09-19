@@ -16,12 +16,17 @@ La secuencia fija:
 7. Por cada grupo de civiles, aldeanos con `NoAI:1b`.
 """
 
+import argparse
+import asyncio
 import math
+import os
 import random
+import sys
+from pathlib import Path
 
 from contracts.scenario import Scenario
 from contracts.world import POI, Unit
-from sim.rcon import LOW, Rcon
+from sim.rcon import LOW, PrintRcon, Rcon, RconClient
 
 VELA_TAG = "vela"
 """Todo lo que invocamos lleva este tag: `kill @e[tag=vela]` y vuelve a lanzarse."""
@@ -501,3 +506,49 @@ def civilian_commands(scenario: Scenario) -> list[str]:
                 + f"Rotation:[{yaw:.0f}f,0f]}}"
             )
     return out
+
+
+def main() -> None:
+    """`make world`: construye el mundo por RCON desde el YAML. `--dry-run`
+    imprime los comandos en vez de mandarlos, para revisar sin Paper."""
+    from sim.scenario import load
+
+    parser = argparse.ArgumentParser(description="Levanta el mundo del escenario por RCON.")
+    parser.add_argument("--scenario", default="scenarios/wildfire_ridge.yaml")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="imprime los comandos por stdout y no abre ninguna conexión",
+    )
+    parser.add_argument(
+        "--teardown", action="store_true",
+        help="solo limpia: /kill @e[tag=vela] y borra la cicatriz del fuego",
+    )
+    args = parser.parse_args()
+    scenario = load(Path(args.scenario))
+
+    async def run() -> None:
+        rcon: Rcon
+        if args.dry_run:
+            rcon = PrintRcon()
+        else:
+            from contracts.settings import settings
+
+            rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
+        await rcon.connect()
+        try:
+            if args.teardown:
+                await teardown(rcon, scenario)
+            else:
+                await build(scenario, rcon)
+        finally:
+            await rcon.close()
+
+    try:
+        asyncio.run(run())
+    except BrokenPipeError:
+        # `--dry-run | head`: quien lee cerró la tubería, no hay nada que avisar.
+        sys.stdout = open(os.devnull, "w")  # noqa: SIM115 — evita el aviso al cerrar
+
+
+if __name__ == "__main__":
+    main()

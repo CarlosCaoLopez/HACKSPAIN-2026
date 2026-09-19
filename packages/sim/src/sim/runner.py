@@ -8,6 +8,7 @@ Es el único módulo de `sim` que habla con el mundo y con el bus. `graph`,
 dos cosas (D5): eso es lo que los hace testeables sin Paper y sin core.
 """
 
+import argparse
 import asyncio
 import contextlib
 import logging
@@ -23,7 +24,7 @@ from sim.graph import RoadGraph
 from sim.hazard import build_hazard, cell_id
 from sim.injects import ROAD_CUT, UNIT_FAILURE, WIND_SHIFT, InjectScheduler
 from sim.movement import TICK_HZ, Movement, tp_command
-from sim.rcon import HIGH, LOW, Rcon
+from sim.rcon import HIGH, LOW, PrintRcon, Rcon, RconClient
 from sim.scenario import load
 from sim.worldgen import (
     GROUND_Y,
@@ -581,3 +582,128 @@ class Sim:
                 payload=payload,
             )
         )
+
+
+# --- `make dev-sim`: el sim solo, con un core tonto ---
+
+DUMMY_EVERY_TICKS = 20
+"""Cada cuántos ticks el core tonto manda un `goto`. Suficiente para ver un camión
+salir, llegar y volver a salir en un minuto de reloj."""
+
+
+async def dummy_core_step(sim: Sim, n: int) -> str | None:
+    """Manda el camión libre más cercano al waypoint más próximo a la primera
+    celda que arde. Devuelve el `action_id` o `None` si no había nada que mandar.
+
+    No es un core: no hay `Policy`, ni solver, ni evento `action.requested`. Es lo
+    mínimo para que `make dev-sim` enseñe unidades moviéndose sin que P1 exista.
+    """
+    burning = getattr(sim.hazard, "active", [])
+    if not burning:
+        return None
+    x1, z1, x2, z2 = sim.hazard.bounds(burning[0])
+    target = ((x1 + x2) / 2, (z1 + z2) / 2)
+    trucks = [
+        u for u in sim.units.values()
+        if u.kind == "fire_truck" and u.status != "unavailable"
+    ]
+    if not trucks:
+        return None
+    truck = min(trucks, key=lambda u: math.dist((u.x, u.z), target))
+    waypoint = min(
+        sim.graph.waypoint_ids,
+        key=lambda w: math.dist(sim.graph.position_of(w), target),
+    )
+    action_id = f"act_dummy_{n:04d}"
+    await sim.execute(action_id, "goto", {"unit_id": truck.id, "waypoint_id": waypoint})
+    return action_id
+
+
+async def run_headless(
+    scenario: Path,
+    rcon: Rcon,
+    *,
+    ticks: int = 0,
+    speed: float = 1.0,
+    dummy_core: bool = False,
+    every: int = DUMMY_EVERY_TICKS,
+) -> Sim:
+    """Worldgen + tick loop hasta `ticks` (0 = hasta Ctrl-C). El `run_id` ya tiene
+    que estar configurado en el bus: es lo que manda los eventos al journal."""
+    await rcon.connect()
+    sim = Sim(scenario, rcon)
+    sim.speed = speed
+    await sim.start()
+    n = 0
+    try:
+        while ticks <= 0 or n < ticks:
+            await asyncio.sleep(TICK_S / speed)
+            n += 1
+            if n % every == 0:
+                if dummy_core:
+                    await dummy_core_step(sim, n)
+                snap = sim.snapshot()
+                print(
+                    f"t_sim={snap['t_sim']:.0f}s ardiendo={len(snap['burning'])} "
+                    f"moviendose={sorted(snap['moving'])} cortadas={snap['cut_roads']}"
+                )
+    finally:
+        await sim.stop()
+        await rcon.close()
+    return sim
+
+
+def main() -> None:
+    """`make dev-sim`: `python -m sim.runner --scenario ... --dummy-core`."""
+    from contracts import bus
+
+    parser = argparse.ArgumentParser(description="El sim solo: tick loop + RCON + journal.")
+    parser.add_argument("--scenario", default="scenarios/wildfire_ridge.yaml")
+    parser.add_argument(
+        "--dummy-core", action="store_true",
+        help=f"un core tonto que manda un goto cada {DUMMY_EVERY_TICKS} ticks",
+    )
+    parser.add_argument(
+        "--no-minecraft", action="store_true",
+        help="sin RCON: los primeros comandos se imprimen y el resto se cuentan",
+    )
+    parser.add_argument("--ticks", type=int, default=0, help="parar tras N ticks (0 = nunca)")
+    parser.add_argument(
+        "--speed", type=float, default=1.0, help="multiplicador del reloj (1 = tiempo real)"
+    )
+    parser.add_argument(
+        "--every", type=int, default=DUMMY_EVERY_TICKS,
+        help="ticks entre órdenes del core tonto (y entre líneas de estado)",
+    )
+    parser.add_argument("--run-id", default=None, help="por defecto, run_<8 hex>")
+    parser.add_argument("--journal-dir", default="runs")
+    args = parser.parse_args()
+    if args.speed <= 0:
+        raise SystemExit("--speed tiene que ser > 0")
+
+    run_id = bus.configure(
+        args.run_id or f"run_{uuid.uuid4().hex[:8]}", journal_dir=args.journal_dir
+    )
+    print(f"run {run_id} · journal en {args.journal_dir}/{run_id}.jsonl")
+    rcon: Rcon
+    if args.no_minecraft:
+        rcon = PrintRcon(limit=20)
+    else:
+        from contracts.settings import settings
+
+        rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
+    try:
+        asyncio.run(
+            run_headless(
+                Path(args.scenario), rcon, ticks=args.ticks, speed=args.speed,
+                dummy_core=args.dummy_core, every=args.every,
+            )
+        )
+    except KeyboardInterrupt:
+        print("parado")
+    finally:
+        bus.close()
+
+
+if __name__ == "__main__":
+    main()

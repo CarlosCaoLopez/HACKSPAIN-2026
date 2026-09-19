@@ -23,6 +23,7 @@ import uuid
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, Request
@@ -31,7 +32,6 @@ from pydantic import BaseModel
 from contracts.events import Event, EventType
 from contracts.plan import Plan
 from contracts.world import WorldState
-
 from gateway.hub import Hub
 
 log = logging.getLogger("vela.gateway")
@@ -69,7 +69,11 @@ class Runtime:
     core: Any | None = None
     sim: Any | None = None
     voice: Any | None = None
-    writer: Any | None = None
+
+    # `runs/<run_id>.jsonl` del run en curso. Lo abre y lo escribe el bus
+    # (`contracts.bus.configure`); aquí solo se recuerda la ruta para `/api/health`
+    # y para devolverla en `POST /api/run/stop`.
+    journal_path: Path | None = None
 
     # Estado plegado del replay, cuando no hay core que lo mantenga.
     replay_state: WorldState | None = None
@@ -110,7 +114,7 @@ class Runtime:
             self.mark(name, "absent", "sin implementar")
         except ImportError as exc:
             self.mark(name, "absent", f"no importable: {exc}")
-        except Exception as exc:  # noqa: BLE001 — degradar es el objetivo
+        except Exception as exc:
             self.mark(name, "error", repr(exc))
             log.exception("fallo arrancando %s", name)
 
@@ -128,7 +132,7 @@ class Runtime:
                 raise
             except NotImplementedError:
                 self.mark(name, "absent", "sin implementar")
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self.mark(name, "error", repr(exc))
                 log.exception("la task de %s murió", name)
 
@@ -147,13 +151,10 @@ class Runtime:
     # --- publicar ----------------------------------------------------------------
 
     def new_run_id(self) -> str:
-        """El uuid del run lo pone el bus; si aún no tiene cuerpo, uno propio."""
-        with contextlib.suppress(Exception):
-            from contracts.bus import current_run_id
-
-            rid = current_run_id()
-            if rid:
-                return rid
+        """Uno nuevo por run, siempre. El gateway se lo da al bus en
+        `bus.configure(run_id=...)`, y NO al revés: `bus.current_run_id()` conserva el
+        id del run anterior después de `bus.close()`, y leerlo de ahí haría que el
+        segundo run del ensayo escribiera encima del journal del primero."""
         return f"run_{uuid.uuid4().hex[:12]}"
 
     async def publish(

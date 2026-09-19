@@ -48,10 +48,11 @@ class Settings(BaseSettings):
     vela_replay_speed: float = 1.0  # 0 = tan rápido como pueda
     vela_replay_loop: bool = False  # útil mientras se pintan paneles
 
-    # P4 · los puentes `action.requested` → sim y `call.requested` → voice. Apagados
-    # hasta que P2 y P3 confirmen que no se suscriben ellos: si lo hacen los dos,
-    # cada acción se ejecuta dos veces y la unidad se mueve doble en la demo.
-    vela_bridges: bool = False
+    # P4 · los puentes `action.requested` → sim y `call.requested` → voice. Encendidos:
+    # ni `Sim` ni `VoiceGateway` se suscriben a esos eventos, así que sin ellos ninguna
+    # orden llega al mundo. `VELA_BRIDGES=false` los apaga si P2 o P3 suscriben ellos
+    # (si no, cada acción se ejecutaría dos veces; `/api/health` lo cuenta).
+    vela_bridges: bool = True
 
 
 settings = Settings()

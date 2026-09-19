@@ -151,3 +151,45 @@ injects:
   - at: 240
     type: unit_failure
     payload: {unit: unit_truck2, reason: "avería de bomba"}
+
+# Cómo dice la gente los sitios por teléfono → id. Los lee `voice.pois`
+# (`resolve_poi_local` / `resolve_edge_local`): alias exacto primero, y si no,
+# nombre por parecido. Se normaliza (minúsculas, sin tildes), así que "El Molino"
+# y "el molino" son el mismo alias. Un alias que apunte a un id que no existe
+# falla al cargar (`sim.scenario._check`).
+poi_aliases:
+  el molino: poi_molino
+  el molino viejo: poi_molino
+  molino viejo: poi_molino
+  el pueblo de arriba: poi_pueblo_a # el del norte (z pequeña) en el plano cenital
+  pueblo de arriba: poi_pueblo_a
+  pueblo a: poi_pueblo_a
+  el pueblo de abajo: poi_pueblo_b
+  pueblo de abajo: poi_pueblo_b
+  pueblo b: poi_pueblo_b
+  el hospital: poi_hospital
+  hospital comarcal: poi_hospital
+  el refugio: poi_refugio
+  refugio municipal: poi_refugio
+  la base: poi_base
+  el parque de bomberos: poi_base
+  los bomberos: poi_base
+
+# Las carreteras por su nombre de calle. "Pista del sur" es el tramo central del
+# desvío sur: el que corta el inject del segundo 210 y el que un vecino ve caer.
+road_aliases:
+  pista del sur: road:wp_sur_01-wp_sur_02
+  pista sur: road:wp_sur_01-wp_sur_02
+  carretera del sur: road:wp_sur_01-wp_sur_02
+  carretera sur: road:wp_sur_01-wp_sur_02
+  desvío sur: road:wp_sur_01-wp_sur_02
+  desvio del sur: road:wp_sur_01-wp_sur_02
+  pista del norte: road:wp_nor_01-wp_nor_02
+  pista norte: road:wp_nor_01-wp_nor_02
+  carretera del norte: road:wp_nor_01-wp_nor_02
+  carretera norte: road:wp_nor_01-wp_nor_02
+  desvío norte: road:wp_nor_01-wp_nor_02
+  desvio del norte: road:wp_nor_01-wp_nor_02
+  carretera del hospital: road:wp_cruce-wp_hospital
+  carretera del refugio: road:wp_base-wp_refugio
+  carretera de la base: road:wp_base-wp_cruce

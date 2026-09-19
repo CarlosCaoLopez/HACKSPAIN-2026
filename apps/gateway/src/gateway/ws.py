@@ -24,7 +24,6 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from contracts.events import Event
-
 from gateway.hub import CLOSE_RUN_CHANGED, Client
 from gateway.runtime import Runtime
 
@@ -68,7 +67,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
             client.sent += 1
     except WebSocketDisconnect:
         pass
-    except Exception:  # noqa: BLE001 — un cliente no puede tumbar el proceso
+    except Exception:
         log.exception("cliente del WS caído")
     finally:
         rt.hub.unregister(client)

@@ -144,13 +144,9 @@ def test_health_anuncia_los_dos_planes_b(
 def test_la_velocidad_que_el_sim_no_acepta_se_dice(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`Sim` no expone velocidad (`sim/runner.py`): se pide por pato y se degrada a la
-    vista, nunca en silencio.
-
-    Va con `minecraft: False` porque hoy es la única forma de que llegue a construirse un
-    `Sim`: `RconClient.__init__` sigue sin cuerpo y el `guard` aborta el bloque entero
-    antes de tocar la velocidad. Cuando P2 entregue el cliente, este test vale igual.
-    """
+    """Un sim sin `set_speed()` ni atributo `speed` (el espía): se pide por pato y se
+    degrada a la vista, nunca en silencio. El `Sim` real de P2 sí lleva `speed` y
+    `test_gateway_run_flow.py` comprueba que se le fija."""
     _patch_sim(monkeypatch)
     client.post(
         "/api/run",
@@ -158,6 +154,38 @@ def test_la_velocidad_que_el_sim_no_acepta_se_dice(
     )
     assert "no acepta velocidad" in client.get("/api/health").json()["notes"]["speed"]
     client.post("/api/run/stop")
+
+
+async def test_el_sim_de_verdad_corre_contra_null_rcon() -> None:
+    """`NullRcon` tiene que aceptar la firma del Protocol `sim.rcon.Rcon`, no solo sus
+    nombres: `sim/runner.py` llama `send(cmd, LOW)` y `send_many(cmds, LOW)` con el
+    carril en posicional. Con `send(self, command)` a secas, el primer `/fill` del
+    worldgen reventaba con `TypeError` DENTRO de la task del sim, y `--no-minecraft`
+    arrancaba un run sin mundo y sin avisar. Aquí se arranca un `Sim` real, se le da
+    una orden y se le hace avanzar: worldgen, `/tp` del movimiento y teardown, los
+    tres caminos por los que salen comandos."""
+    from sim import runner as runner_mod
+    from sim.runner import Sim
+
+    runner_mod._FALLBACK.clear()  # sin run en el bus: los eventos van a la reserva
+    rcon = NullRcon()
+    sim = Sim(Path("scenarios/wildfire_ridge.yaml"), rcon)
+    await sim.start()
+    try:
+        assert rcon.sent > 0, "el worldgen no ha mandado nada"
+        assert "low" in rcon.by_priority
+        await sim.execute(
+            "act_null", "goto", {"unit_id": "unit_truck1", "waypoint_id": "wp_pueblo_a"}
+        )
+        before = rcon.sent
+        await sim.tick(1.0)
+        assert rcon.sent > before, "el movimiento no ha mandado ningún /tp"
+        assert "high" in rcon.by_priority
+    finally:
+        await sim.stop()
+    fallos = [e.payload for e in runner_mod._FALLBACK if e.type == EventType.ACTION_FAILED]
+    assert fallos == [], fallos
+    assert sim.units["unit_truck1"].status == "moving"
 
 
 # --- el guion ----------------------------------------------------------------------

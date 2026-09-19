@@ -51,3 +51,9 @@ class Scenario(BaseModel):
     roads: list[RoadEdge] = []
     civilians: list[CivilianGroup] = []
     injects: list[InjectSpec] = []
+
+    # Cómo nombra la gente los sitios por teléfono → id del escenario. Los lee
+    # `voice.pois` para resolver "el molino viejo" o "la pista del sur" sin red.
+    # Opcionales con default: un escenario sin ellos sigue valiendo.
+    poi_aliases: dict[str, str] = {}  # "el molino" → "poi_molino"
+    road_aliases: dict[str, str] = {}  # "pista del sur" → "road:wp_sur_01-wp_sur_02"

@@ -70,6 +70,7 @@ class Event(BaseModel):
 | `world.civilians.changed` | sim | `{group_id, count, state, poi_id}` | core, dashboard |
 | `world.inject` | sim | `{inject_type, detail}` | core, dashboard |
 | `world.fact.asserted` | voice (tick de Jev en llamada y al colgar), human | `{key, value, confidence, source, severity, kind, call_id?}` · `kind`: `observed` \| `inferred` \| `assumed_default` (default `observed`) | core, dashboard |
+| `task.changed` | core | `{task: Task}` · alta, cambio de severidad o cierre (`done=True`) de una tarea de `WorldState.tasks` | dashboard, journal |
 | `call.requested` | core | `CallRequest` | voice, dashboard |
 | `call.started` | voice | `{call_id, task_id, to, direction}` | dashboard |
 | `call.transcript.partial` | voice (SSE de la sesión de HappyRobot) | `{call_id, speaker, text}` | dashboard |
