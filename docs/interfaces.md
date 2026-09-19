@@ -323,7 +323,7 @@ class Fact(BaseModel):
 | Responsabilidad | Quién |
 | --- | --- |
 | Decidir que hay que llamar y a quién | P1 (core) |
-| Elegir plataforma, número saliente y guion | P3 (voice) |
+| Elegir plataforma, número del agente y guion | P3 (voice) |
 | Recibir el webhook y montar `CallResult` | P3 |
 | Ejecutar `semantic.extract` y producir `CallFacts` | P3 |
 | Traducir `CallFacts` a la lista de `Fact` | **P3**, con el mapa de claves que le da P1 |
@@ -333,7 +333,7 @@ El mapa de claves vive en `contracts/factkeys.py` y es una lista plana de string
 
 ### Timeouts y fallos
 
-- Llamada saliente sin respuesta en 45 s: `outcome="no_answer"`, el core reintenta una vez y después escala a `human.override`.
+- Llamada sin respuesta en 45 s: `outcome="no_answer"`, el core reintenta una vez y después escala a `human.override`.
 - `semantic.extract` por encima de 4 s: se emite `CallResult` con `facts=None` y la transcripción cruda va al dashboard marcada como *sin extraer*. La demo continúa.
 - Webhook duplicado (pasa): descartad por `call_id` ya visto. Idempotencia obligatoria.
 
@@ -427,7 +427,7 @@ P4 decide el orden de arranque y apaga limpio. Expone `POST /control/*` y es el 
 | `POST /control/override` | P4 | La intervención humana, ver abajo |
 | `POST /control/pause` | P4 | Congela el tick, para explicar algo en el pitch |
 | `POST /webhooks/happyrobot/call` | P3 | Eventos de inicio, fin y fallo |
-| `POST /webhooks/humalike/call` | P3 | Llamada entrante terminada |
+| `POST /webhooks/humalike/call` | P3 | Llamada del vecino terminada |
 | `GET /api/runs` | P4 | Runs pasados con su puntuación, para el run 1 vs run 12 |
 | `WS /ws` | P4 | El chorro de eventos |
 
@@ -532,8 +532,8 @@ No integréis de forma continua: integrad tres veces, con todo el mundo mirando 
 | Momento | Criterio de superación |
 | --- | --- |
 | **Sáb 13:00** | Un incendio arranca, el core asigna, un camión se mueve en Minecraft. Sin LLM si hace falta. Se graba `run_golden.jsonl` |
-| **Sáb 18:00** | Llamada real saliente, replan por inject de viento, banner en el dashboard. Se cronometra por primera vez |
-| **Dom 09:00** | Llamada entrante que cuelga y cambia la dirección de las unidades en menos de 3 s. Congelación tras esto |
+| **Sáb 18:00** | Llamada real al agente, que dicta la orden; replan por inject de viento, banner en el dashboard. Se cronometra por primera vez |
+| **Dom 09:00** | Llamada del vecino que cuelga y cambia la dirección de las unidades en menos de 3 s. Congelación tras esto |
 
 Si una integración no pasa su criterio, **no se avanza a lo siguiente**: se para todo el mundo y se arregla. Un equipo que sigue construyendo encima de una integración rota llega al domingo con cuatro piezas bonitas y ninguna demo.
 
