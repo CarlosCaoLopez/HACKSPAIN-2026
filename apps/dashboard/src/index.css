@@ -606,8 +606,20 @@ body {
 .vela-cut-tip {
   color: var(--color-vela-warn);
 }
-/* Con zoom lejano las etiquetas de FIRMS estorban y se quedan en el `title` (REQ-288). */
-.vela-zoom-far .vela-firms-tip,
-.vela-zoom-mid .vela-firms-tip {
+/* Las etiquetas de FIRMS solo desde el zoom 13; antes se quedan en el `title` (REQ-288). */
+.vela-firms-tip {
   display: none;
+}
+.vela-zoom-firms-label .vela-firms-tip {
+  display: block;
+}
+/* La unidad fuera de servicio siempre lleva su id (REQ-301.4): es de lo que hay que hablar. */
+.vela-unit-unavailable .vela-tag-minor {
+  display: block !important;
+}
+
+/* El mapa base se aclara y se desatura: es el fondo, no la información (REQ-283,
+   minimalista). Sin esto las teselas estándar de OpenStreetMap compiten con los iconos. */
+.leaflet-tile-pane {
+  filter: grayscale(0.85) contrast(0.88) brightness(1.08);
 }

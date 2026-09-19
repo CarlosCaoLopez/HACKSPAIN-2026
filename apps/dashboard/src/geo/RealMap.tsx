@@ -27,9 +27,12 @@ import {
 import { Legend, type LegendItem } from './Legend'
 import { Scene } from './scene'
 
-// CARTO Positron: teselas raster claras sobre datos de OpenStreetMap. Sin clave y sin
-// facturación, y minimalistas de serie (REQ-283).
-const TILE_URL = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+// Teselas estándar de OpenStreetMap: sin clave y sin facturación (REQ-283). Se probó CARTO
+// Positron primero, pero sus teselas `light_all` ya exigen `apikey` y pintan una marca de
+// agua «API KEY REQUIRED» sobre todo el mapa. El aspecto minimalista se consigue aclarando
+// las teselas con CSS (`.leaflet-tile-pane` en `index.css`), no con otro proveedor.
+// La política de uso de OSM permite un uso ligero con atribución, que es el de una demo.
+const TILE_URL = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png'
 
 /** Cuántos errores de tesela sin ninguna cargada hacen falta para decir «sin red» (REQ-292). */
 const TILE_ERRORS_BEFORE_WARNING = 3

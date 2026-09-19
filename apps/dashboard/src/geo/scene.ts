@@ -61,7 +61,8 @@ const MAX_RINGS = 3
 const ETA_LABEL_MS = 10_000
 const FADE_MS = 600
 /** Zoom a partir del cual se enseñan los rótulos secundarios y las etiquetas de FIRMS. */
-const NEAR_ZOOM = 13
+const NEAR_ZOOM = 14
+const FIRMS_LABEL_ZOOM = 13
 const FAR_ZOOM = 12
 
 function token(name: string): string {
@@ -195,9 +196,8 @@ export class Scene {
     this.map.attributionControl.setPrefix(false)
 
     const tiles = L.tileLayer(opts.tileUrl, {
-      subdomains: 'abcd',
       maxZoom: 19,
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · © <a href="https://carto.com/attributions">CARTO</a>',
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
     })
     tiles.on('tileload', () => {
       this.tileLoaded += 1
@@ -264,6 +264,7 @@ export class Scene {
     el.classList.toggle('vela-zoom-far', z < FAR_ZOOM)
     el.classList.toggle('vela-zoom-mid', z >= FAR_ZOOM && z < NEAR_ZOOM)
     el.classList.toggle('vela-zoom-near', z >= NEAR_ZOOM)
+    el.classList.toggle('vela-zoom-firms-label', z >= FIRMS_LABEL_ZOOM)
   }
 
   private ll(x: number, z: number): LatLon {
@@ -293,13 +294,19 @@ export class Scene {
       fill: false,
       interactive: false,
     })
-    rect.bindTooltip(`valle simulado · ${layer.name}`, {
+    rect.addTo(this.cellLayer)
+    // En la esquina noroeste y por FUERA del borde: en el centro cae encima de las
+    // carreteras y las unidades, y dentro del borde tapa lo que esté cerca de él.
+    L.tooltip({
       permanent: true,
       direction: 'top',
+      offset: [0, -2],
       className: 'vela-valley-tip',
       interactive: false,
     })
-    rect.addTo(this.cellLayer)
+      .setLatLng(a)
+      .setContent(`valle simulado · ${layer.name}`)
+      .addTo(this.cellLayer)
   }
 
   private drawRoads(): void {
@@ -563,14 +570,19 @@ export class Scene {
    *  pelea con el `transform` con el que Leaflet coloca y desliza el marcador. */
   private layoutUnits(): void {
     const items = [...this.units.values()].map((u) => ({ u, p: this.map.latLngToLayerPoint(u.lastLL) }))
+    // Un pueblo cuenta como un ocupante fijo del sitio: una unidad que está EN el pueblo
+    // (el camión en su base, la ambulancia en el hospital) se aparta a su alrededor en vez
+    // de taparle la insignia y el nombre.
+    const poiPoints = this.opts.layer.pois.map((p) => this.map.latLngToLayerPoint(this.ll(p.x, p.z)))
     const used = new Set<number>()
     items.forEach((a, i) => {
       if (used.has(i)) return
       const group = items.filter((b, j) => !used.has(j) && a.p.distanceTo(b.p) < 24)
       group.forEach((g) => used.add(items.indexOf(g)))
+      const atPoi = poiPoints.some((p) => p.distanceTo(a.p) < 24)
       group.forEach((g, k) => {
-        const angle = (2 * Math.PI * k) / group.length - Math.PI / 2
-        const r = group.length > 1 ? 18 : 0
+        const angle = (2 * Math.PI * k) / group.length - (atPoi ? Math.PI / 4 : Math.PI / 2)
+        const r = atPoi ? 28 : group.length > 1 ? 18 : 0
         g.u.inner.style.setProperty('--fan-x', `${Math.round(Math.cos(angle) * r)}px`)
         g.u.inner.style.setProperty('--fan-y', `${Math.round(Math.sin(angle) * r)}px`)
       })
