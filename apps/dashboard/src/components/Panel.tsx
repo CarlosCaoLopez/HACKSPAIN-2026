@@ -29,6 +29,7 @@ export function Panel({
   note,
   bodyRef,
   level = 2,
+  flush = false,
   className = '',
   children,
 }: {
@@ -37,6 +38,8 @@ export function Panel({
   note?: ReactNode
   bodyRef?: Ref<HTMLDivElement>
   level?: 1 | 2
+  /** Sin relleno en el cuerpo: el mapa es una imagen y va de borde a borde. Aditiva. */
+  flush?: boolean
   className?: string
   children: ReactNode
 }) {
@@ -44,12 +47,12 @@ export function Panel({
     // min-h-0 + overflow-hidden: REQ-018, el scroll vive dentro del panel y
     // nunca en el body. Un panel que empuja la rejilla rompe la proyección.
     <section
-      className={`flex h-full min-h-0 flex-col overflow-hidden rounded-lg border bg-vela-panel ${BORDER[level]} ${className}`}
+      className={`flex h-full min-h-0 flex-col overflow-hidden rounded-[10px] border bg-vela-panel ${BORDER[level]} ${className}`}
     >
-      <header className="flex shrink-0 items-baseline gap-2 border-b border-vela-edge px-3 py-2">
+      <header className="flex shrink-0 items-baseline gap-2 border-b border-vela-edge px-3.5 pb-2.5 pt-3">
         {/* Caja baja (REQ-198): las versales a diez metros pierden la silueta de la
             palabra y se leen más despacio. El peso hace el mismo trabajo mejor. */}
-        <h2 className="text-sm font-semibold tracking-wide text-vela-ink">{title}</h2>
+        <h2 className="text-[15px] font-semibold text-vela-ink">{title}</h2>
         {note && <span className="truncate text-xs text-vela-dim">{note}</span>}
         {count !== undefined && (
           // Nivel *registro*, no acento (REQ-197, REQ-200): el número de filas es para
@@ -60,7 +63,7 @@ export function Panel({
       </header>
       <div
         ref={bodyRef}
-        className="min-h-0 flex-1 overflow-auto p-3 text-base text-vela-dim"
+        className={`min-h-0 flex-1 overflow-auto text-base text-vela-dim ${flush ? '' : 'p-3.5'}`}
       >
         {children}
       </div>

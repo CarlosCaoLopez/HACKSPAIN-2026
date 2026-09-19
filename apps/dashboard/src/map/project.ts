@@ -43,6 +43,17 @@ export function projectCell(cellId: string, geo: Geo): Box | null {
   }
 }
 
+/** La celda que contiene un punto del mundo: `projectCell` a la inversa.
+ *
+ *  Es una consulta geométrica sobre el estado vigente, no una predicción: saber que un
+ *  pueblo está DENTRO de una celda que arde es mirar; saber que el fuego LLEGARÁ es
+ *  propagación, y REQ-072 lo deja a P1. */
+export function cellIdAt(x: number, z: number, geo: Geo): string {
+  const cx = Math.floor((x - geo.origin[0]) / geo.cellSize)
+  const cz = Math.floor((z - geo.origin[1]) / geo.cellSize)
+  return `cell_${cx}_${cz}`
+}
+
 /** El centro de una celda, para poner un marcador encima. */
 export function cellCenter(cellId: string, geo: Geo): { x: number; z: number } | null {
   const box = projectCell(cellId, geo)

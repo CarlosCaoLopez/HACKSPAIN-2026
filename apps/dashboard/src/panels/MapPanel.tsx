@@ -4,9 +4,11 @@
 //
 // Si Minecraft falla, este panel es la demo (plan B nivel 3).
 //
-// Tres piezas y este fichero solo las junta: `useScenario` trae la geometría estática
-// (no viaja por eventos), `useWorldView` trae lo que se mueve, y `map/project.ts` hace
-// la única traducción de mundo a SVG que existe en el proyecto.
+// Cinco piezas y este fichero solo las junta: `useScenario` trae la geometría estática
+// (no viaja por eventos), `useWorldView` trae lo que se mueve, `map/project.ts` hace la
+// única traducción de mundo a SVG que existe en el proyecto, `map/terrain.ts` pinta la
+// imagen de satélite (ilustrativa: SPEC-006) y `map/problems.ts` decide qué zonas tienen
+// un problema. Con satélite y fenómenos, el mapa es nivel 1 de verdad.
 import { useMemo, useRef } from 'react'
 
 import type { Event, Plan, WorldState } from '../types'
@@ -14,15 +16,20 @@ import { Empty, Panel } from '../components/Panel'
 import { useScenario } from '../hooks/useScenario'
 import { useWorldView } from '../hooks/useWorldView'
 import {
-  ArrowMarker,
   AssignmentsLayer,
   CellsLayer,
+  MapDefs,
   PoisLayer,
   RoadsLayer,
+  SmokeLayer,
+  TerrainLayer,
+  ThreatLayer,
   UnitsLayer,
+  WindField,
   WindLegend,
   cellPoints,
 } from '../map/layers'
+import { poiThreat, problems, type PoiThreat } from '../map/problems'
 import {
   boxOf,
   geoOf,
@@ -32,6 +39,7 @@ import {
   waypointMap,
   type Box,
 } from '../map/project'
+import { renderTerrain } from '../map/terrain'
 
 export function MapPanel({
   state,
@@ -68,6 +76,22 @@ export function MapPanel({
 
   const waypoints = useMemo(() => waypointMap(layer?.waypoints ?? []), [layer])
 
+  // Una vez por escenario y cacheada (REQ-215): `renderTerrain` mira su propia caché, pero
+  // el `useMemo` evita ni siquiera llamarla en cada evento.
+  const terrain = useMemo(() => (layer ? renderTerrain(layer) : null), [layer])
+
+  // El halo de cada POI y el resumen de zonas salen de la misma función (REQ-224): el mapa
+  // y su lista no pueden contradecirse.
+  const threats = useMemo(() => {
+    const out = new Map<string, PoiThreat>()
+    if (layer && geo) for (const poi of layer.pois) out.set(poi.id, poiThreat(poi, view, geo))
+    return out
+  }, [layer, geo, view])
+  const trouble = useMemo(
+    () => (layer && !awaitingSnapshot ? problems(view, layer, plan) : []),
+    [layer, view, plan, awaitingSnapshot],
+  )
+
   // Un id con datos pero sin geometría conocida no se esconde: va a un carril al pie
   // del panel. El día que el golden traiga ids distintos a los de la capa del escenario,
   // quiero verlo ahí y no descubrirlo en el pitch.
@@ -81,7 +105,7 @@ export function MapPanel({
     return (
       // El vacío dice qué falta y de dónde tiene que llegar; el endpoint va al nivel
       // *registro*, que es para mí y no para la sala (REQ-193, REQ-197).
-      <Panel title="Mapa" count={0} level={1}>
+      <Panel title="Mapa" count={0} level={1} flush={false}>
         <Empty>Esperando geometría del escenario.</Empty>
         <p className="mt-1 text-xs text-vela-dim">GET /api/scenario sin responder</p>
       </Panel>
@@ -99,22 +123,30 @@ export function MapPanel({
       title="Mapa"
       count={units.length}
       level={1}
-      note={layer.name}
+      // El chip de REQ-217: la imagen es ilustrativa y la pantalla lo dice. Sin él, un
+      // relieve inventado se lee como un dato del escenario.
+      note={`${layer.name} · relieve ilustrativo`}
+      flush
       className="relative"
     >
       <svg
         viewBox={viewBoxAttr(box)}
         preserveAspectRatio="xMidYMid meet"
-        className="h-full w-full"
+        className="h-full w-full bg-vela-ground"
       >
-        <ArrowMarker stroke={stroke} />
+        <MapDefs stroke={stroke} cellSize={geo.cellSize} />
+        {terrain && <TerrainLayer url={terrain.url} box={terrain.box} />}
         <CellsLayer cells={view.cells} geo={geo} />
+        {/* Ambiente: estelas y humo van por debajo de todo lo que es información. */}
+        <WindField wind={view.wind} box={box} stroke={stroke} />
+        <SmokeLayer cells={view.cells} geo={geo} wind={view.wind} />
         <RoadsLayer
           roads={layer.roads}
           waypoints={waypoints}
           cutRoads={view.cutRoads}
           stroke={stroke}
         />
+        <ThreatLayer pois={layer.pois} threats={threats} stroke={stroke} />
         <PoisLayer pois={layer.pois} civilians={[...view.civilians.values()]} stroke={stroke} />
         {/* Esperando el snapshot, el mapa se dibuja SIN lo que se mueve (REQ-202): el
             terreno es geometría cacheada y sigue siendo cierto, pero unidades y flechas
@@ -126,17 +158,36 @@ export function MapPanel({
             <UnitsLayer units={units} stroke={stroke} />
           </>
         )}
-        {view.wind && (
-          <WindLegend
-            bearing={view.wind.bearing_deg}
-            speed={view.wind.speed}
-            box={box}
-            stroke={stroke}
-          />
-        )}
+        {view.wind && <WindLegend wind={view.wind} box={box} stroke={stroke} />}
       </svg>
+
+      {/* Resumen de zonas (REQ-224): lo que cuenta el mapa, por gravedad y a tamaño de sala.
+          Sobre la imagen y con fondo propio, porque una lista sin él se pierde en el
+          terreno. Enseña el 0 cuando no hay nada (REQ-194): «sin problemas» es un dato. */}
+      <div className="absolute bottom-3 left-3 max-h-[45%] max-w-[18rem] overflow-auto rounded-[9px] border border-vela-edge bg-vela-panel/95 px-2.5 py-1.5 shadow-sm">
+        <p className="text-xs font-semibold text-vela-dim">
+          Zonas con problema · {trouble.length}
+        </p>
+        {trouble.length === 0 ? (
+          <p className="text-sm text-vela-ink">Sin zonas con problema.</p>
+        ) : (
+          <ul className="mt-1 flex flex-col gap-1">
+            {trouble.map((p) => (
+              <li key={p.id} className="flex items-baseline gap-2 text-sm text-vela-ink">
+                <span
+                  aria-hidden
+                  className={`inline-block h-2 w-2 shrink-0 rounded-full ${
+                    p.level === 2 ? 'bg-vela-glow' : 'bg-vela-alert'
+                  }`}
+                />
+                {p.text}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
       {unlocated.length > 0 && (
-        <p className="absolute bottom-1 left-3 text-xs text-vela-warn">
+        <p className="absolute right-3 bottom-3 rounded bg-vela-panel/95 px-2 py-1 text-xs text-vela-warn">
           sin ubicar: {[...new Set(unlocated)].join(', ')}
         </p>
       )}

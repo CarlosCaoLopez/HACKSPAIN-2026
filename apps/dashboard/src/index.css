@@ -1,7 +1,7 @@
 @import 'tailwindcss';
 
 /* Tailwind v4: la config es CSS, no hay tailwind.config.js ni array `content`.
-   Se proyecta en una sala grande: fondo oscuro, texto legible a 10 metros, y el
+   Se proyecta en una sala grande: tema claro (SPEC-006), texto legible a 10 metros, y el
    rojo RESERVADO a REPLAN. Si algo más usa `vela-replan`, el banner deja de
    significar nada.
 
@@ -15,34 +15,86 @@
      warn    los avisos y los planes B: cortes, fallos, sin conexión, sin cubrir
      dim     el nivel *registro*: seq, source, contadores, metadatos */
 @theme {
-  --color-vela-bg: #0a0d12;
-  --color-vela-panel: #121821;
-  --color-vela-edge: #223041;
+  /* Tema claro del rediseño (SPEC-006 REQ-203). Los NOMBRES de token no cambian: el
+     resto del código sigue diciendo `bg-vela-panel` y solo cambia lo que significa. */
+  --color-vela-bg: #f4f5f7;
+  --color-vela-panel: #ffffff;
+  --color-vela-edge: #e4e6ea;
   /* El borde del panel de nivel 1 (REQ-196). El mapa es el nivel 1 y los otros cinco
      el 2: sin navegación que jerarquice, el borde es la única jerarquía que queda. */
-  --color-vela-edge-bright: #3d5470;
-  --color-vela-ink: #e6ecf3;
-  --color-vela-dim: #7d8da1;
-  --color-vela-accent: #38bdf8;
-  --color-vela-call: #a78bfa;
-  --color-vela-warn: #fbbf24;
-  --color-vela-replan: #ef4444;
+  --color-vela-edge-bright: #c9ced6;
+  --color-vela-ink: #15181d;
+  --color-vela-dim: #6b7280;
+  --color-vela-accent: #2563eb;
+  --color-vela-call: #7c3aed;
+  --color-vela-warn: #b45309;
+  --color-vela-warn-bg: #fffbeb;
+  --color-vela-replan: #e11d48;
   /* El par de la comparación de runs, y solo eso: un run peor no es una emergencia, es
      un dato, así que ninguno de los dos es el rojo del banner. */
-  --color-vela-good: #34d399;
+  --color-vela-good: #059669;
 
-  /* La rampa de peligro del mapa (REQ-199). Era literales `rgba()` dentro de
-     `map/layers.tsx`; aquí arriba es la única escala secuencial del dashboard, se
-     inspecciona de un vistazo y —lo que importa— `burning` y `vela-replan` se pueden
-     comparar sin abrir dos ficheros. Si a diez metros se confunden, el banner deja de
-     ser un acontecimiento: es la cuarta pregunta de la prueba del proyector. */
-  --color-vela-cell-at-risk: rgba(251, 191, 36, 0.18);
-  --color-vela-cell-burning: rgba(249, 115, 22, 0.55);
-  --color-vela-cell-burnt: rgba(120, 113, 108, 0.35);
-  --color-vela-cell-flooded: rgba(56, 189, 248, 0.3);
-  --color-vela-cell-dark: rgba(30, 41, 59, 0.6);
+  /* La rampa de peligro del mapa (REQ-199, enmendado por REQ-230). Ahora se pinta sobre
+     una imagen de satélite oscura, así que son tonos más vivos que sobre fondo liso. Aquí
+     arriba `burning` y `vela-replan` se pueden comparar sin abrir dos ficheros: si a diez
+     metros se confunden, el banner deja de ser un acontecimiento (REQ-229). */
+  --color-vela-cell-at-risk: rgba(251, 191, 36, 0.55);
+  --color-vela-cell-burning: rgba(249, 115, 22, 0.7);
+  --color-vela-cell-burnt: rgba(28, 25, 23, 0.6);
+  --color-vela-cell-flooded: rgba(56, 189, 248, 0.5);
+  --color-vela-cell-dark: rgba(15, 23, 42, 0.72);
+  /* Overlays del mapa que no son un estado de celda: resplandor del fuego, humo, estelas
+     de viento y halo de las etiquetas. Tokens y no literales por REQ-230. */
+  --color-vela-glow: #fb923c;
+  --color-vela-smoke: rgba(226, 232, 240, 0.55);
+  --color-vela-gust: rgba(255, 255, 255, 0.5);
+  --color-vela-halo: rgba(255, 255, 255, 0.92);
+  --color-vela-marker: #ffffff;
+  --color-vela-marker-edge: #15181d;
+  /* El fondo bajo la imagen (el mapa encaja con `meet` y sobra un margen) y las capas de
+     carretera y alerta. `alert` es un ámbar vivo pensado para leerse sobre satélite
+     oscuro: `warn` es el marrón del texto sobre blanco y ahí se apagaría. Ninguno es
+     `vela-replan`, que es del banner. */
+  --color-vela-ground: #2b3628;
+  --color-vela-road: #d1d5db;
+  --color-vela-road-shadow: rgba(10, 12, 10, 0.55);
+  --color-vela-alert: #fbbf24;
 
-  --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: var(--font-sans);
+}
+
+/* DM Sans autoalojada (REQ-204): el proyector de la sala puede no tener internet. */
+@font-face {
+  font-family: 'DM Sans';
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/dmsans-400.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'DM Sans';
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/dmsans-500.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'DM Sans';
+  font-weight: 600;
+  font-display: swap;
+  src: url('/fonts/dmsans-600.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'DM Sans';
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/dmsans-700.ttf') format('truetype');
+}
+
+/* Escala global (rem): 15 px en vez de 16. Baja un poco TODO lo que va en rem —cuerpo,
+   títulos, tarjetas— sin tocar cada clase. Enmienda REQ-197/205 de SPEC-006, pedida a ojo
+   tras verlo en pantalla: el texto de sala se veía grande de más. */
+html {
+  font-size: 15px;
 }
 
 html,
@@ -55,9 +107,112 @@ body {
   margin: 0;
   background-color: var(--color-vela-bg);
   color: var(--color-vela-ink);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   /* REQ-018: el scroll vive dentro de cada panel, nunca en el body. */
   overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-vela-edge-bright);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Fenómenos del mapa (SPEC-006 REQ-219…223). Todo es CSS sobre SVG: sin bucle
+   requestAnimationFrame en React ni setState por fotograma (REQ-227). Cada elemento
+   lleva su desfase en `animation-delay` para que no latan todos a la vez. */
+.vela-flame {
+  animation: vela-flicker 1.4s ease-in-out infinite;
+}
+@keyframes vela-flicker {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  45% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.6;
+  }
+}
+
+.vela-smoke {
+  /* Sin `fill-box` el `scale` se aplicaría desde el origen del SVG y el penacho saldría
+     disparado hacia la esquina en vez de crecer sobre su celda. */
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: vela-smoke 6s ease-out infinite;
+}
+/* Recorre `--dx/--dz` (a favor del viento) y se desvanece: no es una simulación, es un
+   penacho que sale de una celda que ya está ardiendo. */
+@keyframes vela-smoke {
+  from {
+    opacity: 0.7;
+    transform: translate(0, 0) scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--dx), var(--dz)) scale(1.8);
+  }
+}
+
+.vela-gust {
+  animation: vela-gust 3.2s linear infinite;
+}
+@keyframes vela-gust {
+  from {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  20%,
+  80% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--dx), var(--dz));
+  }
+}
+
+.vela-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: vela-pulse 1.8s ease-out infinite;
+}
+@keyframes vela-pulse {
+  from {
+    opacity: 0.9;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+.vela-ripple {
+  animation: vela-ripple 4s ease-in-out infinite;
+}
+@keyframes vela-ripple {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+/* El viento gira con una transición corta (REQ-222). */
+.vela-wind {
+  transition: transform 600ms ease-out;
 }
 
 /* Movimiento del mapa. Las posiciones llegan cada 2-4 segundos: sin interpolar, las
@@ -124,6 +279,12 @@ body {
    "reducir movimiento" activado sí. */
 @media (prefers-reduced-motion: reduce) {
   .vela-unit,
+  .vela-flame,
+  .vela-smoke,
+  .vela-gust,
+  .vela-pulse,
+  .vela-ripple,
+  .vela-wind,
   .vela-plan-enter,
   .vela-replan-enter,
   .vela-skeleton {

@@ -52,7 +52,7 @@ function CallCard({ call }: { call: Call }) {
   const fallida = call.ended != null && call.ended.outcome !== 'answered'
 
   return (
-    <li className="border border-vela-edge p-2">
+    <li className="rounded-[9px] border border-vela-edge p-2.5">
       <div className="flex items-baseline gap-2">
         <span className="tabular-nums text-vela-dim">{mmss(call.t_sim)}</span>
         {/* Las llamadas tienen su propio tono (REQ-200): el cian era suyo y de las

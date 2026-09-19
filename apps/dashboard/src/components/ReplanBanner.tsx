@@ -44,10 +44,10 @@ export function ReplanBanner({ events }: { events: Event[] }) {
       {visible && (
         <div
           key={replan.seq}
-          className="vela-replan-enter flex w-full items-baseline gap-3 border-l-4 border-vela-replan bg-vela-panel px-3 py-2"
+          className="vela-replan-enter flex w-full gap-4 h-11 items-center rounded-[9px] border border-l-4 border-vela-edge border-l-vela-replan bg-vela-panel px-4"
           role="status"
         >
-          <span className="text-lg font-bold tracking-widest text-vela-replan">REPLAN</span>
+          <span className="text-[15px] font-bold tracking-[0.18em] text-vela-replan">REPLAN</span>
           <span className="truncate text-xl text-vela-ink">{replan.reason}</span>
           <span className="ml-auto shrink-0 text-xs tabular-nums text-vela-dim">
             {replan.trigger} · {mmss(replan.t_sim)}

@@ -100,7 +100,7 @@ export function PriorityQueue({
   return (
     <Panel title="Cola de prioridad" count={assignments.length} note={criterion}>
       <div className="flex flex-col gap-3">
-        <blockquote className="border-l-2 border-vela-accent pl-2 text-base text-vela-ink">
+        <blockquote className="border-l-2 border-vela-accent pl-3 text-base leading-relaxed text-vela-ink">
           {policy.rationale}
         </blockquote>
 
@@ -113,9 +113,9 @@ export function PriorityQueue({
               .map(([name, weight]) => (
                 <li key={name} className="flex items-center gap-2 text-xs">
                   <span className="w-40 shrink-0 truncate text-vela-dim">{name}</span>
-                  <span className="h-1.5 flex-1 bg-vela-edge">
+                  <span className="h-1.5 flex-1 rounded-[3px] bg-vela-bg">
                     <span
-                      className="block h-full bg-vela-accent"
+                      className="block h-full rounded-[3px] bg-vela-accent"
                       style={{ width: `${Math.round(weight * 100)}%` }}
                     />
                   </span>
@@ -130,7 +130,7 @@ export function PriorityQueue({
             {policy.hard_constraints.map((constraint) => (
               <li
                 key={constraint}
-                className="border border-vela-edge px-1 text-xs text-vela-dim"
+                className="rounded-md border border-vela-edge px-2 py-0.5 text-xs text-vela-dim"
               >
                 {constraint}
               </li>
@@ -145,7 +145,7 @@ export function PriorityQueue({
             const to = assignment.route[assignment.route.length - 1]
             const target = `${assignment.unit_id}:${assignment.task_id}`
             return (
-              <li key={target} className="border border-vela-edge p-2">
+              <li key={target} className="rounded-[9px] border border-vela-edge p-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-vela-ink">
@@ -175,7 +175,7 @@ export function PriorityQueue({
                         type="button"
                         // h-8 = 32 px (REQ-148) y `text-sm` en caja baja (REQ-197): esto
                         // se pulsa en directo y la sala tiene que leer qué se ha pulsado.
-                        className="h-8 border border-vela-edge px-3 text-sm tracking-wide text-vela-ink hover:border-vela-accent hover:text-vela-accent disabled:opacity-40"
+                        className="h-8 rounded-[7px] border border-vela-edge px-3 text-[13px] text-vela-ink hover:border-vela-accent hover:text-vela-accent disabled:opacity-40"
                         disabled={pending.has(key)}
                         onClick={() =>
                           send(key, {
@@ -244,7 +244,7 @@ function AssertFact({
   const [value, setValue] = useState('')
 
   const input =
-    'h-8 flex-1 border border-vela-edge bg-vela-bg px-2 text-sm text-vela-ink placeholder:text-vela-dim'
+    'h-8 flex-1 rounded-[7px] border border-vela-edge bg-vela-bg px-2.5 text-[13px] text-vela-ink placeholder:text-vela-dim'
 
   return (
     <div className="border-t border-vela-edge pt-2">
@@ -278,7 +278,7 @@ function AssertFact({
         />
         <button
           type="submit"
-          className="h-8 border border-vela-edge px-3 text-sm tracking-wide text-vela-ink hover:border-vela-accent hover:text-vela-accent disabled:opacity-40"
+          className="h-8 rounded-[7px] border border-vela-edge px-3.5 text-[13px] text-vela-ink hover:border-vela-accent hover:text-vela-accent disabled:opacity-40"
           disabled={pending || !key.trim()}
         >
           {pending ? '…' : 'asertar'}

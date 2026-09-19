@@ -53,7 +53,7 @@ export function RunsPanel({ events, onClose }: { events: Event[]; onClose: () =>
         <button
           type="button"
           onClick={onClose}
-          className="ml-auto min-h-[2.5rem] rounded border border-vela-edge px-4 text-base text-vela-ink hover:border-vela-accent"
+          className="ml-auto min-h-[2.5rem] rounded-[9px] border border-vela-edge bg-vela-panel px-4 text-base text-vela-ink hover:border-vela-accent hover:text-vela-accent"
         >
           cerrar · Esc
         </button>
@@ -111,7 +111,7 @@ function Picker({
         value={value ?? ''}
         onChange={(e) => onChange(e.target.value)}
         // 2.5rem de alto: se pulsa con el ratón y se lee desde el fondo de la sala.
-        className="min-h-[2.5rem] rounded border border-vela-edge bg-vela-panel px-3 text-base text-vela-ink"
+        className="min-h-[2.5rem] rounded-[9px] border border-vela-edge bg-vela-panel px-3 text-base text-vela-ink"
       >
         {rows.map((r) => (
           <option key={r.run_id} value={r.run_id}>

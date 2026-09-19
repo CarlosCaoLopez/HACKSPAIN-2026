@@ -17,7 +17,7 @@ import { WhatChangedPanel } from './panels/WhatChangedPanel'
  *  REPLAN y de nada más, y esto no es una alarma — es una aclaración. */
 function Badge({ children }: { children: string }) {
   return (
-    <span className="rounded border border-vela-warn/40 px-2 py-0.5 text-xs text-vela-warn">
+    <span className="rounded-md border border-vela-warn/40 bg-vela-warn-bg px-2 py-0.5 text-xs font-medium text-vela-warn">
       {children}
     </span>
   )
@@ -52,12 +52,18 @@ export default function App() {
     // una ruta —no hay router y no hace falta uno para enseñar dos columnas—, y cerrado
     // no ocupa ni un píxel de la rejilla.
     <div className="relative grid h-screen grid-rows-[auto_auto_1fr] bg-vela-bg">
-      <header className="flex items-baseline gap-4 px-4 py-2">
-        <span className="text-lg font-bold tracking-widest text-vela-ink">VELA</span>
+      <header className="flex items-center gap-4 border-b border-vela-edge bg-vela-panel px-4 py-3">
+        {/* La marca del diseño: cuadrado oscuro con un punto blanco. */}
+        <span className="flex items-center gap-2.5">
+          <span className="flex h-[30px] w-[30px] items-center justify-center rounded-[9px] bg-vela-ink">
+            <span className="h-2.5 w-2.5 rounded-[3px] bg-vela-panel" />
+          </span>
+          <span className="text-xl font-bold tracking-[0.14em] text-vela-ink">VELA</span>
+        </span>
         {/* Estado, no promesa (REQ-198). Aquí estaba el eslogan, que es marketing en una
             pantalla sin sitio y que además digo yo en voz alta en el minuto 0. Lo que
             hace falta saber de un vistazo es qué escenario corre y si sigue vivo. */}
-        <span className="text-sm text-vela-dim">
+        <span className="text-[13px] text-vela-dim">
           {scenarioId ?? 'sin escenario'} · {finished ? 'run terminado' : 'run en curso'}
         </span>
         {health?.calls === 'simuladas' && <Badge>llamadas simuladas</Badge>}
@@ -77,10 +83,10 @@ export default function App() {
           type="button"
           onClick={() => setComparing(true)}
           // 2.5rem: se pulsa con el ratón en directo y se lee a diez metros (REQ-148).
-          className={`min-h-[2.5rem] rounded border px-3 text-sm ${
+          className={`min-h-[2.5rem] rounded-[9px] border bg-vela-panel px-4 text-sm ${
             finished
               ? 'border-vela-accent text-vela-accent'
-              : 'border-vela-edge text-vela-dim'
+              : 'border-vela-edge text-vela-dim hover:border-vela-edge-bright hover:text-vela-ink'
           }`}
         >
           runs
