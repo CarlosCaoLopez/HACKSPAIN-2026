@@ -124,6 +124,7 @@ def test_render_de_burning_y_burnt():
     fuego = Wildfire(spec(), seed=1)
     burning = fuego.render_commands(CellChange(cell_id="cell_1_2", state="burning", hazard="wildfire"))
     assert burning == [
+        "fill 4 65 8 7 73 11 air",       # se lleva por delante lo que hubiera
         "fill 4 64 8 7 64 11 netherrack",
         "fill 4 65 8 7 65 11 fire",
     ]

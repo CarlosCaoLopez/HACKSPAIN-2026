@@ -37,6 +37,10 @@ Cause = Literal["spread", "burnout", "extinguished", "inject", "at_risk"]
 """Las causas del catálogo. El sim es quien las conoce: nadie más sabe si un
 `burnt` lo puso el viento o una manguera."""
 
+CANOPY = 9
+"""Altura que despeja una celda al arder, en bloques. Cubre los árboles que
+planta `worldgen` con `place feature`."""
+
 BURN_DURATION_S = 45.0
 """Lo que una celda arde antes de quedar `burnt`. Deja frente móvil y cicatriz."""
 
@@ -363,6 +367,11 @@ class Wildfire(CellularHazard):
         y = self.ground_y
         if change.state == "burning":
             return [
+                # Lo que hubiera encima desaparece: sin esto el fuego pasa por
+                # debajo de los árboles y quedan en pie, verdes, en mitad de las
+                # llamas. Es lo que rompe la escena — un incendio que no quema la
+                # vegetación no se lee como un incendio.
+                f"fill {x1} {y + 1} {z1} {x2} {y + CANOPY} {z2} air",
                 f"fill {x1} {y} {z1} {x2} {y} {z2} netherrack",
                 f"fill {x1} {y + 1} {z1} {x2} {y + 1} {z2} fire",
             ]
