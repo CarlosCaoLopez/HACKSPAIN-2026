@@ -51,6 +51,10 @@ CALL_SOURCE_PREFIX = "call:"
 """`source` de un hecho que vino de una llamada en curso: `call:<session_id>`."""
 
 SIGNAL_UNIT_DISPATCHED = "unit_dispatched"
+PEOPLE_TASKS = frozenset({"evacuate", "rescue"})
+RESOLVE_GAP_S = 5.0
+"""Cadencia mínima (segundos de sim) entre re-solves por altas de extinción."""
+"""Tareas que van hacia personas: las únicas que se cuentan como "ya va" por teléfono."""
 
 
 SUBSCRIBED: tuple[EventType, ...] = tuple(
@@ -68,10 +72,21 @@ class Core:
         self._state = belief.initial_state(self.run_id, scenario)
         self._rules = memory.load_rules()  # memoria entre runs; vacía en el run 1
         self._plan: Plan | None = None
-        self._last_actions: dict[str, str] = {}  # unit_id -> task_id ya ordenado
+        self._last_actions: dict[
+            str, tuple[str, tuple[str, ...]]
+        ] = {}  # unit_id -> (task_id, ruta) ya ordenados
         self._vetoes: dict[tuple[str, str], float] = {}  # (unit, task) -> expiry t_sim
         self._action_seq = 0
         self._called: set[str] = set()  # task_ids con `call.requested` ya emitido
+        # call_id → (unit_id, task_id, ruta) de la última señal `unit_dispatched`:
+        # tres hechos de una misma llamada no producen tres veces la misma frase.
+        self._signalled: dict[str, tuple[str, str, str]] = {}
+        self._pending_resolve: list[Task] = []
+        self._burst: tuple[str, float] | None = None  # (source, t_sim) del último replan
+        self._last_resolve_t = -1e9
+        # call_id → (poi_id, hecho): la llamada nombra un POI cuya tarea sigue sin
+        # unidad; se le dirá "ya va" con el primer plan que la asigne.
+        self._awaiting: dict[str, tuple[str, Event]] = {}
         # Violaciones duras que el plan vigente ya traía cuando se adoptó: el
         # planner tuvo sus dos vueltas y no pudo con ellas. Verlas otra vez en el
         # siguiente evento no es novedad, y no vuelve a llamar al modelo.
@@ -121,10 +136,34 @@ class Core:
         criticals = self._critical_facts_of(ev)
 
         flag, reason = should_replan(value, len(hard), criticals)
-        if flag:
-            await self.replan(reason, _trigger(hard, criticals, value), ev)
+        trigger = _trigger(hard, criticals, value) if flag else ""
+        if flag and trigger == "critical_fact" and self._same_burst(ev):
+            # Un `report_fact` publica tres hechos seguidos (arista, causa, inmóviles)
+            # desde la misma llamada y el mismo `t_sim`: el modelo ya replanificó con
+            # el primero; los demás solo mueven al solver (que sí ve la tarea nueva).
+            await self.resolve(changed, ev, reason=f"{reason} (misma llamada)")
+            self._pending_resolve = []
+        elif flag:
+            await self.replan(reason, trigger, ev)
+            self._burst = (ev.source, self._state.t_sim)
+            self._pending_resolve = []
         elif changed:
-            await self.resolve(changed, ev)
+            self._pending_resolve.extend(changed)
+            if self._resolve_due(changed):
+                await self.resolve(self._pending_resolve, ev)
+                self._pending_resolve = []
+                self._last_resolve_t = self._state.t_sim
+
+    def _same_burst(self, ev: Event) -> bool:
+        return self._burst == (ev.source, self._state.t_sim)
+
+    def _resolve_due(self, changed: list[Task]) -> bool:
+        """Cada celda que prende es una tarea `extinguish` nueva: re-resolver por cada
+        una era un plan por segundo (141 en 142 s de sim). Las altas de extinción se
+        agrupan y se resuelven cada `RESOLVE_GAP_S`; un cierre, una tarea hacia
+        personas o el primer alta tras un silencio van al momento."""
+        urgent = any(t.done or t.kind in PEOPLE_TASKS for t in changed)
+        return urgent or self._state.t_sim - self._last_resolve_t >= RESOLVE_GAP_S
 
     async def replan(self, reason: str, trigger: str, cause: Event) -> Plan:
         """Planner → solver → verifiers, máximo dos vueltas. Siempre devuelve un
@@ -152,6 +191,10 @@ class Core:
                 await self._emit(EventType.PLAN_VIOLATION, v, cause)
             if not viols:
                 break
+            if all(v.message in self._residual for v in viols):
+                # Solo lo que ya no tenía arreglo la última vez (Pueblo B sin unidad
+                # que dejar): otra vuelta de crítica son 2 s de modelo para nada.
+                break
             if _round == MAX_REPLAN_ROUNDS - 1:
                 # Vueltas agotadas: plan neutro, siempre factible.
                 plan, _ = self._solve(neutral_policy(), vetoes)
@@ -168,7 +211,9 @@ class Core:
         }
         return plan
 
-    async def resolve(self, changed: list[Task], cause: Event) -> Plan:
+    async def resolve(
+        self, changed: list[Task], cause: Event, reason: str | None = None
+    ) -> Plan:
         """Solo el solver, con la política vigente: las tareas cambiaron (nace una,
         se cierra otra) pero no hay bandera, así que no se llama al modelo. Sin
         esto, una unidad que acaba su tarea se queda parada hasta el siguiente
@@ -177,7 +222,7 @@ class Core:
         ids = ", ".join(t.id + (" ✓" if t.done else "") for t in changed)
         await self._emit(
             EventType.PLAN_REPLAN_STARTED,
-            ReplanStarted(reason=f"tareas: {ids}", trigger="tasks_changed"),
+            ReplanStarted(reason=reason or f"tareas: {ids}", trigger="tasks_changed"),
             cause,
         )
         plan, unknown = self._solve(self._plan.policy, self._active_vetoes())
@@ -281,13 +326,16 @@ class Core:
         await self._emit_actions(plan, cause)
         await self._emit_calls(plan, cause)
         await self._emit_signal(plan, cause)
+        await self._emit_awaited_signals(plan)
 
     async def _emit_actions(self, plan: Plan, cause: Event) -> None:
-        """Un `goto` por asignación nueva o cambiada. Diffear evita reenviar la misma
-        orden en cada replan."""
-        current = {a.unit_id: a.task_id for a in plan.assignments}
+        """Un `goto` por asignación nueva o cambiada: cambia la tarea **o la ruta**.
+        Diffear evita reenviar la misma orden en cada replan; pero una arista cortada
+        por un hecho de llamada cambia la ruta sin cambiar la tarea, y sin reenviar
+        el `goto` el sim sigue por la pista cortada (visto en la integración 1)."""
+        current = {a.unit_id: (a.task_id, tuple(a.route)) for a in plan.assignments}
         for a in plan.assignments:
-            if self._last_actions.get(a.unit_id) == a.task_id:
+            if self._last_actions.get(a.unit_id) == current[a.unit_id]:
                 continue
             self._action_seq += 1
             await self._emit(
@@ -338,13 +386,38 @@ class Core:
         if not cause.source.startswith(CALL_SOURCE_PREFIX):
             return
         call_id = cause.source.removeprefix(CALL_SOURCE_PREFIX)
-        a = self._assignment_for_fact(plan, str(cause.payload.get("key", "")))
+        key = str(cause.payload.get("key", ""))
+        a = self._assignment_for_fact(plan, key)
         if a is None:
+            poi_id = _poi_of_key(key)
+            if poi_id is not None:
+                # Su tarea existe pero nadie la sirve todavía (la única ambulancia
+                # está acabando otra cosa): se le contará con el plan que la asigne.
+                self._awaiting[call_id] = (poi_id, cause)
             log.info("replan por la llamada %s sin asignación que contar", call_id)
             return
+        self._awaiting.pop(call_id, None)
+        await self._signal_assignment(call_id, a, cause)
+
+    async def _emit_awaited_signals(self, plan: Plan) -> None:
+        """Llamadas que esperan a que su POI tenga unidad: con este plan, si la tiene,
+        salen. `causes` sigue apuntando al hecho de la llamada."""
+        for call_id, (poi_id, fact_ev) in list(self._awaiting.items()):
+            a = self._assignment_for_poi(plan, poi_id)
+            if a is None:
+                continue
+            del self._awaiting[call_id]
+            await self._signal_assignment(call_id, a, fact_ev)
+
+    async def _signal_assignment(self, call_id: str, a: Assignment, cause: Event) -> None:
         unit = self._state.units.get(a.unit_id)
         if unit is None:
             return
+        route = calls.route_name(a.route, self._state.roads)
+        novelty = (a.unit_id, a.task_id, route)
+        if self._signalled.get(call_id) == novelty:
+            return  # ya se le dijo: otro hecho de la misma llamada no lo repite
+        self._signalled[call_id] = novelty
         await self._emit(
             EventType.CALL_SIGNAL_REQUESTED,
             SignalRequested(
@@ -352,7 +425,7 @@ class Core:
                 key=SIGNAL_UNIT_DISPATCHED,
                 payload={
                     "unit": calls.unit_name(unit),
-                    "route": calls.route_name(a.route, self._state.roads),
+                    "route": route,
                     "eta_s": int(a.eta_s),
                 },
             ),
@@ -360,17 +433,31 @@ class Core:
         )
 
     def _assignment_for_fact(self, plan: Plan, key: str) -> Assignment | None:
-        """La asignación que sirve al POI del hecho (`poi:<id>:...`); si no hay o el
-        hecho es de otra cosa (una arista), la de menor ETA."""
+        """La asignación que se le cuenta al vecino: la que sirve al POI del hecho
+        (`poi:<id>:...`) aunque la unidad ya esté allí; si el hecho es de otra cosa
+        (una arista cortada), la unidad en marcha hacia personas (evacuate/rescue)
+        con menor ETA, que es la que ha cambiado de pista. Un camión parado en su
+        celda de extinción (ETA 0) no es "ya va", y no se cuenta."""
         if not plan.assignments:
             return None
-        seg = key.split(":")
-        if len(seg) == 3 and seg[0] == "poi":
-            for a in plan.assignments:
-                task = self._state.tasks.get(a.task_id)
-                if task is not None and task.target_poi == seg[1]:
-                    return a
-        return min(plan.assignments, key=lambda a: a.eta_s)
+        poi_id = _poi_of_key(key)
+        if poi_id is not None:
+            return self._assignment_for_poi(plan, poi_id)
+        moving = [
+            a
+            for a in plan.assignments
+            if a.eta_s > 0
+            and (t := self._state.tasks.get(a.task_id)) is not None
+            and t.kind in PEOPLE_TASKS
+        ]
+        return min(moving, key=lambda a: a.eta_s) if moving else None
+
+    def _assignment_for_poi(self, plan: Plan, poi_id: str) -> Assignment | None:
+        for a in plan.assignments:
+            task = self._state.tasks.get(a.task_id)
+            if task is not None and task.target_poi == poi_id:
+                return a
+        return None
 
     async def _emit(self, etype: EventType, payload, cause: Event) -> Event:
         """Envuelve un payload Pydantic en un `Event` de source=core y lo publica.
@@ -388,6 +475,12 @@ class Core:
         )
         await self.bus.publish(ev)
         return ev
+
+
+def _poi_of_key(key: str) -> str | None:
+    """`poi:<id>:<attr>` → `<id>`; cualquier otra clave (arista, viento) → None."""
+    seg = key.split(":")
+    return seg[1] if len(seg) == 3 and seg[0] == "poi" else None
 
 
 def _trigger(hard: list[Violation], criticals: list[Fact], value: float) -> str:

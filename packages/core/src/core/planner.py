@@ -98,13 +98,9 @@ def _summarize(state: WorldState) -> str:
 
     lines.append("POIs:")
     for p in state.pois.values():
-        lines.append(
-            f"  {p.id} '{p.name}' {p.kind} cobertura_mínima={p.min_coverage}"
-        )
+        lines.append(f"  {p.id} '{p.name}' {p.kind} cobertura_mínima={p.min_coverage}")
 
-    hot = [
-        c.id for c in state.cells.values() if c.state in ("burning", "at_risk")
-    ]
+    hot = [c.id for c in state.cells.values() if c.state in ("burning", "at_risk")]
     if hot:
         lines.append("Celdas en llamas/en riesgo: " + ", ".join(sorted(hot)))
 
@@ -132,9 +128,8 @@ def render_prompt(state: WorldState, reason: str, rules: str) -> str:
 def _render_critique(state: WorldState, violations: list[Violation]) -> str:
     template = (_PROMPTS / "replan_critique.md").read_text()
     viol_text = "\n".join(f"- {v.message}" for v in violations) or "(ninguna)"
-    return (
-        template.replace("<<STATE>>", _summarize(state))
-        .replace("<<VIOLATIONS>>", viol_text)
+    return template.replace("<<STATE>>", _summarize(state)).replace(
+        "<<VIOLATIONS>>", viol_text
     )
 
 
@@ -149,6 +144,9 @@ async def _call(prompt: str) -> Policy:
             client.chat.completions.create(
                 model=MODEL,
                 max_completion_tokens=MAX_TOKENS,
+                # gpt-5.6-luna rechaza tools con razonamiento en chat.completions
+                # (400: «use /v1/responses or set reasoning_effort to 'none'»).
+                reasoning_effort="none",
                 tools=[_POLICY_TOOL],
                 tool_choice=_TOOL_CHOICE,
                 messages=[{"role": "user", "content": prompt}],

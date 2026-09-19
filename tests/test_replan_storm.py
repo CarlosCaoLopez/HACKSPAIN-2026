@@ -1,11 +1,8 @@
+# ruff: noqa: F811 — los fixtures importados se vuelven a nombrar como parámetros de test
 """Una violación dura que el planner no puede resolver no dispara un replan por
 evento. El plan la trae de fábrica (residual) y el siguiente tick no es novedad."""
 
-from contracts import bus
-from contracts.events import EventType
-from contracts.plan import Violation
-from core import loop
-from tests.test_core_tasks import (  # noqa: F401 - fixtures compartidos
+from test_core_tasks import (  # noqa: F401 - fixtures compartidos (rootdir tests/ en sys.path)
     _ev,
     _ignite,
     _of,
@@ -13,6 +10,11 @@ from tests.test_core_tasks import (  # noqa: F401 - fixtures compartidos
     fixed_planner,
     journal,
 )
+
+from contracts import bus
+from contracts.events import EventType
+from contracts.plan import Violation
+from core import loop
 
 
 def _stuck_verify(state, plan, graph):

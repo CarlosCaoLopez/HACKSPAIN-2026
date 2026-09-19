@@ -62,7 +62,11 @@ def route_feasible(
                     message=f"ruta {x}→{y} cortada (unidad {a.unit_id})",
                     involved=[a.unit_id, x, y],
                 )
-        if graph is not None and _route_crosses_burning(a.route, state, graph):
+        task = state.tasks.get(a.task_id)
+        skip_last = task is not None and task.kind == "extinguish"
+        if graph is not None and _route_crosses_burning(
+            a.route, state, graph, skip_last=skip_last
+        ):
             return Violation(
                 verifier="route_feasible",
                 severity="hard",
@@ -75,7 +79,13 @@ def route_feasible(
 def coverage_maintained(
     state: WorldState, plan: Plan, graph: RoadGraph | None = None
 ) -> Violation | None:
-    """Ningún POI crítico se queda por debajo de su `min_coverage`."""
+    """Ningún POI crítico se queda por debajo de su `min_coverage`.
+
+    `min_coverage` son "unidades mínimas que no se pueden retirar" (`contracts.world`):
+    la violación es que el plan **retire** cobertura que existe, no que un POI al que
+    nunca llegó nadie siga sin nadie. Sin esta distinción, Pueblo A y B (cobertura 1,
+    ninguna unidad estacionada) violaban en cada plan y cada violación era un replan
+    con modelo y su crítica: el core iba 16 s de sim por detrás del sim."""
     # Objetivo (POI) de cada tarea asignada, para saber a dónde se lleva cada unidad.
     task_poi = {
         a.unit_id: state.tasks[a.task_id].target_poi
@@ -87,8 +97,10 @@ def coverage_maintained(
         if poi.min_coverage <= 0:
             continue
         remaining = 0
+        present = 0
         for u in state.units.values():
             if _unit_at_poi(u, poi, graph):
+                present += 1
                 # Sigue cubriendo salvo que el plan la mande a otro POI.
                 dest = task_poi.get(u.id)
                 if dest is None or dest == poi.id:
@@ -96,6 +108,8 @@ def coverage_maintained(
             elif task_poi.get(u.id) == poi.id:
                 # Unidad que el plan trae a este POI.
                 remaining += 1
+        if present < poi.min_coverage:
+            continue  # no hay cobertura que retirar: no es cosa de este plan
         if remaining < poi.min_coverage:
             return Violation(
                 verifier="coverage_maintained",
@@ -130,9 +144,7 @@ def civilian_reachable(
 ) -> Violation | None:
     """Cada grupo de civiles tiene al menos una ruta viva al refugio asignado."""
     adj = _live_adj(state)
-    shelters = {
-        p.waypoint_id for p in state.pois.values() if p.kind == "shelter"
-    }
+    shelters = {p.waypoint_id for p in state.pois.values() if p.kind == "shelter"}
     if not shelters:
         return None
 
