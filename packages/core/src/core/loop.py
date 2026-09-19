@@ -644,7 +644,9 @@ class Core:
                 and neighbor_evac.severity == "critical"
             ):
                 continue  # el fuego también le llega: lo suyo es una orden, no un aviso
-            to = settings.judge_phone or poi.contact_phone
+            # `NEIGHBOR_PHONE` antes que `JUDGE_PHONE`: en el ensayo las dos llamadas
+            # iban al mismo móvil y se pisaban. Quien está a salvo tiene su número.
+            to = settings.neighbor_phone or settings.judge_phone or poi.contact_phone
             if not to:
                 continue
             self._neighbor_called.add(pair)

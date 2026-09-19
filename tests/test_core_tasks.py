@@ -103,6 +103,9 @@ def journal(monkeypatch) -> list[Event]:
     bus.reset()
     bus.configure(run_id=RUN, writer=events.append)
     monkeypatch.setattr(settings, "judge_phone", JUDGE)
+    # Los números salen del test, no del `.env` de quien lo corre: el de al lado tiene
+    # otro `NEIGHBOR_PHONE` y el test no puede depender de eso.
+    monkeypatch.setattr(settings, "neighbor_phone", "")
     yield events
     bus.reset()
 
@@ -429,6 +432,7 @@ async def test_evacuating_one_village_alerts_the_other(
     llegarle gente. No es la orden de evacuación, así que va a su propio número, no
     al de `JUDGE_PHONE`."""
     monkeypatch.setattr(settings, "judge_phone", "")
+    monkeypatch.setattr(settings, "neighbor_phone", "")  # sin overrides: manda el POI
     core = loop.Core(bus, _scenario_two_villages())
     await _ignite(core)
 
@@ -470,6 +474,27 @@ async def test_evacuating_one_village_alerts_the_other(
         if e.payload["intent"] == "neighbor_alert"
     ]
     assert len(reqs_after) == 1
+
+
+async def test_the_safe_village_has_its_own_number(
+    journal, fixed_planner, monkeypatch
+) -> None:
+    """Las dos llamadas salen a la vez: con un solo número se pisaban en el mismo
+    móvil. `NEIGHBOR_PHONE` es del papel, no del pueblo — a salvo está uno u otro
+    según el viento."""
+    monkeypatch.setattr(settings, "judge_phone", JUDGE)
+    monkeypatch.setattr(settings, "neighbor_phone", "+34638383503")
+    core = loop.Core(bus, _scenario_two_villages())
+    await _ignite(core)
+
+    reqs = [
+        CallRequest.model_validate(e.payload)
+        for e in _of(journal, EventType.CALL_REQUESTED)
+    ]
+    evac = next(r for r in reqs if r.intent == "evacuation_order")
+    alert = next(r for r in reqs if r.intent == "neighbor_alert")
+    assert evac.to == JUDGE  # el que arde, al número de la demo
+    assert alert.to == "+34638383503"  # el que está a salvo, al suyo
 
 
 async def test_both_villages_burning_does_not_alert_each_other(

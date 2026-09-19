@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     vela_no_jev: bool = False  # P3 · fuerza el plan B: fenic con Literal, sin bucle
     happyrobot_webcall_url: str = ""  # P3/P4: enlace de la web call del workflow entrante
     judge_phone: str = ""
+    # El teléfono del pueblo que NO está en peligro: el que recibe el aviso de que
+    # pueden llegarle vecinos del otro. Es por papel, no por pueblo (cuál está a salvo
+    # cambia con el viento). Sin él, ese aviso cae en `judge_phone` como el resto.
+    neighbor_phone: str = ""
     # P3 · Telegram: el «dónde» exacto tras la llamada. Sin token, canal ausente.
     telegram_bot_token: str = ""
     telegram_secret_token: str = ""  # `X-Telegram-Bot-Api-Secret-Token` del setWebhook
