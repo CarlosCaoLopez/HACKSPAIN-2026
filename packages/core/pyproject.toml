@@ -5,14 +5,17 @@ description = "P1 · belief, planner, solver, verifiers, divergence."
 requires-python = "==3.12.*"
 dependencies = [
     "contracts",
+    "journal",
     "scipy>=1.14",
     "numpy>=2",
     "fenic>=0.1",
     "anthropic>=0.40",
+    "openai>=3",
 ]
 
 [tool.uv.sources]
 contracts = { workspace = true }
+journal = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

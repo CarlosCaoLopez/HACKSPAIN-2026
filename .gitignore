@@ -43,3 +43,6 @@ infra/server/version_history.json
 # La demo es un valle en el overworld. Estos dos no se usan jamás.
 infra/server/world_nether/
 infra/server/world_the_end/
+
+# Notas de planificación personales de Carlos
+docs/carlos/
