@@ -36,11 +36,24 @@ from contracts.world import POI, Cell, Task, Unit, WorldState
 
 INFEASIBLE = float("inf")
 
-UNIT_SPEED_MPS = 8.0
+UNIT_SPEED_MPS = 4.0
 """Velocidad plana para pasar de metros de ruta a `eta_s`. No es física, es un
-orden de magnitud estable para que `response_time` compare peras con peras."""
+orden de magnitud estable para que `response_time` compare peras con peras. Va
+igualada a `sim.runner.DEFAULT_SPEED_MPS` (4 m/s): el `eta_s` se le dice al vecino
+por teléfono («llega en 33 s») y con 8 m/s la ambulancia tardaba el doble."""
 
 WEIGHT_DISCOUNT = 0.35
+
+SEVERITY_FACTOR: dict[str, float] = {
+    "critical": 0.25,
+    "high": 0.5,
+    "medium": 1.0,
+    "low": 1.5,
+}
+"""Multiplicador del coste por `Task.severity`. Sin él, dejar una tarea sin cubrir es
+gratis para la asignación 1:1 y la ambulancia se quedaba en una evacuación de mobiles
+con tres inmóviles esperando en el molino: un rescate crítico tiene que ganar a una
+evacuación `high` aunque esté algo más lejos."""
 """Cada peso pertinente abarata la tarea multiplicando el coste por este factor.
 Menor = el LLM manda más. El solver sigue siendo quien asigna."""
 
@@ -187,7 +200,7 @@ def _is_windward(state: WorldState, task: Task) -> bool:
 def _weighted_cost(base: float, state: WorldState, task: Task, policy: Policy) -> float:
     """Aplica los pesos del catálogo que abaratan esta tarea. Peso desconocido se
     ignora aquí (lo caza `make check` contra los prompts, no el solver en runtime)."""
-    cost = base
+    cost = base * SEVERITY_FACTOR.get(task.severity, 1.0)
     civs = [c for c in state.civilians.values() if c.poi_id == task.target_poi]
     poi = state.pois.get(task.target_poi) if task.target_poi else None
 
@@ -293,16 +306,20 @@ def apply_hard_constraints(
 
         if name == "no_unit_into_burning_cell":
             for i, _u in enumerate(units):
-                for j, _t in enumerate(tasks):
+                for j, task in enumerate(tasks):
                     route = routes[i][j]
-                    if route and _route_crosses_burning(route, state, graph):
+                    if route and _route_crosses_burning(
+                        route, state, graph, skip_last=task.kind == "extinguish"
+                    ):
                         matrix[i][j] = INFEASIBLE
 
         elif name == "no_civilian_route_through":
             (wp_id,) = args
             for i, _u in enumerate(units):
                 for j, task in enumerate(tasks):
-                    if task.kind == "evacuate" and wp_id in routes[i][j]:
+                    # `[1:]`: el primer waypoint es donde YA está la unidad; salir de
+                    # él no es "pasar por" él.
+                    if task.kind == "evacuate" and wp_id in routes[i][j][1:]:
                         matrix[i][j] = INFEASIBLE
 
         # `hospital_min_coverage:n` y `reserve_capability:cap:n` son restricciones de
@@ -312,8 +329,16 @@ def apply_hard_constraints(
     return violations
 
 
-def _route_crosses_burning(route: list[str], state: WorldState, graph: RoadGraph) -> bool:
-    for wid in route:
+def _route_crosses_burning(
+    route: list[str], state: WorldState, graph: RoadGraph, skip_last: bool = False
+) -> bool:
+    """¿Entra la ruta en una celda en llamas? El primer waypoint no cuenta: es donde la
+    unidad ya está, y si el fuego le llega, salir de ahí es justo lo que hay que poder
+    hacer (con el origen contando, un camión alcanzado por el frente no podía ir a
+    ningún sitio y el plan salía vacío). Con `skip_last`, tampoco el destino: una
+    tarea `extinguish` apunta por definición a la celda que arde."""
+    body = route[1:-1] if skip_last else route[1:]
+    for wid in body:
         if wid not in graph.coords:
             continue
         wx, wz = graph.coords[wid]

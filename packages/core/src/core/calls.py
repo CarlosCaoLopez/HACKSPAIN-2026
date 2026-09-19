@@ -53,14 +53,23 @@ def unit_name(unit: Unit) -> str:
 
 def route_name(route: list[str], roads: dict[str, RoadEdge] | None = None) -> str:
     """El nombre que se dice por teléfono. Si la ruta pasa por el desvío norte o sur
-    (waypoints con `nor`/`sur`), "pista norte"/"pista sur", decidido por el tramo más
-    cercano al destino. Si no, los ids de las aristas de la ruta, unidos."""
-    for wp in reversed(route):
-        low = wp.lower()
-        if "sur" in low:
-            return "pista sur"
-        if "nor" in low:
-            return "pista norte"
+    (waypoints con `nor`/`sur`), "pista norte"/"pista sur": la pista por la que se
+    recorren más waypoints, sin contar el de salida (la unidad puede estar parada en
+    una pista cortada y salir por la otra; al molino se llega por la norte y Pueblo A
+    aunque su waypoint sea `wp_sur_02`). Empate: el tramo más cercano al destino. Si
+    no, los ids de las aristas de la ruta, unidos."""
+    hops = route[1:] if len(route) > 1 else route
+    sur = sum("sur" in wp.lower() for wp in hops)
+    nor = sum("nor" in wp.lower() for wp in hops)
+    if sur or nor:
+        if sur != nor:
+            return "pista sur" if sur > nor else "pista norte"
+        for wp in reversed(hops):
+            low = wp.lower()
+            if "sur" in low:
+                return "pista sur"
+            if "nor" in low:
+                return "pista norte"
     if len(route) < 2:
         return route[0] if route else ""
     return ", ".join(_edge_id(a, b, roads) for a, b in pairwise(route))

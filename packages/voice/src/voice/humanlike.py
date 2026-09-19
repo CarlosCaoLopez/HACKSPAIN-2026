@@ -79,6 +79,14 @@ SYSTEM_PROMPT = (
     "carretera está cortada, y que se sienta acompañada hasta que llegue ayuda."
 )
 
+DISPATCH_PROMPT = SYSTEM_PROMPT + (
+    " Estás dando una noticia concreta: la unidad que va, la pista por la que va y "
+    "cuándo llega, tal como están en el borrador, se dicen tal cual y no se "
+    "sustituyen por «los equipos ya están avisados». Puedes cambiar el tono, no los datos."
+)
+"""`foresee` refinaba «Ya va la ambulancia por la pista norte, 33 s» en «los equipos
+ya han sido avisados» (integración 2): el dato es lo que tranquiliza, se conserva."""
+
 RISK_RANK = {"low": 0.2, "medium": 0.5, "high": 0.85}
 
 
@@ -439,6 +447,8 @@ def draft_for(key: str, payload: dict) -> str:
         unit = payload.get("unit", "una unidad")
         route = payload.get("route", "la ruta alternativa")
         eta = int(payload.get("eta_s") or 0)
+        if eta <= 0:
+            return f"Ya está llegando {unit} por {route}. No se mueva de donde está."
         m, s = divmod(eta, 60)
         when = f"{m} min {s} s" if m else f"{s} segundos"
         return f"Ya va {unit} por {route}, llega en {when}. No se mueva de donde está."
@@ -780,9 +790,15 @@ class ConversationMonitor:
         t0 = time.perf_counter()
         draft = draft_for(key, payload)
         message = draft
+        prompt = DISPATCH_PROMPT if key == "unit_dispatched" else SYSTEM_PROMPT
         try:
             res = await asyncio.wait_for(
-                self.hl.foresee(self.transcript_turns(), draft, subject_name=CALLER_NAME),
+                self.hl.foresee(
+                    self.transcript_turns(),
+                    draft,
+                    system_prompt=prompt,
+                    subject_name=CALLER_NAME,
+                ),
                 FORESEE_HOT_S,
             )
         except TimeoutError:

@@ -10,6 +10,7 @@ import logging
 import pytest
 
 from contracts import bus
+from contracts.calls import Fact
 from contracts.events import (
     ActionRequested,
     CallRequest,
@@ -21,7 +22,7 @@ from contracts.events import (
 from contracts.plan import UNKNOWN_CONSTRAINT, Policy
 from contracts.scenario import HazardSpec, Scenario, Waypoint
 from contracts.settings import settings
-from contracts.world import POI, CivilianGroup, RoadEdge, Unit, Wind, WorldState
+from contracts.world import POI, Cell, CivilianGroup, RoadEdge, Unit, Wind, WorldState
 from core import belief, calls, loop, planner, solver, tasks
 
 RUN = "run_test"
@@ -503,3 +504,298 @@ def test_route_and_unit_names() -> None:
         calls.unit_name(Unit(id="unit_ambulance", kind="ambulance", x=0, z=0))
         == "ambulancia"
     )
+
+
+# --- lo que se le cuenta al vecino -----------------------------------------------
+
+
+def test_route_name_is_the_track_travelled_not_the_last_waypoint() -> None:
+    """Al molino (`wp_sur_02`) se llega por la pista norte y Pueblo A cuando la sur
+    está cortada; y una unidad parada en la sur que sale por la norte va "por la
+    norte"."""
+    assert (
+        calls.route_name(
+            ["wp_cruce", "wp_nor_01", "wp_nor_02", "wp_pueblo_a", "wp_sur_02"]
+        )
+        == "pista norte"
+    )
+    assert (
+        calls.route_name(
+            ["wp_sur_01", "wp_cruce", "wp_nor_01", "wp_nor_02", "wp_pueblo_a"]
+        )
+        == "pista norte"
+    )
+    assert calls.route_name(["wp_cruce", "wp_sur_01", "wp_sur_02"]) == "pista sur"
+    assert calls.route_name(["wp_sur_01"]) == "pista sur"  # ya está en la pista
+
+
+async def test_three_facts_of_one_call_signal_once(journal, fixed_planner) -> None:
+    """Un `report_fact` publica varios hechos seguidos (arista cortada, causa, inmóviles).
+    La misma unidad por la misma pista se dice una vez, no una por hecho."""
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    keys = [
+        ("road:wp_cruce-wp_sur_01:cut", True),
+        ("road:wp_cruce-wp_sur_01:cause", "árbol caído"),
+        ("poi:poi_pueblo_a:immobile", 3),
+    ]
+    for key, value in keys:
+        fact = _ev(
+            EventType.WORLD_FACT_ASSERTED,
+            {
+                "key": key,
+                "value": value,
+                "confidence": 0.9,
+                "source": "call:sess_9",
+                "severity": "critical",
+                "kind": "observed",
+            },
+            source="call:sess_9",
+            t_sim=50.0,
+        )
+        await bus.publish(fact)
+        await core.on_event(fact)
+    sigs = [
+        SignalRequested.model_validate(e.payload)
+        for e in _of(journal, EventType.CALL_SIGNAL_REQUESTED)
+    ]
+    assert len(sigs) == 1, [s.payload for s in sigs]
+    assert sigs[0].payload["unit"] == "ambulancia"
+    assert sigs[0].payload["route"] == "pista norte"  # la sur está cortada
+    assert sigs[0].payload["eta_s"] > 0
+
+
+def test_severity_weighs_in_the_cost() -> None:
+    """A igual distancia, una tarea `critical` cuesta la mitad que una `high` y una
+    cuarta parte que una `medium`: dejar sin cubrir lo grave deja de ser gratis."""
+    sc = _scenario()
+    sc = sc.model_copy(
+        update={
+            "pois": sc.pois
+            + [
+                POI(
+                    id="poi_molino",
+                    name="Molino",
+                    kind="landmark",
+                    x=60,
+                    z=40,
+                    waypoint_id="wp_sur_01",
+                )
+            ],
+        }
+    )
+    graph = solver.RoadGraph.from_scenario(sc)
+    st = belief.initial_state(RUN, sc)
+    st = belief.apply(
+        st,
+        _ev(EventType.WORLD_FIRE_DETECTED, {"cell_id": "cell_5_0", "hazard": "wildfire"}),
+    )
+    st = belief.apply_fact(
+        st,
+        Fact(
+            key="poi:poi_molino:immobile",
+            value=3,
+            confidence=0.9,
+            source="call:sess_1",
+            severity="critical",
+            kind="observed",
+            t_sim=50.0,
+        ),
+    )
+    st = st.model_copy(update={"tasks": {t.id: t for t in tasks.sync(st, graph)}})
+    rescue = st.tasks["task_rescue_poi_molino"]
+    assert rescue.severity == "critical"
+    policy = planner.neutral_policy()
+    crit = solver._weighted_cost(100.0, st, rescue, policy)
+    high = solver._weighted_cost(
+        100.0, st, rescue.model_copy(update={"severity": "high"}), policy
+    )
+    med = solver._weighted_cost(
+        100.0, st, rescue.model_copy(update={"severity": "medium"}), policy
+    )
+    assert crit == 25.0 and high == 50.0 and med == 100.0
+
+
+async def test_signal_waits_until_the_pois_task_is_assigned(
+    journal, fixed_planner
+) -> None:
+    """El vecino del molino no oye "ya va la ambulancia" mientras la ambulancia va a otro
+    sitio: la señal sale con el plan que por fin asigna su rescate, y apunta al hecho."""
+    sc = _scenario()
+    sc = sc.model_copy(
+        update={
+            "pois": sc.pois
+            + [
+                POI(
+                    id="poi_molino",
+                    name="Molino",
+                    kind="landmark",
+                    x=60,
+                    z=40,
+                    waypoint_id="wp_sur_01",
+                )
+            ],
+        }
+    )
+    core = loop.Core(bus, sc)
+    await _ignite(core)
+    # La ambulancia está a las puertas de Pueblo A: la evacuación le sale gratis.
+    arrive = _ev(
+        EventType.WORLD_UNIT_POSITION,
+        {"unit_id": "unit_ambulance", "x": 96, "z": 0, "heading": 90.0},
+        t_sim=40.0,
+    )
+    await bus.publish(arrive)
+    await core.on_event(arrive)
+    fact = _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_molino:immobile",
+            "value": 3,
+            "confidence": 0.9,
+            "source": "call:sess_5",
+            "severity": "critical",
+            "kind": "observed",
+        },
+        source="call:sess_5",
+        t_sim=50.0,
+    )
+    await bus.publish(fact)
+    await core.on_event(fact)
+    assert not _of(journal, EventType.CALL_SIGNAL_REQUESTED), "aún no va nadie al molino"
+    assert "task_rescue_poi_molino" in core._plan.unassigned_tasks
+
+    # La ambulancia llega a Pueblo A: la evacuación cierra y el rescate se asigna.
+    moved = _ev(
+        EventType.WORLD_UNIT_POSITION,
+        {"unit_id": "unit_ambulance", "x": 100, "z": 0, "heading": 90.0},
+        t_sim=60.0,
+    )
+    await bus.publish(moved)
+    await core.on_event(moved)
+    arrived = _ev(
+        EventType.WORLD_UNIT_ARRIVED,
+        {"unit_id": "unit_ambulance", "waypoint_id": "wp_pueblo_a"},
+        t_sim=60.0,
+    )
+    await bus.publish(arrived)
+    await core.on_event(arrived)
+    sigs = _of(journal, EventType.CALL_SIGNAL_REQUESTED)
+    assert len(sigs) == 1
+    sig = SignalRequested.model_validate(sigs[0].payload)
+    assert sig.call_id == "sess_5"
+    assert sig.payload["unit"] == "ambulancia" and sig.payload["route"] == "pista sur"
+    assert sigs[0].causes == [fact.seq]
+
+
+def test_coverage_only_violated_when_a_plan_withdraws_it() -> None:
+    """Un pueblo con `min_coverage=1` al que nunca llegó nadie no es una violación del
+    plan; sí lo es mandar a otro sitio a la unidad que lo cubre."""
+    from core import verifiers
+
+    sc = _scenario()
+    sc = sc.model_copy(
+        update={
+            "pois": [
+                sc.pois[0].model_copy(update={"min_coverage": 1}),
+                POI(
+                    id="poi_molino",
+                    name="Molino",
+                    kind="landmark",
+                    x=60,
+                    z=40,
+                    waypoint_id="wp_sur_01",
+                ),
+            ],
+            "units": sc.units
+            + [
+                Unit(
+                    id="unit_truck9",
+                    kind="fire_truck",
+                    x=100,
+                    z=0,
+                    capabilities=["extinguish"],
+                )
+            ],
+        }
+    )
+    graph = solver.RoadGraph.from_scenario(sc)
+    st = belief.initial_state(RUN, sc)
+    st = belief.apply(
+        st,
+        _ev(EventType.WORLD_FIRE_DETECTED, {"cell_id": "cell_5_0", "hazard": "wildfire"}),
+    )
+    st = belief.apply_fact(
+        st,
+        Fact(
+            key="poi:poi_molino:immobile",
+            value=2,
+            confidence=0.9,
+            source="call:sess_2",
+            severity="critical",
+            kind="observed",
+            t_sim=50.0,
+        ),
+    )
+    st = st.model_copy(update={"tasks": {t.id: t for t in tasks.sync(st, graph)}})
+    # Nadie en Pueblo A salvo el camión 9: un plan que lo deja allí no viola nada.
+    plan = solver.solve(st, planner.neutral_policy(), graph)
+    stays = plan.model_copy(
+        update={
+            "assignments": [a for a in plan.assignments if a.unit_id != "unit_truck9"]
+        }
+    )
+    assert verifiers.coverage_maintained(st, stays, graph) is None
+    # Sin ninguna unidad en el pueblo tampoco: no hay cobertura que retirar.
+    gone = st.model_copy(
+        update={"units": {k: v for k, v in st.units.items() if k != "unit_truck9"}}
+    )
+    assert verifiers.coverage_maintained(gone, stays, graph) is None
+    # Retirar al camión 9 hacia otro POI (el molino) sí.
+    withdraws = stays.model_copy(
+        update={
+            "assignments": [a for a in stays.assignments if a.unit_id != "unit_ambulance"]
+            + [
+                plan.assignments[0].model_copy(
+                    update={
+                        "unit_id": "unit_truck9",
+                        "task_id": "task_rescue_poi_molino",
+                        "route": ["wp_pueblo_a", "wp_sur_01"],
+                    }
+                )
+            ]
+        }
+    )
+    v = verifiers.coverage_maintained(st, withdraws, graph)
+    assert v is not None and v.verifier == "coverage_maintained"
+
+
+def test_a_unit_reached_by_the_fire_can_still_be_assigned_out() -> None:
+    """`no_unit_into_burning_cell` no cuenta el waypoint de salida (la unidad ya está
+    ahí) ni el destino de una tarea `extinguish` (arde por definición). Antes, con el
+    frente encima del cruce, todo par era infactible y el plan salía vacío."""
+    sc = _scenario()
+    graph = solver.RoadGraph.from_scenario(sc)
+    st = belief.initial_state(RUN, sc)
+    st = belief.apply(
+        st,
+        _ev(EventType.WORLD_FIRE_DETECTED, {"cell_id": "cell_5_0", "hazard": "wildfire"}),
+    )
+    # El frente llega al cruce, donde está la ambulancia.
+    cx, cz = graph.coords["wp_cruce"]
+    cruce_cell = graph.cell_of(cx, cz)
+    burning = Cell(
+        id=cruce_cell,
+        cx=int((cx - graph.origin[0]) // graph.cell_size),
+        cz=int((cz - graph.origin[1]) // graph.cell_size),
+        state="burning",
+    )
+    st = st.model_copy(update={"cells": {**st.cells, cruce_cell: burning}})
+    amb = st.units["unit_ambulance"].model_copy(update={"x": 30, "z": 0})
+    st = st.model_copy(update={"units": {**st.units, "unit_ambulance": amb}})
+    st = st.model_copy(update={"tasks": {t.id: t for t in tasks.sync(st, graph)}})
+    policy = Policy(rationale="x", hard_constraints=["no_unit_into_burning_cell"])
+    plan = solver.solve(st, policy, graph)
+    by_unit = {a.unit_id: a.task_id for a in plan.assignments}
+    assert by_unit.get("unit_ambulance") == "task_evac_poi_pueblo_a", by_unit
+    assert "task_evac_poi_pueblo_a" not in plan.unassigned_tasks
