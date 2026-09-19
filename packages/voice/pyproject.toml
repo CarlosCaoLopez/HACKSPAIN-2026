@@ -9,6 +9,8 @@ dependencies = [
     "httpx>=0.27",
     "fenic>=0.1",
     "tqdm>=4",
+    "typesafe-sdk>=0.7",
+    "pyyaml>=6",
     "anthropic>=0.40,<1",
 ]
 

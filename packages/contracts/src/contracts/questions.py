@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from contracts.scenario import Scenario
+from contracts.world import POI, RoadEdge
 
 NOT_STATED = "not_stated"
 URGENCY_LEVELS: tuple[str, ...] = ("low", "medium", "critical")
@@ -32,9 +33,10 @@ FIELDS: tuple[str, ...] = (
     "people_immobile",
     "urgency",
     "contradicts_known",
+    "confirmed_order",
 )
-"""Los campos que el presupuesto de completitud persigue. `contradicts_known` no
-cuenta como hueco: es una señal, no un dato que se pueda preguntar."""
+"""El catálogo entero. El presupuesto de completitud persigue solo los cuatro primeros;
+`contradicts_known` y `confirmed_order` son señales (Noul), no huecos que preguntar."""
 
 _CALLER_ONLY = (
     " Consider ONLY what the CALLER (the neighbour) states. Ignore the operator's "
@@ -59,24 +61,28 @@ class QuestionSpec:
 
 
 def call_questions(scn: Scenario) -> dict[str, QuestionSpec]:
-    """El catálogo de una llamada, sacado del escenario. Una descripción que falte en
-    el YAML se deriva del nombre o de los extremos de la arista, nunca se inventa."""
-    pois = {p.id: p.description or p.name for p in scn.pois}
-    roads = {
-        r.id: r.description or f"road between {r.a} and {r.b}" for r in scn.roads
-    }
+    """El catálogo de una llamada, sacado del escenario."""
+    return call_questions_for(scn.pois, scn.roads)
+
+
+def call_questions_for(pois: list[POI], roads: list[RoadEdge]) -> dict[str, QuestionSpec]:
+    """Igual, desde las listas: `voice` no tiene un `Scenario` entero, solo los POIs y
+    aristas que le da el gateway (`voice.pois.set_scenario`). Una descripción que falte
+    en el YAML se deriva del nombre o de los extremos de la arista, nunca se inventa."""
+    pois_d = {p.id: p.description or p.name for p in pois}
+    roads_d = {r.id: r.description or f"road between {r.a} and {r.b}" for r in roads}
     return {
         "location_hint": QuestionSpec(
             "choice",
             "Which place does the caller say they are speaking from or about?"
             + _CALLER_ONLY,
-            {**pois, NOT_STATED: "The caller does not say"},
+            {**pois_d, NOT_STATED: "The caller does not say"},
         ),
         "road_blocked": QuestionSpec(
             "choice",
             "Which stretch of road does the caller say is cut or impassable?"
             + _CALLER_ONLY,
-            {**roads, NOT_STATED: "The caller does not say"},
+            {**roads_d, NOT_STATED: "The caller does not say"},
         ),
         # Choice, no int: Jev no cuenta de forma fiable. Se enumeran los valores
         # pequeños y el resto va a `5plus`.
@@ -107,5 +113,10 @@ def call_questions(scn: Scenario) -> dict[str, QuestionSpec]:
             "noul",
             "The caller states something that contradicts the known facts of the "
             "system given in the state.",
+        ),
+        "confirmed_order": QuestionSpec(
+            "noul",
+            "The caller explicitly accepts the instruction the operator gave them "
+            "(for example, agrees to evacuate).",
         ),
     }

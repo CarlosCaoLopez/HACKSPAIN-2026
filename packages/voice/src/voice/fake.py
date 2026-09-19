@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -164,6 +165,62 @@ class FakeHumalike:
 
     async def aclose(self) -> None:
         return None
+
+
+_NUMBERS = {"un": 1, "una": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4}
+
+
+class FakeJev:
+    """Misma superficie que `JevClient`, sin red. Lee solo los turnos del vecino con
+    reglas de texto (no es Jev: es lo justo para que el bucle, el presupuesto y los
+    hechos corran de punta a punta en `--mock-calls` y en los tests).
+
+    `script`, si se da, manda: una lista de `dict[campo → (valor, confianza)]`, una
+    por tick, para escribir tests deterministas de la conversación."""
+
+    def __init__(self, script: list[dict[str, tuple[str, float]]] | None = None) -> None:
+        self.script = script
+        self.ticks = 0
+        self.enabled = True
+        self.failed_reason: str | None = None
+
+    async def aclose(self) -> None:
+        return None
+
+    async def tick(self, state: dict, questions: dict):
+        from voice import pois
+        from voice.jev import Answer, Perception
+
+        idx = self.ticks
+        self.ticks += 1
+        if self.script is not None:
+            got = self.script[min(idx, len(self.script) - 1)]
+            return Perception(
+                answers={k: Answer(v, c) for k, (v, c) in got.items()}, latency_ms=100.0
+            )
+        text = " ".join(
+            t["text"] for t in state.get("transcript", []) if t.get("speaker") == "caller"
+        )
+        norm = pois.normalize(text)
+        poi = pois.resolve_poi_local(text) if norm else None
+        cut = any(w in norm for w in ("cortad", "arbol", "bloquead", "impracticable"))
+        edge = pois.resolve_edge_local(text) if cut else None
+        m = re.search(r"(\w+) personas? (?:que )?no pued", norm)
+        n = _NUMBERS.get(m.group(1)) if m else None
+        if any(w in norm for w in ("no pueden", "no puede", "atrapad", "herid")):
+            urgency = "critical"
+        elif cut or "humo" in norm:
+            urgency = "medium"
+        else:
+            urgency = "low"
+        answers = {
+            "location_hint": Answer(poi or "not_stated", 0.9),
+            "road_blocked": Answer(edge or "not_stated", 0.93 if edge else 0.9),
+            "people_immobile": Answer(str(n) if n else "not_stated", 0.9),
+            "urgency": Answer(urgency, 0.9),
+            "contradicts_known": Answer(False, 0.9),
+        }
+        return Perception(answers=answers, latency_ms=100.0)
 
 
 class FakeLive:

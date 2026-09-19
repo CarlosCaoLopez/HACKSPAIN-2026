@@ -30,6 +30,8 @@ from contracts.bus import make_event, publish, subscribe
 from contracts.calls import CallOutcome, CallResult
 from contracts.events import EventType
 from contracts.settings import settings
+from voice.budget import FOLLOWUP_DRAFT
+from voice.perception import CallPerception
 
 log = logging.getLogger("voice.humanlike")
 
@@ -50,6 +52,9 @@ TURN_S = 2.0
 SILENCE_S = 6.0
 """Sin mensaje de nadie durante esto → coach `acknowledge`. En 1:1 el turn-taking de
 Humalike siempre dice `speak` y no etiqueta silencios de voz: lo medimos aquí."""
+JEV_TICK_S = 5.0
+"""Cada cuánto percibe Jev durante la llamada. Sin texto nuevo no hay petición: el tick
+solo hace avanzar el reloj del presupuesto."""
 SIGNAL_S = 2.0
 ANALYZE_S = 10.0
 EXTRACT_TIMEOUT_S = 4.0
@@ -412,6 +417,7 @@ class CallState:
     callback_number: str | None = (
         None  # con Web Call no hay caller_number: lo da el vecino
     )
+    last_jev_len: int = 0  # turnos que ya vio el último tick de Jev
 
     def __post_init__(self) -> None:
         self.call_id = self.call_id or self.session_id
@@ -512,6 +518,7 @@ class ConversationMonitor:
         self._task: asyncio.Task[None] | None = None
         self._bg: set[asyncio.Task[None]] = set()
         self._plan_event = asyncio.Event()
+        self.perception = CallPerception(state.call_id)
 
     # -- ciclo de vida --
 
@@ -521,6 +528,7 @@ class ConversationMonitor:
 
     async def run(self) -> None:
         self._spawn(self._silence_watchdog())
+        self._spawn(self._jev_loop())
         opened = await self.hl.open_thread()
         if opened:
             self.state.thread_id = opened[0]
@@ -558,6 +566,13 @@ class ConversationMonitor:
     def transcript_turns(self) -> list[dict[str, str]]:
         return list(self.state.transcript)
 
+    def jev_turns(self) -> list[dict[str, str]]:
+        """La transcripción con las etiquetas que nombran las preguntas de Jev."""
+        return [
+            {"speaker": "operator" if t["speaker"] == AGENT_NAME else "caller", "text": t["text"]}
+            for t in self.state.transcript
+        ]
+
     def transcript_text(self) -> str:
         return "\n".join(f"{t['speaker']}: {t['text']}" for t in self.state.transcript)
 
@@ -575,6 +590,29 @@ class ConversationMonitor:
         if speaker == CALLER_NAME:
             decision = await self._turn(text)
             self._spawn(self._foresee_bg(decision))
+
+    # -- percepción: Jev durante la llamada --
+
+    async def _jev_loop(self) -> None:
+        while not self.state.ended:
+            await asyncio.sleep(JEV_TICK_S)
+            await self.perceive()
+
+    async def perceive(self, final: bool = False, wait: bool = False) -> None:
+        """Un tick de Jev. Si toca preguntar, la pregunta sale por signal (Humalike la
+        refina igual que el resto) y no espera: el bucle sigue."""
+        n = len(self.state.transcript)
+        field = await self.perception.tick(
+            self.jev_turns(), new_text=n != self.state.last_jev_len, final=final, wait=wait
+        )
+        if self.perception.active:
+            self.state.last_jev_len = n
+        if field:
+            self._spawn(
+                self.on_signal_requested(
+                    "followup", {"field": field, "message": FOLLOWUP_DRAFT[field]}, []
+                )
+            )
 
     def _spawn(self, coro: Any) -> None:
         t = asyncio.create_task(coro)
@@ -919,6 +957,24 @@ def parse_webhook(body: dict) -> CallResult:
         facts=None,
         audio_url=body.get("audio_url") or call.get("recording_url"),
     )
+
+
+AGENT_ROLES = {"assistant", "agent", "agente", "operator", "operador", AGENT_NAME}
+
+
+def turns_from_text(text: str) -> list[dict[str, str]]:
+    """Convierte `operador: hola` / `vecino: sí` (una línea por turno) en los turnos con
+    las etiquetas de Jev. Para llamadas que solo traen la transcripción al colgar."""
+    turns: list[dict[str, str]] = []
+    for line in text.splitlines():
+        role, sep, said = line.partition(":")
+        if not sep or not said.strip():
+            if line.strip() and turns:
+                turns[-1]["text"] += " " + line.strip()
+            continue
+        speaker = "operator" if role.strip().lower() in AGENT_ROLES else "caller"
+        turns.append({"speaker": speaker, "text": said.strip()})
+    return turns
 
 
 def _as_epoch(value: Any) -> float | None:

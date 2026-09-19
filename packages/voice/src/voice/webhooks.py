@@ -3,11 +3,14 @@
 Dos rutas, las dos de HappyRobot:
 
 - `POST /webhooks/happyrobot/fact`: el tool `report_fact` del agente, **durante**
-  la llamada. Publica los hechos, luego pide a Humalike el ack refinado (1,5 s),
-  y responde. El replan arranca con los hechos; nunca espera al ack.
+  la llamada. Es solo un **disparador**: sus valores no se creen (los rellena el LLM
+  del agente, texto libre). Fuerza un tick inmediato de Jev sobre la transcripción,
+  que publica los hechos; luego pide a Humalike el ack refinado (1,5 s) y responde.
+  El replan arranca con los hechos; nunca espera al ack. Con Jev caído (`--no-jev`),
+  degrada explícitamente al camino anterior y los hechos salen como `inferred`.
 - `POST /webhooks/happyrobot/call`: inicio y fin de llamada (nodo Webhook del
-  workflow o outbound webhook de la plataforma). Al colgar: `semantic.extract`
-  como red de seguridad, `analyze` de Humalike, `call.ended`.
+  workflow o outbound webhook de la plataforma). Al colgar: último tick de Jev
+  (`fenic` si Jev no está), `analyze` de Humalike, `call.ended`.
 
 Autenticación: token compartido en la cabecera, porque estas dos rutas van por un
 túnel y un escaneo aleatorio no debe disparar nada a mitad del pitch.
@@ -23,10 +26,11 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import ValidationError
 
 from contracts.bus import current_run_id, current_t_sim, make_event, publish
-from contracts.calls import CallFacts
-from contracts.events import EventType
+from contracts.calls import CallFacts, Fact
+from contracts.events import Event, EventType
 from contracts.settings import settings
 from voice import humanlike, pois
+from voice.perception import CallPerception
 
 log = logging.getLogger("voice.webhooks")
 
@@ -47,19 +51,22 @@ def _gateway():
     return VoiceGateway()
 
 
-def ack_draft(cf: CallFacts, poi_name: str | None) -> str:
+def ack_draft(
+    poi_name: str | None,
+    road: str | None,
+    immobile: int | None,
+    injuries: int | None = None,
+) -> str:
     """Lo que el agente le repite al vecino. Humalike lo refina si llega a tiempo."""
     parts: list[str] = ["Anotado"]
     if poi_name:
         parts.append(poi_name)
-    elif cf.location_hint:
-        parts.append(cf.location_hint)
-    if cf.road_blocked:
-        parts.append(f"{cf.road_blocked} cortada")
-    if cf.people_immobile:
-        parts.append(f"{cf.people_immobile} personas sin movilidad")
-    if cf.injuries:
-        parts.append(f"{cf.injuries} heridos")
+    if road:
+        parts.append(f"{road} cortada")
+    if immobile:
+        parts.append(f"{immobile} personas sin movilidad")
+    if injuries:
+        parts.append(f"{injuries} heridos")
     return ", ".join(parts) + ". Estoy avisando a los equipos, no cuelgue."
 
 
@@ -91,61 +98,118 @@ async def happyrobot_fact(
     if cached is not None:
         return cached
 
+    if mon.perception.active:
+        ack = await _fact_by_jev(mon, params)
+    else:
+        ack = await _fact_without_jev(mon, session_id, params)
+    mon.state.seen_tool_hashes[h] = ack
+    return ack
+
+
+async def _ack(
+    mon: humanlike.ConversationMonitor, draft: str, t0: float, n_facts: int
+) -> tuple[str, bool]:
+    """Humalike refina el borrador y, en paralelo, se espera al replan del core: si el
+    plan llega a tiempo, el agente dice en la misma frase qué unidad va. Devuelve
+    (mensaje, plan incluido)."""
+    t_facts = time.perf_counter()
+    message, res, got_plan = await mon.ack_with_plan(draft)
+    log.info(
+        "tool %s: %d hechos en %.0f ms, ack en %.0f ms (%s%s)",
+        mon.state.session_id,
+        n_facts,
+        (t_facts - t0) * 1000,
+        (time.perf_counter() - t0) * 1000,
+        "refinado" if res else "borrador",
+        ", con plan" if got_plan else ", sin plan aún",
+    )
+    return message, got_plan
+
+
+async def _fact_by_jev(mon: humanlike.ConversationMonitor, params: dict) -> dict:
+    """El tool como disparador: los valores de `params` no entran al estado. Solo si
+    no hay SSE (sin transcripción) se usa lo que dijo el agente como texto del vecino,
+    y aun así pasa por Jev, que solo puede elegir ids del escenario."""
+    if not mon.state.transcript:
+        mon.add_turn("user", _speech_from(params))
+    t0 = time.perf_counter()
+    await mon.perceive(wait=True)
+    cf = mon.perception.call_facts()
+    n = mon.perception.facts_published
+    road = pois.road_label(cf.road_blocked) if cf.road_blocked else None
+    message, got_plan = await _ack(
+        mon, ack_draft(cf.location_hint, road, cf.people_immobile), t0, n
+    )
+    return {
+        "ack": True,
+        "resolved_poi_name": cf.location_hint,
+        "message": message,
+        "facts_published": n,
+        "plan_included": got_plan,
+    }
+
+
+async def _fact_without_jev(
+    mon: humanlike.ConversationMonitor, session_id: str, params: dict
+) -> dict:
+    """Degradación explícita (`--no-jev`, sin clave o Jev caído): los valores del tool
+    se resuelven contra los ids del escenario y salen como `inferred`, sin la
+    confianza calibrada de Jev. La restricción dura se sostiene en su dirección segura."""
+    log.warning("tool %s sin Jev: hechos del tool como `inferred`", session_id)
     try:
         cf = CallFacts.model_validate(_coerce(params))
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
     cf.resolved_poi_id = pois.resolve_poi_local(cf.location_hint)
     name = pois.poi_name(cf.resolved_poi_id)
-
     t0 = time.perf_counter()
-    # 1. Los hechos, todos publicados antes de tocar Humalike.
     facts = _gateway().to_facts(cf, current_t_sim(), session_id)
-    seqs: list[int] = []
     for f in facts:
-        ev = make_event(
-            EventType.WORLD_FACT_ASSERTED,
-            {
-                "key": f.key,
-                "value": f.value,
-                "confidence": f.confidence,
-                "source": f.source,
-                "severity": f.severity,
-            },
-            source=f"call:{session_id}",
-            t_sim=f.t_sim,
-        )
-        await publish(ev)
-        seqs.append(ev.seq)
+        await publish(_fact_event(f, session_id))
         mon.state.tool_facts_keys.add(f.key)
-
-    # 2. El ack: Humalike lo refina y, en paralelo, se espera al replan del core.
-    #    Si el plan llega a tiempo, el agente dice en la misma frase qué unidad va.
     if not mon.state.transcript:
-        # Sin SSE (sin API key de plataforma) el único texto es el del tool.
         mon.add_turn("user", _pseudo_turn(cf))
-    draft = ack_draft(cf, name)
-    t_facts = time.perf_counter()
-    message, res, got_plan = await mon.ack_with_plan(draft)
-    log.info(
-        "tool %s: %d hechos en %.0f ms, ack en %.0f ms (%s%s)",
-        session_id,
-        len(facts),
-        (t_facts - t0) * 1000,
-        (time.perf_counter() - t0) * 1000,
-        "refinado" if res else "borrador",
-        ", con plan" if got_plan else ", sin plan aún",
+    edge = pois.resolve_edge_local(cf.road_blocked)
+    road = pois.road_label(edge) if edge else None
+    message, got_plan = await _ack(
+        mon, ack_draft(name, road, cf.people_immobile, cf.injuries), t0, len(facts)
     )
-
-    ack = {
+    return {
         "ack": True,
         "resolved_poi_name": name,
         "message": message,
         "facts_published": len(facts),
         "plan_included": got_plan,
     }
-    mon.state.seen_tool_hashes[h] = ack
-    return ack
+
+
+def _fact_event(f: Fact, session_id: str) -> Event:
+    return make_event(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": f.key,
+            "value": f.value,
+            "confidence": f.confidence,
+            "source": f.source,
+            "severity": f.severity,
+            "kind": f.kind,
+            "call_id": f.call_id or session_id,
+        },
+        source=f"call:{session_id}",
+        t_sim=f.t_sim,
+    )
+
+
+def _speech_from(params: dict) -> str:
+    """El texto que el agente reporta, como si lo hubiera dicho el vecino."""
+    parts = []
+    if params.get("location_hint"):
+        parts.append(f"estoy en {params['location_hint']}")
+    if params.get("road_blocked"):
+        parts.append(f"{params['road_blocked']} está cortada")
+    if params.get("people_immobile"):
+        parts.append(f"hay {params['people_immobile']} personas que no pueden moverse")
+    return ", ".join(parts) or "necesito ayuda"
 
 
 def _pseudo_turn(cf: CallFacts) -> str:
@@ -221,39 +285,21 @@ async def _on_end(body: dict) -> dict:
     if humanlike.is_duplicate(result.call_id):
         return {"dup": True}
 
-    gateway = _gateway()
     mon = humanlike.MONITORS.get(result.call_id)
 
-    # Red de seguridad: lo que el tool no haya asertado ya.
-    if result.transcript:
-        try:
-            result.facts = await asyncio.wait_for(
-                gateway.extract(result.transcript), humanlike.EXTRACT_TIMEOUT_S
-            )
-        except TimeoutError:
-            result.facts = None
-    if result.facts is not None:
-        if result.facts.resolved_poi_id is None:
-            result.facts.resolved_poi_id = pois.resolve_poi_local(
-                result.facts.location_hint
-            )
-        already = mon.state.tool_facts_keys if mon else set()
-        for f in gateway.to_facts(result.facts, current_t_sim(), result.call_id):
-            if f.key in already:
-                continue
-            await publish(
-                make_event(
-                    EventType.WORLD_FACT_ASSERTED,
-                    {
-                        "key": f.key,
-                        "value": f.value,
-                        "confidence": f.confidence,
-                        "source": f.source,
-                        "severity": f.severity,
-                    },
-                    source=f"call:{result.call_id}",
-                )
-            )
+    # Último tick sobre la transcripción completa: cierra el catálogo. Con monitor en
+    # vivo el estado ya viene de los ticks; sin él, un tick único sobre la transcripción.
+    if mon is not None and mon.perception.active:
+        if not result.transcript and mon.state.transcript:
+            result.transcript = mon.transcript_text()
+        await mon.perceive(final=True)
+        result.facts = mon.perception.call_facts()
+    elif result.transcript and CallPerception(result.call_id).active:
+        cp = CallPerception(result.call_id)
+        await cp.tick(humanlike.turns_from_text(result.transcript), final=True)
+        result.facts = cp.call_facts()
+    elif result.transcript:
+        result.facts = await _extract_without_jev(result, mon)
 
     # Humalike audita la llamada. Si falla, el CallResult va sin nota.
     if mon is not None:
@@ -272,3 +318,25 @@ async def _on_end(body: dict) -> dict:
         make_event(EventType.CALL_ENDED, result.model_dump(mode="json"), source="voice")
     )
     return {"ok": True, "health_score": result.health_score}
+
+
+async def _extract_without_jev(result, mon) -> CallFacts | None:
+    """`--no-jev`: `fenic.semantic.extract` con `Literal` sobre las opciones del
+    escenario. Se conserva el espacio cerrado y se pierden la confianza calibrada y el
+    bucle en llamada; los hechos salen `inferred`."""
+    gateway = _gateway()
+    try:
+        facts = await asyncio.wait_for(
+            gateway.extract(result.transcript), humanlike.EXTRACT_TIMEOUT_S
+        )
+    except TimeoutError:
+        return None
+    if facts is None:
+        return None
+    if facts.resolved_poi_id is None:
+        facts.resolved_poi_id = pois.resolve_poi_local(facts.location_hint)
+    already = mon.state.tool_facts_keys if mon else set()
+    for f in gateway.to_facts(facts, current_t_sim(), result.call_id):
+        if f.key not in already:
+            await publish(_fact_event(f, result.call_id))
+    return facts

@@ -69,6 +69,25 @@ def load_scenario_yaml(path: Path | str) -> bool:
     return True
 
 
+def road_label(edge_id: str) -> str:
+    """Cómo lo dice el agente: el primer alias en español de la arista, o genérico."""
+    for alias, eid in _road_aliases.items():
+        if eid == edge_id:
+            return alias
+    return "ese tramo"
+
+
+def questions() -> dict:
+    """El catálogo de preguntas de Jev sobre el escenario que el gateway ha cargado."""
+    from contracts.questions import call_questions_for
+
+    return call_questions_for(list(_pois.values()), list(_roads.values()))
+
+
+def roads() -> dict[str, RoadEdge]:
+    return dict(_roads)
+
+
 def pois() -> dict[str, POI]:
     return dict(_pois)
 
