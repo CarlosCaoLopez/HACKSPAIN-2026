@@ -221,10 +221,16 @@ def to_facts(alerts: list[CapAlert], anchor: GeoAnchor, ctx: FeedContext) -> lis
         source = f"api:aemet:{a.identifier}"
         confidence = CONFIDENCE.get(a.certainty, UNKNOWN_CERTAINTY_CONFIDENCE)
         severity = SEVERITY[a.level]
-        common = {"confidence": confidence, "source": source, "severity": severity, "kind": "observed"}
-        out.append(Observation(a.effective, FactAsserted(key=LEVEL_KEY, value=a.level, **common)))
+        common = {"confidence": confidence, "source": source, "kind": "observed"}
+        out.append(
+            Observation(a.effective, FactAsserted(key=LEVEL_KEY, value=a.level, severity=severity, **common))
+        )
         # El nivel solo no dice de qué es el aviso. El banner de replan necesita «aviso
-        # rojo AEMET: <evento>», y `FactAsserted` no tiene otro sitio donde llevarlo.
-        out.append(Observation(a.effective, FactAsserted(key=EVENT_KEY, value=a.event, **common)))
+        # rojo AEMET: <evento>», y `FactAsserted` no tiene otro sitio donde llevarlo. Va en
+        # `low`: el core replanifica ante cada hecho crítico y no los agrupa, así que si los
+        # dos fueran críticos un aviso rojo serían dos llamadas al modelo (invariante 7).
+        out.append(
+            Observation(a.effective, FactAsserted(key=EVENT_KEY, value=a.event, severity="low", **common))
+        )
         ctx.seen.add(dedup)
     return out

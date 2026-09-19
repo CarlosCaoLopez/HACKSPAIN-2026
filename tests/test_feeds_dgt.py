@@ -142,6 +142,14 @@ def test_un_roadclosed_sobre_la_arista_declarada_da_los_dos_hechos():
     assert cause.value == "roadworks · DGT 5684393"
 
 
+def test_solo_el_corte_lleva_la_gravedad_para_no_provocar_dos_replanes():
+    """El core replanifica ante cada hecho crítico y no los agrupa: si `cut` y `cause` fueran
+    los dos críticos, un corte serían dos llamadas al modelo (invariante 7)."""
+    ctx = FeedContext(route_edges=frozenset({EDGE}))
+    sev = {o.fact.key.rsplit(":", 1)[1]: o.fact.severity for o in facts_of(ctx=ctx)}
+    assert sev == {"cut": "critical", "cause": "low"}
+
+
 def test_las_claves_son_las_del_contrato():
     for o in facts_of():
         assert validate_fact_key(o.fact.key) is not None, o.fact.key

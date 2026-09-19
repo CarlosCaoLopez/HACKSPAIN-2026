@@ -92,6 +92,13 @@ def test_un_aviso_naranja_en_la_zona_da_nivel_y_evento_con_su_procedencia():
     assert event.source == level.source  # el banner los une por la procedencia
 
 
+def test_solo_el_nivel_lleva_la_gravedad_para_no_provocar_dos_replanes():
+    red = XML.replace(b"<value>naranja</value>", b"<value>rojo</value>")
+    facts = by_key(facts_of(red))
+    assert facts["alert:aemet:level"].severity == "critical"
+    assert facts["alert:aemet:event"].severity == "low"  # el core no agrupa críticos
+
+
 def test_el_momento_real_es_el_de_efectividad_del_aviso():
     obs = facts_of()
     assert obs[0].t_real == datetime(2017, 12, 1, 10, 34, 33, tzinfo=timezone(timedelta(hours=1)))

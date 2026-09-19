@@ -354,7 +354,8 @@ async def test_un_corte_sobre_una_arista_del_plan_es_critico():
     feeds = make_feeds(rt, transport({"nap.dgt.es": DGT}), anchor=a, only=frozenset({"dgt"}))
     await run_source_once(feeds, "dgt")
     await feeds.publish_due()
-    assert {p.severity for p in facts(rt)} == {"critical"}
+    by_key = {p.key.rsplit(":", 1)[1]: p.severity for p in facts(rt)}
+    assert by_key == {"cut": "critical", "cause": "low"}  # solo uno crítico: un replan, no dos
 
 
 # --- publicar y parar -------------------------------------------------------------------------

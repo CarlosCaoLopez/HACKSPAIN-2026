@@ -210,7 +210,10 @@ def to_facts(
                     value=cause,
                     confidence=confidence,
                     source=source,
-                    severity=severity,
+                    # Solo el `cut` lleva la gravedad. El core replanifica ante CADA hecho
+                    # crítico y no los agrupa: con los dos críticos, un corte sería dos
+                    # llamadas al modelo (invariante 7).
+                    severity="low",
                     kind="observed",
                 ),
             )
