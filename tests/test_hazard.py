@@ -124,6 +124,7 @@ def test_render_de_burning_y_burnt():
     fuego = Wildfire(spec(), seed=1)
     burning = fuego.render_commands(CellChange(cell_id="cell_1_2", state="burning", hazard="wildfire"))
     assert burning == [
+        "fill 4 65 8 7 73 11 air",       # se lleva por delante lo que hubiera
         "fill 4 64 8 7 64 11 netherrack",
         "fill 4 65 8 7 65 11 fire",
     ]
@@ -230,3 +231,98 @@ def test_render_del_apagon():
 
 def test_build_hazard_devuelve_blackout():
     assert isinstance(build_hazard(spec(**APAGON), 1), Blackout)
+
+
+# --- sofocar desde la carretera ---
+
+def test_un_camion_cerca_apaga_el_fuego():
+    """El contrato lo asigna al sim: una unidad trabaja las celdas `burning` a
+    menos de `suppress_reach_m` a `suppress_rate` celdas por minuto. No es un
+    verbo nuevo: el core manda el `goto` y el mundo responde."""
+    f = Wildfire(spec(), seed=1)
+    correr(f, 40)
+    objetivo = f.burning[0]
+    x, z = f.center_of(objetivo)
+
+    # `suppress_rate` se reparte entre las celdas a tiro, así que con seis
+    # delante tardan unos dos minutos en caer todas: eso son 3 celdas/min, que es
+    # lo que dice el contrato. Un minuto no basta y no debe bastar.
+    apagadas = []
+    for _ in range(180):
+        apagadas += f.suppress([(x, z)], 1.0)
+        f.tick(1.0)
+    assert apagadas, "un camión encima del fuego tiene que apagar algo"
+    assert all(c.state == "burnt" and c.cause == "extinguished" for c in apagadas)
+
+
+def test_sin_nadie_cerca_no_se_apaga_nada():
+    f = Wildfire(spec(), seed=1)
+    correr(f, 40)
+    lejos = [(9999.0, 9999.0)]
+    assert [c for _ in range(30) for c in f.suppress(lejos, 1.0)] == []
+
+
+def test_apagar_tarda_lo_que_dice_la_tasa():
+    """A 3 celdas/min una celda sola cae en ~20 s: se ve el trabajo en vez de
+    desaparecer de golpe."""
+    f = Wildfire(spec(), seed=2)
+    f.tick(1.0)
+    objetivo = f.burning[0]
+    x, z = f.center_of(objetivo)
+    for segundos in range(1, 60):
+        if f.suppress([(x, z)], 1.0):
+            assert 15 <= segundos <= 30, f"cayó en {segundos}s"
+            return
+    raise AssertionError("no se apagó")
+
+
+def test_un_camion_reparte_su_esfuerzo():
+    """No apaga más rápido por tener más fuego delante: `suppress_rate` se
+    reparte entre las celdas a tiro."""
+    f = Wildfire(spec(base_spread=0.9), seed=3)
+    correr(f, 60)
+    x, z = f.center_of(f.burning[len(f.burning) // 2])
+    a_tiro = sum(1 for c in f.burning
+                 if abs(f.center_of(c)[0] - x) <= f.spec.suppress_reach_m
+                 and abs(f.center_of(c)[1] - z) <= f.spec.suppress_reach_m)
+    apagadas = [c for _ in range(20) for c in f.suppress([(x, z)], 1.0)]
+    assert a_tiro > 1, "el escenario de la prueba necesita varias celdas a tiro"
+    assert len(apagadas) < a_tiro, "no puede apagarlas todas a la vez"
+
+
+def test_la_cicatriz_de_un_camion_se_pinta_distinta():
+    """`extinguished` no es `burnout`: el dashboard y el mundo los separan."""
+    f = Wildfire(spec(), seed=1)
+    apagada = f.render_commands(
+        CellChange(cell_id="cell_1_2", state="burnt", hazard="wildfire",
+                   cause="extinguished"))
+    quemada = f.render_commands(
+        CellChange(cell_id="cell_1_2", state="burnt", hazard="wildfire",
+                   cause="burnout"))
+    assert "gray_concrete" in apagada[-1]
+    assert "coal_block" in quemada[-1]
+
+
+def test_cada_cambio_dice_por_que():
+    f = Wildfire(spec(), seed=1)
+    causas = {c.cause for _ in range(60) for c in f.tick(1.0)}
+    assert causas <= {"spread", "burnout", "at_risk", "inject"}
+    assert {"spread", "at_risk"} <= causas
+
+
+def test_fuera_del_valle_no_arde_nada():
+    """El freno del incendio es el combustible, no un radio alrededor de la chispa.
+    Sin esto el frente se pasa los pueblos y sigue ardiendo en hierba vacía: ruido
+    en pantalla y tareas de extinción por celdas a las que nadie va a ir."""
+    valle = (0.0, 0.0, 80.0, 80.0)   # 20x20 celdas de 4 bloques
+    f = Wildfire(spec(origin_cell="cell_10_10", base_spread=2.0), seed=5, burnable=valle)
+    correr(f, 400)
+    for cid in list(f.burning) + [c for c, s in f._state.items() if s == "burnt"]:
+        x, z = f.center_of(cid)
+        assert -4 <= x <= 84 and -4 <= z <= 84, f"{cid} ardió fuera del valle"
+
+
+def test_sin_valle_declarado_arde_todo_como_antes():
+    f = Wildfire(spec(base_spread=0.9), seed=5)
+    correr(f, 120)
+    assert len(f.burning) > 5
