@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     # P3 · telefonía
     happyrobot_api_key: str = ""
     happyrobot_api_base: str = "https://platform.eu.happyrobot.ai/api/v2"  # P3: región EU
+    happyrobot_org_key: str = ""  # clave de organización (hr_): API de plataforma
     happyrobot_hook_evacuation: str = ""  # la URL del incoming hook
     humalike_api_key: str = ""
     typesafe_api_key: str = ""  # P3 · percepción en llamada (Jev). Sin ella: --no-jev
@@ -63,7 +64,9 @@ class Settings(BaseSettings):
     # `world.fact.asserted` con procedencia. `off` deja la demo exactamente como estaba.
     vela_feeds: Literal["off", "live", "recorded"] = "off"
     vela_feeds_only: str = ""  # "open_meteo,dgt,firms,aemet"; vacío = todas
-    vela_feeds_dir: str = "fixtures/feeds"  # dónde se guardan y de dónde se leen las capturas
+    vela_feeds_dir: str = (
+        "fixtures/feeds"  # dónde se guardan y de dónde se leen las capturas
+    )
     firms_map_key: str = ""  # NASA FIRMS (gratis, por email). Sin ella: FIRMS `off`
     aemet_api_key: str = ""  # AEMET OpenData (gratis, por email). Sin ella: AEMET `off`
 
