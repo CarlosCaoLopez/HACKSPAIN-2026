@@ -236,7 +236,12 @@ El valor de divergencia va en el dashboard como una línea que sube y cruza el u
 
 ### El aprendizaje entre ejecuciones (el bonus)
 
-Al terminar un run, un job batch carga todos los journals anteriores en `fenic` y extrae, con `semantic.extract` sobre un esquema `LearnedRule`, patrones del tipo *"cuando el viento gira más de 60°, evacuar antes de reasignar extinción"*. Las reglas con soporte en al menos dos runs se escriben en `memory/policy_rules.md`, que se inyecta en el prompt del planner del run siguiente.
+Es un **bucle estilo Hermes Agent** en `core/memory.py`, con cuatro piezas:
+
+- **`harvest`** — job batch entre runs, sin presión de latencia. Carga los journals anteriores en `fenic` y extrae, con `semantic.extract` sobre un esquema `LearnedRule`, patrones del tipo *"cuando el viento gira más de 60°, evacuar antes de reasignar extinción"*, agregados por `(trigger, body)`. Solo persiste las reglas con **soporte en ≥2 runs distintos**.
+- **Una regla, un fichero.** Cada regla vive en `memory/rules/<slug>.md` con frontmatter (`trigger`, `support`, `confidence`, `lineage`) y un cuerpo de una frase. Sustituye al blob único `memory/policy_rules.md`, que no se inyecta ya en bloque.
+- **`select`** — gating **determinista** (nunca el LLM): el planner solo ve las reglas cuyo `trigger` casa con el `WorldState` actual (*progressive disclosure*), sobre un mini-DSL de comparaciones (`wind_shift_deg > 60`), sin `eval`. Prompt corto, latencia baja, y el jurado ve *qué* regla influyó en *qué* decisión por su `lineage` (`run:seq`).
+- **`apply_patch`** — mejora por patch, no reescritura: un run posterior confirma o contradice la regla y mueve su `confidence` (EWMA hacia 1.0 si el run acabó sin civiles expuestos), sin tocar el cuerpo.
 
 Enseñad **run 1 contra run 12 en pantalla partida con la puntuación de cada uno**. Es un criterio explícito de puntos extra y casi ningún equipo lo va a tener funcionando.
 
@@ -474,7 +479,7 @@ vela/
 │  └─ transcripts/
 ├─ runs/                       # salida, gitignored salvo los buenos
 ├─ memory/
-│  └─ policy_rules.md
+│  └─ rules/                   # una regla aprendida por fichero (bucle Hermes)
 ├─ scripts/
 │  ├─ demo.py                  # el guion de la demo, con --mock-calls
 │  └─ gen_ts_types.py          # Pydantic → TypeScript
