@@ -136,9 +136,8 @@ def test_un_ancla_sin_fijar_apaga_todo_y_lo_dice():
 def test_sin_clave_no_es_un_error_es_off_con_nota():
     feeds = make_feeds(client=transport({}))
     started = {s.name for s in feeds.plan_sources()}
-    assert "firms" not in started and "aemet" not in started
+    assert "firms" not in started
     assert feeds.states["firms"].note == "sin clave" and feeds.states["firms"].status == "off"
-    assert feeds.states["aemet"].note == "sin clave"
 
 
 def test_solo_las_fuentes_pedidas_arrancan():
@@ -181,11 +180,11 @@ async def test_dgt_en_vivo_publica_el_corte_y_no_lo_republica():
     await run_source_once(feeds, "dgt")
     assert feeds.states["dgt"].status == "ok" and feeds.states["dgt"].last_ok_t_wall
 
-    assert await feeds.publish_due() == 2  # el `cut` y la `cause`
-    assert {p.key for p in facts(rt)} == {"road:wp_a-wp_b:cut", "road:wp_a-wp_b:cause"}
+    assert await feeds.publish_due() == 1  # solo el `cut`: la causa no tiene equivalente en Minecraft
+    assert {p.key for p in facts(rt)} == {"road:wp_a-wp_b:cut"}
     assert all(t == EventType.WORLD_FACT_ASSERTED for t, _, _ in rt.published)
     assert all(src == "feeds" for _, _, src in rt.published)  # la envoltura (REQ-236)
-    assert feeds.states["dgt"].published == 2
+    assert feeds.states["dgt"].published == 1
 
     await run_source_once(feeds, "dgt")  # el siguiente sondeo trae el mismo feed
     assert await feeds.publish_due() == 0
@@ -354,8 +353,7 @@ async def test_un_corte_sobre_una_arista_del_plan_es_critico():
     feeds = make_feeds(rt, transport({"nap.dgt.es": DGT}), anchor=a, only=frozenset({"dgt"}))
     await run_source_once(feeds, "dgt")
     await feeds.publish_due()
-    by_key = {p.key.rsplit(":", 1)[1]: p.severity for p in facts(rt)}
-    assert by_key == {"cut": "critical", "cause": "low"}  # solo uno crítico: un replan, no dos
+    assert [(p.key, p.severity) for p in facts(rt)] == [(f"road:{road.id.removeprefix('road:')}:cut", "critical")]
 
 
 # --- publicar y parar -------------------------------------------------------------------------
@@ -363,10 +361,12 @@ async def test_un_corte_sobre_una_arista_del_plan_es_critico():
 
 async def test_un_hecho_que_no_se_publica_no_mata_la_emision():
     rt = FakeRt(fail_first=True)
-    feeds = make_feeds(rt, transport({"nap.dgt.es": DGT}), only=frozenset({"dgt"}))
-    await run_source_once(feeds, "dgt")
-    assert await feeds.publish_due() == 1  # el primero falló, el segundo salió
-    assert len(rt.published) == 1
+    feeds = make_feeds(rt, transport({"open-meteo": METEO}), only=frozenset({"open_meteo"}))
+    await run_source_once(feeds, "open_meteo")
+    total = len(feeds.schedule)
+    assert total > 2  # hace falta más de un hecho para que haya un «siguiente»
+    assert await feeds.publish_due() == total - 1  # el primero falló; los demás salieron
+    assert len(rt.published) == total - 1
 
 
 async def test_recorded_reproduce_las_capturas_sin_red(tmp_path: Path):
@@ -379,7 +379,7 @@ async def test_recorded_reproduce_las_capturas_sin_red(tmp_path: Path):
 
     assert feeds.states["dgt"].status == "ok"
     assert feeds.states["dgt"].as_dict()["next_poll_s"] is None  # una vez, no sondea
-    assert await feeds.publish_due() == 2
+    assert await feeds.publish_due() == 1
     assert len(list(folder.iterdir())) == 1  # reproducir no guarda capturas nuevas
 
 

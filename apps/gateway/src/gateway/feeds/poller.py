@@ -32,7 +32,7 @@ import httpx
 
 from contracts.events import EventType
 from contracts.scenario import Scenario
-from gateway.feeds import FeedContext, Observation, aemet, capture, dgt, firms, open_meteo
+from gateway.feeds import FeedContext, Observation, capture, dgt, firms, open_meteo
 from gateway.feeds.anchor import GeoAnchor, anchor_view, edges_on_route
 from gateway.feeds.clock import Schedule
 
@@ -41,11 +41,11 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("vela.feeds")
 
-NAMES = ("open_meteo", "dgt", "firms", "aemet")
+NAMES = ("open_meteo", "dgt", "firms")
 # El nombre que lleva `source` (`api:open-meteo:…`) no es el de la fuente en Python.
-SOURCE_TAG = {"open-meteo": "open_meteo", "dgt": "dgt", "firms": "firms", "aemet": "aemet"}
+SOURCE_TAG = {"open-meteo": "open_meteo", "dgt": "dgt", "firms": "firms"}
 
-INTERVAL_S = {"open_meteo": 900.0, "dgt": 120.0, "firms": 600.0, "aemet": 300.0}
+INTERVAL_S = {"open_meteo": 900.0, "dgt": 120.0, "firms": 600.0}
 BACKOFF_FIRST_S = 30.0
 BACKOFF_MAX_S = 600.0
 EMIT_EVERY_S = 0.5
@@ -110,7 +110,6 @@ def feeds_from_settings(rt: Runtime, anchor: GeoAnchor, scenario: Scenario) -> F
         only=frozenset(n.strip() for n in settings.vela_feeds_only.split(",") if n.strip()),
         feeds_dir=Path(settings.vela_feeds_dir),
         firms_key=settings.firms_map_key,
-        aemet_key=settings.aemet_api_key,
         strict=settings.vela_mode == "dev",
     )
 
@@ -136,7 +135,6 @@ class Feeds:
     only: frozenset[str] = frozenset()
     feeds_dir: Path = Path("fixtures/feeds")
     firms_key: str = ""
-    aemet_key: str = ""
     strict: bool = False  # en desarrollo un registro roto lanza; en la demo solo se cuenta
     save_captures: bool = True  # `--probe` no guarda nada; `--capture` sí (REQ-259)
     client: httpx.AsyncClient | None = None  # inyectable: los tests no salen a la red
@@ -173,14 +171,12 @@ class Feeds:
 
         specs: list[SourceSpec] = []
         live = self.mode == "live"
-        key_of = {"firms": self.firms_key, "aemet": self.aemet_key}  # las que piden clave
+        key_of = {"firms": self.firms_key}  # las que piden clave
         for name in NAMES:
             if self.only and name not in self.only:
                 self._off(name, "desactivada por VELA_FEEDS_ONLY")
             elif live and name in key_of and not key_of[name]:
                 self._off(name, "sin clave")
-            elif name == "aemet" and live and not (self.anchor.aemet_area and self.anchor.aemet_zones):
-                self._off(name, "sin área ni zonas de AEMET en el ancla")
             elif name == "dgt" and live and self._dated:
                 self._off(name, "sin histórico")  # DGT solo cuenta lo que pasa ahora
             elif name == "dgt" and not self.anchor.edges:
@@ -201,7 +197,6 @@ class Feeds:
             "open_meteo": self._handle_open_meteo,
             "dgt": self._handle_dgt,
             "firms": self._handle_firms,
-            "aemet": self._handle_aemet,
         }[name]
 
     # --- traer (E/S) ---------------------------------------------------------------------
@@ -249,17 +244,10 @@ class Feeds:
                 raise last_error
             return parts
 
-        async def aemet_fetch() -> list[bytes]:
-            if start is not None:
-                day_end = start.replace(hour=23, minute=59, second=59)
-                return [await aemet.fetch_archive(client, self.aemet_key, start, day_end)]
-            return [await aemet.fetch(client, self.aemet_key, anchor.aemet_area)]
-
         return interval, {
             "open_meteo": open_meteo_fetch,
             "dgt": dgt_fetch,
             "firms": firms_fetch,
-            "aemet": aemet_fetch,
         }[name]
 
     # --- traducir (puro, con el contexto del run) ------------------------------------------
@@ -287,14 +275,10 @@ class Feeds:
             self._detections[(d["x"], d["z"], d["t_real"], d["satellite"])] = d
         return Handled(firms.to_facts(parsed.records, self.anchor, self.ctx), parsed.malformed)
 
-    def _handle_aemet(self, raw: bytes) -> Handled:
-        parsed = aemet.parse_cap(raw)
-        return Handled(aemet.to_facts(parsed.records, self.anchor, self.ctx), parsed.malformed)
-
     # --- los bucles ------------------------------------------------------------------------
 
     def _censor(self, text: str) -> str:
-        return capture.censor(text, (self.firms_key, self.aemet_key))
+        return capture.censor(text, (self.firms_key,))
 
     def _ingest(self, spec: SourceSpec, parts: list[bytes]) -> None:
         st = self.states[spec.name]
@@ -418,7 +402,5 @@ class Feeds:
 
 
 def _ext(name: str, raw: bytes) -> str:
-    """La extensión de una captura. AEMET devuelve un XML suelto o un `.tar.gz`."""
-    if name == "aemet":
-        return ".tar.gz" if raw[:2] == b"\x1f\x8b" else ".xml"
+    """La extensión de una captura."""
     return {"open_meteo": ".json", "dgt": ".xml", "firms": ".csv"}[name]

@@ -56,7 +56,6 @@ async def run_probe(tmp_path: Path, routes, *, capture=False, a=None, **kw) -> t
         client=client(routes),
         feeds_dir=tmp_path,
         firms_key=kw.pop("firms_key", ""),
-        aemet_key=kw.pop("aemet_key", ""),
         out=lines.append,
         **kw,
     )
@@ -85,7 +84,7 @@ async def test_todo_responde_sale_con_0_e_imprime_los_hechos_que_publicaria(tmp_
     assert code == 0, out
     assert "road:wp_a-wp_b:cut = True" in out and "wind:bearing_deg = 270.0" in out
     assert "inferred 0.80" in out and "observed 0.90" in out  # el kind honesto se ve
-    assert "hechos que se publicarían (4)" in out  # 2 de DGT y 2 de viento
+    assert "hechos que se publicarían (3)" in out  # 1 de DGT (el corte) y 2 de viento
 
 
 async def test_probe_no_escribe_nada_y_capture_guarda_lo_crudo(tmp_path: Path):

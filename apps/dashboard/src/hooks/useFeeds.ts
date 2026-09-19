@@ -12,7 +12,6 @@ export interface FeedDetection {
   z: number
   lat: number
   lon: number
-  footprint_blocks: number
   t_real: string
   satellite: string
   confidence: string

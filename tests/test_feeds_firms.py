@@ -110,10 +110,10 @@ def test_sin_focos_no_se_publica_nada_ni_un_hecho_negativo():
 # --- el mapa ------------------------------------------------------------------------------
 
 
-def test_la_huella_es_el_pixel_de_375_m_en_bloques():
+def test_las_detecciones_del_mapa_llevan_posicion_y_no_huella():
     det = detections(parse_csv(CSV).records, anchor())
     assert len(det) == 4  # el mapa enseña también el de z < 0; solo se filtra el cuadro
-    assert {d["footprint_blocks"] for d in det} == {15.0}  # 375 m / 25 m por bloque
+    assert all("footprint_blocks" not in d for d in det)  # sin huella: Minecraft no la tiene (REQ-312)
     # SPEC-008 REQ-293: el mapa real necesita la coordenada, no solo (x, z).
     assert all(isinstance(d["lat"], float) and isinstance(d["lon"], float) for d in det)
     assert det[0]["satellite"] == "N" and det[0]["confidence"] == "n"

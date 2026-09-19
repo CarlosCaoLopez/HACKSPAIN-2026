@@ -18,7 +18,7 @@ from typing import NamedTuple
 import httpx
 
 from contracts.events import FactAsserted
-from contracts.factkeys import road_bare, road_cause_key, road_cut_key
+from contracts.factkeys import road_bare, road_cut_key
 from gateway.feeds import FeedContext, Observation, Parsed
 from gateway.feeds.anchor import EdgeRef, GeoAnchor
 
@@ -187,7 +187,6 @@ def to_facts(
         # una unidad que el plan ya está usando: ahí sí obliga a replanificar.
         critical = rec.detailed_cause in CRITICAL_CAUSES or road_bare(edge_id) in route_edges
         severity = "critical" if critical else "medium"
-        cause = f"{rec.detailed_cause or rec.cause_type} · DGT {rec.id}"
 
         out.append(
             Observation(
@@ -198,22 +197,6 @@ def to_facts(
                     confidence=confidence,
                     source=source,
                     severity=severity,
-                    kind="observed",
-                ),
-            )
-        )
-        out.append(
-            Observation(
-                None,
-                FactAsserted(
-                    key=road_cause_key(edge_id),
-                    value=cause,
-                    confidence=confidence,
-                    source=source,
-                    # Solo el `cut` lleva la gravedad. El core replanifica ante CADA hecho
-                    # crítico y no los agrupa: con los dos críticos, un corte sería dos
-                    # llamadas al modelo (invariante 7).
-                    severity="low",
                     kind="observed",
                 ),
             )

@@ -1,6 +1,6 @@
 """Fuentes reales como hechos con procedencia (SPEC-007). P4.
 
-Patrón: **adaptador**. Cada fuente (Open-Meteo, DGT, FIRMS, AEMET) traduce su formato a
+Patrón: **adaptador**. Cada fuente (Open-Meteo, DGT, FIRMS) traduce su formato a
 `FactAsserted` y el resto de `vela` no sabe que existe: el core ve un hecho más, con
 `source: api:<fuente>:<id>` y su `kind` honesto (invariante 8).
 
@@ -64,4 +64,29 @@ class FeedContext:
     seen: set[str] = field(default_factory=set)  # `<fuente>:<id>` ya publicados
 
 
-__all__ = ["FeedContext", "Observation", "Parsed"]
+class EnvironmentInfo(NamedTuple):
+    """Un tipo de dato del entorno que **Minecraft y las fuentes reales pueden mostrar**."""
+
+    fact_key: str  # plantilla, como en `contracts.factkeys.FACT_KEYS`
+    sim_input: str  # lo que del lado de Minecraft expresa el mismo dato
+    real_source: str
+
+
+# La correspondencia 1 a 1 entre Minecraft y las APIs (SPEC-007 REQ-311…313). Son dos fuentes
+# separadas de la misma clase de información: las fuentes reales NO escriben en Minecraft, pero
+# solo pueden traer tipos de dato que Minecraft también sabe mostrar. Añadir una clave aquí sin
+# su contraparte del sim, o un inject al sim sin decidir qué pasa de este lado, rompe
+# `tests/test_feeds_vocabulary.py`.
+ENVIRONMENT: tuple[EnvironmentInfo, ...] = (
+    EnvironmentInfo("wind:bearing_deg", "wind_shift", "open_meteo"),
+    EnvironmentInfo("wind:speed", "wind_shift", "open_meteo"),
+    EnvironmentInfo("road:<edge_id>:cut", "road_cut", "dgt"),
+    EnvironmentInfo("cell:<cell_id>:state", "burning", "firms"),  # un `CellState`, no un inject
+)
+
+# Lo que Minecraft acepta como entrada y ninguna API real puede dar, con el motivo.
+SIM_ONLY: dict[str, str] = {
+    "unit_failure": "la avería de una unidad de la flota de vela: ninguna API real la da",
+}
+
+__all__ = ["ENVIRONMENT", "SIM_ONLY", "EnvironmentInfo", "FeedContext", "Observation", "Parsed"]

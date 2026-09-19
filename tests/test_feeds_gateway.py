@@ -4,7 +4,7 @@ Lo que se protege, en orden de lo que más duele si falla el día de la demo:
 
 - **`VELA_FEEDS=off` es exactamente la demo de hoy** (criterio 2): ni tarea, ni socket, ni
   nota. Todo lo nuevo es opt-in y esta es la prueba de que lo es.
-- **Sin red, el run sigue** (criterio 8): las cuatro fuentes se degradan y se anota, pero
+- **Sin red, el run sigue** (criterio 8): las tres fuentes se degradan y se anota, pero
   nada se cae.
 - **En replay las fuentes no arrancan** y aun así el ancla se sirve (REQ-234, REQ-265): los
   hechos reales llegan por el journal y la pantalla tiene que decir de qué sitio son.
@@ -18,13 +18,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from contracts.settings import settings
-from gateway.feeds import aemet, dgt, firms, open_meteo
+from gateway.feeds import dgt, firms, open_meteo
 from gateway.feeds.anchor import EdgeRef, GeoAnchor
 from gateway.main import app
 
 FAKE = Path("fixtures/run_fake.jsonl")
 DGT = Path("fixtures/feeds/_test/dgt_sample.xml").read_bytes()
-SOURCES = {"open_meteo", "dgt", "firms", "aemet"}
+SOURCES = {"open_meteo", "dgt", "firms"}
 
 
 def fixed_anchor(**over) -> GeoAnchor:
@@ -35,9 +35,6 @@ def fixed_anchor(**over) -> GeoAnchor:
         "lon0": -4.0,
         "meters_per_block": 25,
         "edges": {"road:wp_a-wp_b": EdgeRef(road_name="A-8005", pk_from=1.0, pk_to=2.5)},
-        "aemet_area": "esp",
-        "aemet_zones": ["633303"],
-        "aemet_events": ["NE"],
     }
     return GeoAnchor(**{**base, **over})
 
@@ -113,12 +110,11 @@ def test_sin_red_las_cuatro_fuentes_se_degradan_y_el_run_sigue(
     async def boom(*args, **kwargs):
         raise httpx.ConnectError("sin red")
 
-    for module, name in [(open_meteo, "fetch_current"), (dgt, "fetch"), (firms, "fetch"), (aemet, "fetch")]:
+    for module, name in [(open_meteo, "fetch_current"), (dgt, "fetch"), (firms, "fetch")]:
         monkeypatch.setattr(module, name, boom)
     monkeypatch.setattr("gateway.main.load_anchor", lambda _id: fixed_anchor())
     monkeypatch.setattr(settings, "vela_feeds", "live")
     monkeypatch.setattr(settings, "firms_map_key", "clave-de-prueba")
-    monkeypatch.setattr(settings, "aemet_api_key", "clave-de-prueba")
 
     start_run(client)
     assert wait_for(
@@ -152,14 +148,14 @@ def test_recorded_publica_los_hechos_firmados_como_feeds(
 
     seen = rt_of(client).hub.register()  # antes de arrancar: lo que se publique le llega
     start_run(client)
-    assert wait_for(lambda: client.get("/api/feeds").json()["sources"]["dgt"]["published"] == 2)
+    assert wait_for(lambda: client.get("/api/feeds").json()["sources"]["dgt"]["published"] == 1)
 
     facts = []
     while not seen.queue.empty():
         ev = seen.queue.get_nowait()
         if ev.type == "world.fact.asserted":
             facts.append(ev)
-    assert {f.payload["key"] for f in facts} == {"road:wp_a-wp_b:cut", "road:wp_a-wp_b:cause"}
+    assert {f.payload["key"] for f in facts} == {"road:wp_a-wp_b:cut"}  # un solo hecho: sin causa
     assert {f.source for f in facts} == {"feeds"}  # la envoltura (REQ-236)
     assert all(f.payload["source"].startswith("api:dgt:") for f in facts)
     assert all(f.payload["kind"] == "observed" for f in facts)

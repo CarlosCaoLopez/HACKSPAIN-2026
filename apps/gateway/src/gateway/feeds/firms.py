@@ -31,7 +31,6 @@ SP_FALLBACK = {
     "VIIRS_SNPP_NRT": "VIIRS_SNPP_SP",
 }
 
-VIIRS_PIXEL_M = 375  # resolución nominal de VIIRS, para dibujar la incertidumbre espacial
 CONFIDENCE = {"l": 0.4, "n": 0.7, "h": 0.9}
 REQUIRED = ("latitude", "longitude", "acq_date", "acq_time", "confidence")
 
@@ -151,7 +150,6 @@ def detections(records: list[FirmsRecord], anchor: GeoAnchor) -> list[dict[str, 
     localiza un foco a un bloque: enseñar un punto sería una precisión falsa, así que se
     enseña el cuadrado de 375 m con su incertidumbre.
     """
-    footprint = VIIRS_PIXEL_M / anchor.meters_per_block
     out = []
     for rec in records:
         if not _inside(anchor, rec):
@@ -164,7 +162,6 @@ def detections(records: list[FirmsRecord], anchor: GeoAnchor) -> list[dict[str, 
                 # La coordenada real, para el mapa de OpenStreetMap (SPEC-008 REQ-293).
                 "lat": rec.lat,
                 "lon": rec.lon,
-                "footprint_blocks": round(footprint, 2),
                 "t_real": rec.t.isoformat(),
                 "satellite": rec.satellite,
                 "confidence": rec.confidence,

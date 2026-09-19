@@ -4,7 +4,7 @@
 # «ancla sin fijar». Las coordenadas de abajo NO son un sitio elegido, solo hacen válido
 # el fichero. Se fija con `make feeds-probe` (F5 del plan): el primer incendio real que dé
 # >= 5 focos FIRMS n/h y un giro de viento visible. Entonces se cambia `fixed` a true y se
-# rellenan `place`, `lat0`, `lon0`, `reference_start`, `edges` y `aemet_*`.
+# rellenan `place`, `lat0`, `lon0`, `reference_start` y `edges`.
 id: wildfire_ridge
 place: "SIN FIJAR (ver make feeds-probe)"
 fixed: false
@@ -18,6 +18,3 @@ firms_radius_km: 10
 edges: {}
 # Ejemplo de una arista declarada equivalente a un tramo real:
 #   road:wp_sur_03-wp_sur_04: { road_name: N-400, pk_from: 36.0, pk_to: 38.5 }
-aemet_area: ""
-aemet_zones: []
-aemet_events: []

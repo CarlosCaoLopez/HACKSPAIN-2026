@@ -53,9 +53,6 @@ class GeoAnchor(BaseModel):
     spread_ratio: float = 0.10  # el fuego avanza ~10 % de la velocidad del viento
     edges: dict[str, EdgeRef] = {}
     firms_radius_km: float = 10.0
-    aemet_area: str = ""
-    aemet_zones: list[str] = []
-    aemet_events: list[str] = []
 
     @field_validator("reference_start")
     @classmethod

@@ -131,23 +131,23 @@ def test_una_causa_de_corte_que_solo_afecta_a_un_carril_no_corta():
 # --- hechos: el corte de DGT ---------------------------------------------------------------
 
 
-def test_un_roadclosed_sobre_la_arista_declarada_da_los_dos_hechos():
-    facts = by_key(facts_of())
-    cut, cause = facts[f"road:{EDGE.removeprefix('road:')}:cut"], facts[
-        f"road:{EDGE.removeprefix('road:')}:cause"
-    ]
+def test_un_roadclosed_sobre_la_arista_declarada_da_un_solo_hecho_el_corte():
+    obs = facts_of()
+    assert [o.fact.key for o in obs] == ["road:wp_a-wp_b:cut"], "la causa no se publica (REQ-312)"
+    cut = obs[0].fact
     assert cut.value is True and cut.kind == "observed" and cut.confidence == 0.9
     assert cut.source == "api:dgt:5684393v1"
     assert cut.severity == "medium"  # ninguna unidad del plan la usa
-    assert cause.value == "roadworks · DGT 5684393"
 
 
-def test_solo_el_corte_lleva_la_gravedad_para_no_provocar_dos_replanes():
-    """El core replanifica ante cada hecho crítico y no los agrupa: si `cut` y `cause` fueran
-    los dos críticos, un corte serían dos llamadas al modelo (invariante 7)."""
+def test_la_causa_del_corte_nunca_se_publica_porque_minecraft_no_la_muestra():
+    """Minecraft solo dibuja unos troncos: el texto de la causa no existe de ese lado. Un hecho
+    `road:*:cause` rompería la correspondencia (SPEC-007 REQ-312) y, además, con `cut` y `cause`
+    los dos críticos serían dos replanes por un corte (el core no agrupa)."""
     ctx = FeedContext(route_edges=frozenset({EDGE}))
-    sev = {o.fact.key.rsplit(":", 1)[1]: o.fact.severity for o in facts_of(ctx=ctx)}
-    assert sev == {"cut": "critical", "cause": "low"}
+    obs = facts_of(ctx=ctx)
+    assert [o.fact.key.rsplit(":", 1)[1] for o in obs] == ["cut"]
+    assert obs[0].fact.severity == "critical"
 
 
 def test_las_claves_son_las_del_contrato():
@@ -188,11 +188,10 @@ def test_el_nombre_de_carretera_del_ancla_puede_escribirse_a_su_manera():
 
 def test_una_inundacion_sobre_toda_la_calzada_corta_y_es_critica():
     a = anchor(road="MA-8306", pk_from=1.0, pk_to=2.0)
-    facts = [o.fact for o in facts_of(a=a) if o.fact.key.endswith(":cut")]
-    assert len(facts) == 2  # dos registros de la misma inundación, dos versiones distintas
+    facts = [o.fact for o in facts_of(a=a)]
+    assert len(facts) == 2  # dos registros de la misma inundación: un corte cada uno
     assert {f.severity for f in facts} == {"critical"}
-    cause = next(o.fact for o in facts_of(a=a) if o.fact.key.endswith(":cause"))
-    assert cause.value.startswith("flooding · DGT 20413")
+    assert {f.source.split(":")[2][:8] for f in facts} == {"20413525", "20413490"}
 
 
 def test_un_corte_sobre_una_arista_que_usa_el_plan_es_critico():

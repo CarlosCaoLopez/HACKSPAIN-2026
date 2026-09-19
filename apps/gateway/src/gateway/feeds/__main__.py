@@ -76,7 +76,6 @@ async def probe(
     client: httpx.AsyncClient | None = None,
     feeds_dir: Path | None = None,
     firms_key: str | None = None,
-    aemet_key: str | None = None,
     out: Callable[[str], object] = print,
 ) -> int:
     """Una pasada por cada fuente activa. `0` si todas respondieron; `1` si alguna falló o si
@@ -89,7 +88,6 @@ async def probe(
         only=only,
         feeds_dir=feeds_dir or Path(settings.vela_feeds_dir),
         firms_key=settings.firms_map_key if firms_key is None else firms_key,
-        aemet_key=settings.aemet_api_key if aemet_key is None else aemet_key,
         save_captures=capture,
     )
     day = anchor.reference_start.date().isoformat() if anchor.reference_start else "en vivo"
@@ -150,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     what = parser.add_mutually_exclusive_group(required=True)
     what.add_argument("--probe", metavar="ESCENARIO", help="probar sin publicar ni guardar")
     what.add_argument("--capture", metavar="ESCENARIO", help="probar y guardar las respuestas crudas")
-    parser.add_argument("--only", default="", help="open_meteo,dgt,firms,aemet (vacío = todas)")
+    parser.add_argument("--only", default="", help="open_meteo,dgt,firms (vacío = todas)")
     parser.add_argument("--anchor-override", metavar="LAT,LON[,AAAA-MM-DD]")
     args = parser.parse_args(argv)
 
