@@ -57,6 +57,14 @@ TREES = ["oak", "oak", "birch", "spruce", "oak_bees_0002"]
 """Features de vanilla: árboles de verdad, no cajas de `fill`."""
 
 ROAD_BLOCK = "gray_concrete"
+CUT_ROAD_BLOCKS = ("black_concrete", "yellow_concrete")
+"""Un tramo cortado se repinta a franjas negras y amarillas, como una valla de
+obra. En el clímax el jurado ve al camión dar media vuelta; sin esto no ve **por
+qué**, y el motivo solo vive en el dashboard.
+
+No se usa rojo a propósito: en este mapa el rojo ya es el marcador del hospital y
+el cuerpo de los camiones. Tres significados para el mismo color, en seis minutos
+y con el jurado mirando, es pedir que se confunda."""
 ROAD_WIDTH = 3
 ROAD_CLEARANCE = 3
 """Bloques a cada lado que la carretera despeja por encima.
@@ -322,7 +330,9 @@ def road_commands(scenario: Scenario) -> list[str]:
     return out
 
 
-def _strip(a: tuple[float, float], b: tuple[float, float]) -> list[str]:
+def _strip(
+    a: tuple[float, float], b: tuple[float, float], block: str = ROAD_BLOCK
+) -> list[str]:
     """Rasteriza el segmento a bloques. Un `fill` por paso: feo de contar, pero
     son cien comandos y salen en menos de un segundo."""
     (x1, z1), (x2, z2) = a, b
@@ -340,8 +350,53 @@ def _strip(a: tuple[float, float], b: tuple[float, float]) -> list[str]:
         )
         out.append(
             f"fill {x - half} {GROUND_Y} {z - half} "
-            + f"{x + half} {GROUND_Y} {z + half} {ROAD_BLOCK}"
+            + f"{x + half} {GROUND_Y} {z + half} {block}"
         )
+    return out
+
+
+STRIPE_LEN = 3
+"""Bloques por franja. Con uno solo, los tramos vecinos se pisan al rasterizar y
+desde lejos queda un gris sucio en vez de una valla."""
+
+
+def _striped(a: tuple[float, float], b: tuple[float, float]) -> list[str]:
+    """El mismo trazado que `_strip`, alternando los dos colores de la valla.
+
+    `_strip` emite dos comandos por paso —el desmonte y el firme—, así que el
+    paso es `i // 2` y la franja cambia cada `STRIPE_LEN` pasos.
+    """
+    negro, amarillo = CUT_ROAD_BLOCKS
+    out = []
+    for i, cmd in enumerate(_strip(a, b, negro)):
+        franja = (i // 2) // STRIPE_LEN
+        out.append(cmd if franja % 2 == 0 else cmd.replace(negro, amarillo))
+    return out
+
+
+def road_cut_commands(
+    a: tuple[float, float], b: tuple[float, float], cut: bool = True
+) -> list[str]:
+    """Pinta un tramo como cortado, o lo devuelve a carretera normal.
+
+    En el clímax el jurado ve al camión dar media vuelta; sin esto no ve **por
+    qué**, porque el motivo solo existe en el dashboard. El firme se repinta de
+    rojo, que se lee al instante desde el plano cenital, y en mitad del tramo se
+    cruzan dos troncos — que es lo que se aprecia en el plano cercano y coincide
+    con la causa que declara el escenario, "árbol caído".
+    """
+    out = (
+        _striped(a, b) if cut else _strip(a, b, ROAD_BLOCK)
+    )
+    mx, mz = round((a[0] + b[0]) / 2), round((a[1] + b[1]) / 2)
+    reach = ROAD_WIDTH // 2 + 1
+    log = "oak_log" if cut else "air"
+    out += [
+        f"fill {mx - reach} {GROUND_Y + 1} {mz} "
+        + f"{mx + reach} {GROUND_Y + 1} {mz} {log}",
+        f"fill {mx} {GROUND_Y + 1} {mz - reach} "
+        + f"{mx} {GROUND_Y + 1} {mz + reach} {log}",
+    ]
     return out
 
 

@@ -21,14 +21,15 @@ class Settings(BaseSettings):
 
     # P3 (fenic)
     anthropic_api_key: str = ""
+    openai_api_key: str = ""  # P1 y P3: fenic usa gpt-5.6-luna si está; si no, Anthropic
 
     # P1 · planner (GPT-5.6 Luna)
-    openai_api_key: str = ""
 
     # P3 · telefonía
     happyrobot_api_key: str = ""
     happyrobot_hook_evacuation: str = ""  # la URL del incoming hook
     humalike_api_key: str = ""
+    happyrobot_webcall_url: str = ""  # P3/P4: enlace de la web call del workflow entrante
     judge_phone: str = ""
 
     # P3 y P4

@@ -150,7 +150,7 @@ async def test_cortar_la_carretera_reencamina_al_camion(sim):
                                          "waypoint_id": "wp_pueblo_a"})
     assert "wp_sur_01" in sim._moving["unit_truck1"][0].route
 
-    await sim.inject("road_cut", {"edge": "rd_sur01_sur02", "cause": "árbol caído"})
+    await sim.inject("road_cut", {"edge": "road:wp_sur_01-wp_sur_02", "cause": "árbol caído"})
 
     ruta = sim._moving["unit_truck1"][0].route
     assert "wp_nor_01" in ruta, f"debería desviarse al norte, fue por {ruta}"
@@ -193,3 +193,113 @@ async def test_snapshot_sirve_para_depurar(sim):
     assert snap["t_sim"] == 1.0
     assert "unit_truck1" in snap["moving"]
     assert snap["run_id"].startswith("run_")
+
+
+# --- la costura con el core: `core.loop` manda la ruta ya resuelta ---
+
+async def test_goto_acepta_la_ruta_que_manda_el_core(sim):
+    """`core.loop` emite args={"unit_id", "route"}; `Assignment.route` está
+    documentado como "ya resuelta". Sin esto, cada goto del core moría con
+    KeyError y en la integración no se movía una sola unidad."""
+    await sim.execute("act_go", "goto", {
+        "unit_id": "unit_truck1",
+        "route": ["wp_base", "wp_cruce", "wp_nor_01", "wp_nor_02", "wp_pueblo_a"],
+    })
+    assert sim.units["unit_truck1"].status == "moving"
+    assert sim._moving["unit_truck1"][0].route[-1] == "wp_pueblo_a"
+    assert "wp_nor_01" in sim._moving["unit_truck1"][0].route, "respeta la del core"
+
+
+async def test_la_ruta_del_core_se_engancha_donde_esté_la_unidad(sim):
+    """El plan puede venir calculado desde otro punto: se antepone el trecho que
+    falta en vez de teletransportar la unidad al inicio de la ruta."""
+    await sim.execute("a1", "goto", {"unit_id": "unit_truck1",
+                                     "waypoint_id": "wp_hospital"})
+    for _ in range(30):
+        await sim.tick(1.0)
+    await sim.execute("a2", "goto", {"unit_id": "unit_truck1",
+                                     "route": ["wp_sur_02", "wp_pueblo_a"]})
+    ruta = sim._moving["unit_truck1"][0].route
+    assert ruta[-1] == "wp_pueblo_a"
+    assert ruta[0] != "wp_sur_02", "tiene que llegar primero hasta la ruta del plan"
+
+
+async def test_un_waypoint_inventado_en_la_ruta_falla_claro(sim):
+    await sim.execute("a1", "goto", {"unit_id": "unit_truck1",
+                                     "route": ["wp_base", "wp_narnia"]})
+    assert eventos(EventType.ACTION_FAILED)[-1]["error"] == "unknown_waypoint:wp_narnia"
+
+
+async def test_goto_sin_destino_ni_ruta_falla(sim):
+    await sim.execute("a1", "goto", {"unit_id": "unit_truck1"})
+    assert eventos(EventType.ACTION_FAILED)[-1]["error"] == "goto_sin_destino"
+
+
+async def test_el_corte_emite_siempre_el_id_canonico(sim):
+    """Quien corta puede nombrar la carretera por sus extremos, pero el evento
+    lleva el id de siempre: si no, el dashboard ve dos `edge_id` para la misma
+    carretera según quién la cortó."""
+    await sim.inject("road_cut", {"edge": "wp_sur_01-wp_sur_02", "cause": "árbol"})
+    assert eventos(EventType.WORLD_ROAD_CHANGED)[-1]["edge_id"] == (
+        "road:wp_sur_01-wp_sur_02"
+    )
+
+
+async def test_cortar_una_carretera_que_no_existe_no_miente(sim):
+    """Un id que no casa no puede pasar por un corte efectivo."""
+    await sim.inject("road_cut", {"edge": "road:wp_a-wp_b", "cause": "x"})
+    ev = eventos(EventType.WORLD_ROAD_CHANGED)[-1]
+    assert ev["cut"] is False and "desconocida" in ev["cause"]
+
+
+async def test_cortar_una_carretera_se_ve_en_el_mundo(sim):
+    """El clímax necesita imagen: el jurado ve al camión girar, y tiene que ver
+    también por qué. Sin esto el motivo solo existe en el dashboard."""
+    await sim.inject("road_cut", {"edge": "road:wp_sur_01-wp_sur_02", "cause": "árbol caído"})
+    valla = [c for _, c in sim.rcon.commands
+             if "black_concrete" in c or "yellow_concrete" in c]
+    assert valla, "el tramo cortado tiene que repintarse a franjas"
+    assert any("oak_log" in c for _, c in sim.rcon.commands), "y el árbol caído"
+
+
+async def test_el_repintado_va_por_el_carril_lento(sim):
+    """D7: es decorado; no puede adelantar al `/tp` del replan."""
+    await sim.inject("road_cut", {"edge": "road:wp_sur_01-wp_sur_02", "cause": "x"})
+    assert all(p == LOW for p, c in sim.rcon.commands if "black_concrete" in c)
+
+
+# --- lo que el sim deduce por su cuenta, sin que el core se lo pida ---
+
+async def test_un_poi_amenazado_se_pinta_de_rojo(sim):
+    """Que un pueblo esté en peligro es geometría, no una decisión: el sim ya sabe
+    qué arde y dónde están los POIs. Sin esto el mapa se queda muerto mientras el
+    core no pida `set_marker`, y hoy el core no lo pide nunca."""
+    cerca = sim._pois["poi_pueblo_a"]
+    sim.hazard._state[sim.hazard_cell_at(cerca.x, cerca.z)] = "burning"
+    await sim._update_markers()
+    assert sim._marker_state["poi_pueblo_a"] == "danger"
+    assert any("red_concrete" in c for _, c in sim.rcon.commands)
+
+
+async def test_el_marcador_no_se_repinta_cada_tick(sim):
+    """Cinco `fill` por tick compitiendo con el movimiento, para nada."""
+    await sim._update_markers()
+    antes = len(sim.rcon.commands)
+    await sim._update_markers()
+    assert len(sim.rcon.commands) == antes
+
+
+async def test_pinta_un_corte_que_no_ha_disparado_el(sim):
+    """El corte de la demo lo deduce el core de una llamada, no un inject del
+    YAML. Por ese camino el sim solo se entera si escucha el evento."""
+    await sim.apply_road_change("road:wp_sur_01-wp_sur_02", True, "por la llamada")
+    assert sim.graph.is_cut("road:wp_sur_01-wp_sur_02")
+    assert any("black_concrete" in c for _, c in sim.rcon.commands)
+
+
+async def test_aplicar_dos_veces_el_mismo_corte_no_hace_nada(sim):
+    """Recibe sus propios eventos: repetir no puede costar."""
+    await sim.apply_road_change("road:wp_sur_01-wp_sur_02", True, "x")
+    antes = len(sim.rcon.commands)
+    await sim.apply_road_change("road:wp_sur_01-wp_sur_02", True, "x")
+    assert len(sim.rcon.commands) == antes

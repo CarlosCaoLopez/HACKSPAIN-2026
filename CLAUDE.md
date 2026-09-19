@@ -24,18 +24,13 @@ y lo enseña en un dashboard.
 | Servidor | FastAPI + uvicorn, **un solo proceso** | API, webhooks y WS del dashboard juntos |
 | Bus | `asyncio` in-process + journal JSONL | Sin infra externa |
 | Ingesta | Typedef `fenic` | `semantic.extract` / `classify` / `join` |
-| Política (planner) | **GPT-5.6 Luna** (OpenAI), SDK `openai`, `OPENAI_API_KEY` | La única llamada LLM por replan. **No Anthropic** (decisión de Carlos, H3) |
 | Asignación | `scipy.optimize.linear_sum_assignment` | Determinista y explicable |
 | Mundo | Paper 1.21 + RCON (`mcrcon`) | Solo `/tp`, `/fill`, `/setblock`. Sin bots ni pathfinding |
-| Voz | HappyRobot (saliente) + humalike (entrante) | |
+| Voz | HappyRobot en las dos direcciones (tool `report_fact` en llamada, *signals* de vuelta) + Humalike encima (`foresee`, `analyze`, `personas`) | Humalike no toca la telefonía. Todo REST, no hay SDK de Python |
 | Dashboard | Vite + React + TS + Tailwind | **Único sitio donde hay TypeScript** |
 | Deps | `uv` (Python) + `pnpm` (dashboard) | |
 
 Nada de Node en el servidor: mineflayer se descartó al descartar los agentes LLM dentro de Minecraft.
-
-Dos proveedores LLM conviven a propósito: el **planner** (`packages/core`, política) usa **OpenAI
-GPT-5.6 Luna**; la **ingesta** (`fenic`, P3) sigue en **Anthropic**. No unificar: es intencional.
-El modelo del planner se cambia solo en la constante `MODEL` de `packages/core/src/core/planner.py`.
 
 ## Invariantes que no se rompen
 
@@ -105,6 +100,9 @@ Renombrar, cambiar un tipo o hacer obligatorio un campo necesita a los cuatro. B
 
 ## Convenciones
 
+- **Antes de tocar nada: commit de lo que haya sin commitear (aunque sea `wip:`), y luego
+  `git pull --rebase origin <rama>`.** Nunca `stash` ni `--autostash` como rutina. Cuatro
+  personas cambian el repo cada hora; se trabaja siempre sobre lo último y con lo propio a salvo.
 - **Ids con prefijo**: `unit_truck1`, `poi_pueblo_a`, `wp_sur_03`, `cell_14_22`, `task_evac_a`.
 - **Coordenadas siempre del mundo Minecraft** (x, z, con y implícita). El core nunca piensa en píxeles.
 - **`t_sim`, segundos flotantes, es el tiempo del dominio.** `t_wall` solo depura y mide latencia real.

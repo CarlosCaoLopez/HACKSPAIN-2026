@@ -12,10 +12,17 @@ PREFIXES = {
     "pois": "poi_",
     "units": "unit_",
     "waypoints": "wp_",
-    "roads": "rd_",
+    "roads": "road:",
     "civilians": "civ_",
 }
-"""Ids con prefijo, que es convención del proyecto y aquí se comprueba de verdad."""
+"""Ids con prefijo, que es convención del proyecto y aquí se comprueba de verdad.
+
+Las aristas llevan `road:` y no `rd_` porque su id **es también su dirección**:
+`interfaces.md` nombra las carreteras como `road:wp_a-wp_b` en las claves de hecho
+(`"road:wp_sur_03-wp_sur_04:cut"`) y en el `target` de `human.override`. Una
+llamada de teléfono o un humano en el dashboard no conocen los ids de este
+fichero, así que nombran la carretera por sus extremos; usando esa misma forma
+como id, no hay dos espacios de nombres que traducir."""
 
 
 class ScenarioError(ValueError):

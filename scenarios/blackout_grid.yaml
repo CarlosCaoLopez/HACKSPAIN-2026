@@ -106,19 +106,19 @@ waypoints:
   - {id: wp_refugio, x: -33, z: 77}
 
 roads:
-  - {id: rd_base_cruce, a: wp_base, b: wp_cruce, length_m: 77}
+  - {id: road:wp_base-wp_cruce, a: wp_base, b: wp_cruce, length_m: 77}
   # desvío norte: 120 m más largo, pero el viento aleja el fuego de él
-  - {id: rd_cruce_nor01, a: wp_cruce, b: wp_nor_01, length_m: 70}
-  - {id: rd_nor01_nor02, a: wp_nor_01, b: wp_nor_02, length_m: 66}
-  - {id: rd_nor02_puebloa, a: wp_nor_02, b: wp_pueblo_a, length_m: 72}
+  - {id: road:wp_cruce-wp_nor_01, a: wp_cruce, b: wp_nor_01, length_m: 70}
+  - {id: road:wp_nor_01-wp_nor_02, a: wp_nor_01, b: wp_nor_02, length_m: 66}
+  - {id: road:wp_nor_02-wp_pueblo_a, a: wp_nor_02, b: wp_pueblo_a, length_m: 72}
   # desvío sur: el corto, y el que el incendio corta hacia el minuto 3
-  - {id: rd_cruce_sur01, a: wp_cruce, b: wp_sur_01, length_m: 56}
-  - {id: rd_sur01_sur02, a: wp_sur_01, b: wp_sur_02, length_m: 61}
-  - {id: rd_sur02_puebloa, a: wp_sur_02, b: wp_pueblo_a, length_m: 45}
+  - {id: road:wp_cruce-wp_sur_01, a: wp_cruce, b: wp_sur_01, length_m: 56}
+  - {id: road:wp_sur_01-wp_sur_02, a: wp_sur_01, b: wp_sur_02, length_m: 61}
+  - {id: road:wp_sur_02-wp_pueblo_a, a: wp_sur_02, b: wp_pueblo_a, length_m: 45}
   # ramales
-  - {id: rd_sur02_pueblob, a: wp_sur_02, b: wp_pueblo_b, length_m: 84}
-  - {id: rd_cruce_hospital, a: wp_cruce, b: wp_hospital, length_m: 78}
-  - {id: rd_base_refugio, a: wp_base, b: wp_refugio, length_m: 78}
+  - {id: road:wp_sur_02-wp_pueblo_b, a: wp_sur_02, b: wp_pueblo_b, length_m: 84}
+  - {id: road:wp_cruce-wp_hospital, a: wp_cruce, b: wp_hospital, length_m: 78}
+  - {id: road:wp_base-wp_refugio, a: wp_base, b: wp_refugio, length_m: 78}
 
 civilians:
   - {id: civ_pueblo_a, poi_id: poi_pueblo_a, count: 24, immobile: 3}
@@ -128,7 +128,7 @@ civilians:
 injects:
   - at: 120
     type: road_cut
-    payload: {edge: rd_cruce_nor01, cause: "poste caído sobre la calzada"}
+    payload: {edge: road:wp_cruce-wp_nor_01, cause: "poste caído sobre la calzada"}
   - at: 200
     type: unit_failure
     payload: {unit: unit_drone, reason: "sin cobertura de control"}

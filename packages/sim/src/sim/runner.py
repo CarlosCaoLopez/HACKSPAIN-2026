@@ -10,6 +10,7 @@ dos cosas (D5): eso es lo que los hace testeables sin Paper y sin core.
 
 import asyncio
 import contextlib
+import math
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,12 +19,18 @@ from typing import Any
 from contracts.events import Event, EventType
 from contracts.world import Wind
 from sim.graph import RoadGraph
-from sim.hazard import build_hazard
+from sim.hazard import build_hazard, cell_id
 from sim.injects import ROAD_CUT, UNIT_FAILURE, WIND_SHIFT, InjectScheduler
 from sim.movement import TICK_HZ, Movement, tp_command
 from sim.rcon import HIGH, LOW, Rcon
 from sim.scenario import load
-from sim.worldgen import GROUND_Y, POI_STYLE, build, teardown
+from sim.worldgen import (
+    GROUND_Y,
+    POI_STYLE,
+    build,
+    road_cut_commands,
+    teardown,
+)
 
 TICK_S = 1.0
 """Un segundo simulado por tick. La interpolación va a 5 Hz por dentro."""
@@ -36,6 +43,14 @@ DEFAULT_SPEED_MPS = 4.0
 demasiado rápido para verlo, y sobre todo demasiado rápido para que el corte de
 carretera del minuto 3:30 pille a alguien en ruta — el clímax se quedaba sin nadie
 a quien reencaminar. A 4 m/s son ~40 s, que se ven y se pueden interrumpir."""
+
+DANGER_RADIUS_M = 45.0
+"""A qué distancia del frente un POI se pinta en rojo.
+
+Que un pueblo esté amenazado **no es una decisión, es geometría**: el sim ya sabe
+qué celdas arden y dónde está cada POI. Hacer que eso viajara como orden desde el
+core era acoplamiento gratis, y mientras el core no lo pidiera el mapa se quedaba
+muerto salvo por el fuego y los camiones."""
 
 MARKER_BLOCKS = {
     "ok": "lime_concrete", "warned": "yellow_concrete",
@@ -54,6 +69,11 @@ async def _publish(ev: Event) -> None:
     from contracts import bus
 
     try:
+        if not bus.current_run_id():
+            # Bus implementado pero sin run arrancado (tests, `dev-sim` suelto):
+            # los eventos se quedan en la reserva, igual que cuando no existía.
+            _FALLBACK.append(ev)
+            return
         await bus.publish(ev)
     except NotImplementedError:
         _FALLBACK.append(ev)
@@ -63,11 +83,25 @@ _FALLBACK: list[Event] = []
 """Los eventos que no ha podido tragar el bus. `snapshot()` los expone."""
 
 
+async def _subscribe(*types: EventType):
+    """Suscripción al bus, o `None` si P1 todavía no lo ha escrito.
+
+    Mismo rodeo que `_publish`: la firma está cerrada, así que `sim` escribe
+    contra ella y el día que exista el bus esto empieza a funcionar solo.
+    """
+    from contracts import bus
+
+    try:
+        return bus.subscribe(*types)
+    except NotImplementedError:
+        return None
+
+
 def _run_id() -> str:
     from contracts import bus
 
     try:
-        return bus.current_run_id()
+        return bus.current_run_id() or f"run_{uuid.uuid4().hex[:8]}"
     except NotImplementedError:
         return f"run_{uuid.uuid4().hex[:8]}"
 
@@ -89,7 +123,10 @@ class Sim:
         self.civilians = {c.id: c.model_copy() for c in self.scenario.civilians}
         self._pois = {p.id: p for p in self.scenario.pois}
         self._moving: dict[str, tuple[Movement, str]] = {}
+        self._marker_state: dict[str, str] = {}
+        """Color actual de cada POI, para repintar solo cuando cambia."""
         self._loop_task: asyncio.Task | None = None
+        self._watch_task: asyncio.Task | None = None
         self._running = False
 
     # --- ciclo de vida ---
@@ -104,15 +141,53 @@ class Sim:
              "hazard": self.scenario.hazard.kind},
         )
         self._loop_task = asyncio.create_task(self._loop(), name="sim-tick")
+        self._watch_task = asyncio.create_task(self._watch_roads(), name="sim-roads")
 
     async def stop(self) -> None:
         self._running = False
+        if self._watch_task is not None:
+            self._watch_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._watch_task
+            self._watch_task = None
         if self._loop_task is not None:
             self._loop_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._loop_task
             self._loop_task = None
         await teardown(self.rcon, self.scenario)
+
+    async def _watch_roads(self) -> None:
+        """Escucha `world.road.changed` y pinta, venga el corte de donde venga.
+
+        El corte que importa en la demo no lo dispara un inject del YAML: lo
+        deduce el core de la llamada del vecino. Por ese camino el sim nunca se
+        enteraba, así que la carretera no se pintaba justo en el momento para el
+        que existe el repintado. Escuchar el evento —que ya está en el catálogo y
+        que el propio sim emite— lo arregla sin que nadie tenga que acordarse de
+        avisar.
+        """
+        stream = await _subscribe(EventType.WORLD_ROAD_CHANGED)
+        if stream is None:
+            return
+        async for ev in stream:
+            edge_id = ev.payload.get("edge_id")
+            cut = bool(ev.payload.get("cut"))
+            if edge_id is None or self.graph.resolve_edge(edge_id) is None:
+                continue
+            await self.apply_road_change(edge_id, cut, ev.payload.get("cause", ""))
+
+    async def apply_road_change(self, reference: str, cut: bool, cause: str) -> None:
+        """Aplica y pinta un cambio de carretera. Idempotente a propósito: el sim
+        recibe también sus propios eventos, y repetir no puede costar nada."""
+        edge_id = self.graph.resolve_edge(reference)
+        if edge_id is None or self.graph.is_cut(edge_id) == cut:
+            return
+        if cut:
+            self.graph.cut(edge_id, cause)
+        else:
+            self.graph.restore(edge_id)
+        await self._render_road(edge_id, cut=cut)
 
     async def _loop(self) -> None:
         while self._running:
@@ -130,6 +205,7 @@ class Sim:
         )
         await self._advance_hazard(dt)
         await self._advance_units(dt)
+        await self._update_markers()
         for spec in self.injects.due(self.t_sim):
             await self.inject(spec.type, spec.payload)
 
@@ -167,6 +243,40 @@ class Sim:
             if movement.done:
                 await self._arrive(unit_id)
 
+    async def _update_markers(self) -> None:
+        """Pinta cada POI según lo cerca que tenga el peligro.
+
+        Rojo si arde algo a menos de `DANGER_RADIUS_M`, naranja si el frente ya
+        pasó por ahí y dejó cicatriz, y su color propio si está limpio. Solo se
+        manda el `fill` cuando el estado cambia: sin eso serían cinco comandos por
+        tick compitiendo con el movimiento.
+        """
+        for poi_id, poi in self._pois.items():
+            estado = self._threat(poi.x, poi.z)
+            if self._marker_state.get(poi_id) != estado:
+                await self._paint_marker(poi_id, estado)
+
+    def hazard_cell_at(self, x: float, z: float) -> str:
+        """Id de la celda del autómata que cubre esas coordenadas."""
+        size = self.scenario.hazard.cell_size
+        return cell_id(int(x // size), int(z // size))
+
+    def _threat(self, x: float, z: float) -> str:
+        cerca_ardiendo = cerca_quemado = False
+        for cid, cell_state in self.hazard._state.items():
+            if cell_state not in ("burning", "burnt"):
+                continue
+            x1, z1, x2, z2 = self.hazard.bounds(cid)
+            if math.dist((x, z), ((x1 + x2) / 2, (z1 + z2) / 2)) > DANGER_RADIUS_M:
+                continue
+            if cell_state == "burning":
+                cerca_ardiendo = True
+                break
+            cerca_quemado = True
+        if cerca_ardiendo:
+            return "danger"
+        return "evacuating" if cerca_quemado else "base"
+
     async def _arrive(self, unit_id: str) -> None:
         movement, action_id = self._moving.pop(unit_id)
         await self._emit(
@@ -196,7 +306,14 @@ class Sim:
             await self._failed(action_id, f"{type(exc).__name__}: {exc}")
 
     async def _do_goto(self, action_id: str, args: dict) -> None:
-        unit_id, target = args["unit_id"], args["waypoint_id"]
+        """Acepta `route` (la que manda el core) o `waypoint_id` (un destino suelto).
+
+        El core resuelve el camino él mismo: `Assignment.route` está documentado
+        como "waypoint ids, ya resuelta" y `core.loop` emite `args={"unit_id",
+        "route"}`. El sim acepta también un destino suelto porque es lo cómodo
+        para un core tonto, para `POST /control` y para los tests.
+        """
+        unit_id = args["unit_id"]
         if unit_id not in self.units:
             await self._failed(action_id, f"unknown_unit:{unit_id}")
             return
@@ -204,7 +321,25 @@ class Sim:
             await self._failed(action_id, f"unit_unavailable:{unit_id}")
             return
 
-        route = self._route_from(unit_id, target)
+        target = args.get("waypoint_id")
+        given = args.get("route")
+        if not given and target is None:
+            await self._failed(action_id, "goto_sin_destino")
+            return
+
+        if given:
+            desconocidos = [w for w in given if w not in self.graph.waypoint_ids]
+            if desconocidos:
+                await self._failed(action_id, f"unknown_waypoint:{desconocidos[0]}")
+                return
+            # La unidad puede no estar en el arranque de la ruta que manda el core
+            # —viene de otra orden, o el plan la calculó desde su tarea—. Se le
+            # antepone el trecho que falta en vez de teletransportarla al inicio.
+            route = self._join(unit_id, list(given))
+            target = given[-1]
+        else:
+            route = self._route_from(unit_id, target)
+
         if route is None:
             await self._failed(action_id, f"no_route:{target}")
             return
@@ -223,6 +358,12 @@ class Sim:
 
     async def _do_set_marker(self, action_id: str, args: dict) -> None:
         poi_id, state = args["poi_id"], args["state"]
+        await self._paint_marker(poi_id, state)
+        await self._completed(action_id, {"poi_id": poi_id, "state": state})
+
+    async def _paint_marker(self, poi_id: str, state: str) -> None:
+        """Repinta la plataforma de un POI. Lo usan el verbo del core y el
+        marcado automático por cercanía del fuego."""
         poi = self._pois[poi_id]
         block = MARKER_BLOCKS.get(state, POI_STYLE[poi.kind][1])
         size = 12
@@ -231,7 +372,7 @@ class Sim:
             f"{int(poi.x) + size} {GROUND_Y} {int(poi.z) + size} {block}",
             LOW,
         )
-        await self._completed(action_id, {"poi_id": poi_id, "state": state})
+        self._marker_state[poi_id] = state
 
     async def _do_announce(self, action_id: str, args: dict) -> None:
         text = str(args["text"]).replace('"', "'")
@@ -279,8 +420,20 @@ class Sim:
         elif inject_type == UNIT_FAILURE:
             await self._fail_unit(payload["unit"], payload.get("reason", "avería"))
 
-    async def _cut(self, edge_id: str, cause: str) -> None:
+    async def _cut(self, reference: str, cause: str) -> None:
+        # Canonizar antes de emitir: si el que corta nombró la carretera por sus
+        # extremos, el evento tiene que llevar el id de siempre. Si no, el
+        # dashboard ve dos `edge_id` distintos para la misma carretera según
+        # quién la cortó, y el journal deja de poder casarlos.
+        edge_id = self.graph.resolve_edge(reference)
+        if edge_id is None:
+            await self._emit(
+                EventType.WORLD_ROAD_CHANGED,
+                {"edge_id": reference, "cut": False, "cause": f"desconocida: {cause}"},
+            )
+            return
         self.graph.cut(edge_id, cause)
+        await self._render_road(edge_id, cut=True)
         await self._emit(
             EventType.WORLD_ROAD_CHANGED,
             {"edge_id": edge_id, "cut": True, "cause": cause},
@@ -289,8 +442,6 @@ class Sim:
         # ya iban por ahí tienen que recalcular. Sin esto, el camión sigue tan
         # tranquilo por una pista cortada mientras el dashboard dice otra cosa.
         for unit_id, (movement, action_id) in list(self._moving.items()):
-            if self.graph.shortest_path(movement.route[-1], movement.route[-1]) is None:
-                continue
             destino = movement.route[-1]
             nueva = self._route_from(unit_id, destino)
             if nueva is None:
@@ -325,18 +476,39 @@ class Sim:
             "unpublished": len(_FALLBACK),
         }
 
-    def _route_from(self, unit_id: str, waypoint_id: str) -> list[str] | None:
-        """De dónde sale la unidad: del waypoint más cercano a su posición real,
-        no del origen de su última ruta."""
+    async def _render_road(self, edge_id: str, cut: bool) -> None:
+        """Pinta el tramo. Carril lento: es decorado, no puede adelantar a un `/tp`."""
+        edge = next((r for r in self.scenario.roads if r.id == edge_id), None)
+        if edge is None:
+            return
+        a = self.graph.position_of(edge.a)
+        b = self.graph.position_of(edge.b)
+        await self.rcon.send_many(road_cut_commands(a, b, cut), LOW)
+
+    def _join(self, unit_id: str, route: list[str]) -> list[str] | None:
+        """Pega la unidad al principio de una ruta que viene ya resuelta."""
+        origen = self._nearest(unit_id)
+        if origen == route[0]:
+            return route
+        if origen in route:  # ya va por esa ruta, más adelantada
+            return route[route.index(origen):]
+        acceso = self.graph.shortest_path(origen, route[0])
+        return None if acceso is None else acceso[:-1] + route
+
+    def _nearest(self, unit_id: str) -> str:
         unit = self.units[unit_id]
-        origen = min(
+        return min(
             self.graph.waypoint_ids,
             key=lambda w: (
                 (self.graph.position_of(w)[0] - unit.x) ** 2
                 + (self.graph.position_of(w)[1] - unit.z) ** 2
             ),
         )
-        return self.graph.shortest_path(origen, waypoint_id)
+
+    def _route_from(self, unit_id: str, waypoint_id: str) -> list[str] | None:
+        """De dónde sale la unidad: del waypoint más cercano a su posición real,
+        no del origen de su última ruta."""
+        return self.graph.shortest_path(self._nearest(unit_id), waypoint_id)
 
     async def _status(self, unit_id: str, status: str, reason: str) -> None:
         self.units[unit_id] = self.units[unit_id].model_copy(
