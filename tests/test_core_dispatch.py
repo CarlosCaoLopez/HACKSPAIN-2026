@@ -13,7 +13,7 @@ import pytest
 
 from contracts import bus
 from contracts.events import ActionRequested, CallRequest, Event, EventType
-from contracts.plan import Policy
+from contracts.plan import Assignment, Plan, PlanContext, Policy
 from contracts.scenario import HazardSpec, Scenario, Waypoint
 from contracts.settings import settings
 from contracts.world import POI, CivilianGroup, RoadEdge, Unit, Wind
@@ -82,10 +82,17 @@ def _scenario() -> Scenario:
             Unit(
                 id="unit_truck2", kind="fire_truck", x=0, z=0, capabilities=["extinguish"]
             ),
-            # Sin una unidad `transport` el solver no asigna la evacuación y no hay
-            # orden al pueblo que diferir, que es medio test.
+            # Dos ambulancias: con una sola no se ve el relevo de retención, que es
+            # el caso que se coló en `runs/run_bc8247ef1ed1.jsonl`.
             Unit(
                 id="unit_ambulance",
+                kind="ambulance",
+                x=0,
+                z=0,
+                capabilities=["transport"],
+            ),
+            Unit(
+                id="unit_ambulance2",
                 kind="ambulance",
                 x=0,
                 z=0,
@@ -328,3 +335,175 @@ async def test_descolgar_reinicia_el_plazo(journal, fixed_planner) -> None:
     salidas = _gotos(journal, unidad)
     assert len(salidas) == 1
     assert salidas[0].dispatch_confirmed is True
+
+
+# --- la ambulancia: solo sale si alguien la pide, y tampoco antes de colgar ------
+
+
+def _fact(key: str, value, kind: str = "observed", t_sim: float = 20.0) -> Event:
+    """Un `world.fact.asserted` como el que publica una llamada."""
+    return _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": key,
+            "value": value,
+            "confidence": 0.9,
+            "source": "call:hl_vecino",
+            "severity": "critical",
+            "kind": kind,
+            "call_id": "hl_vecino",
+        },
+        source="call:hl_vecino",
+        t_sim=t_sim,
+    )
+
+
+async def test_una_evacuacion_no_saca_a_la_ambulancia(journal, fixed_planner) -> None:
+    """Que arda un pueblo mueve camiones, no ambulancias. Antes de esto el solver
+    asignaba la evacuación a la ambulancia y salía en el mismo segundo de la ignición,
+    sin llamada y sin `dispatch_confirmed`: medido en `runs/run_726b7bab939a.jsonl`,
+    seq 18 y 19, antes incluso de que empezara la llamada al retén."""
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+
+    assert "task_evac_poi_pueblo_a" in core.state().tasks
+    assert _gotos(journal, "unit_ambulance") == []
+    assert not _calls(journal, "ambulance_dispatch")
+
+    # Ni cuando los camiones cuelgan y el mundo sigue corriendo.
+    await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)
+    await _feed(core, _tick(loop.DISPATCH_RING_S + 10.0))
+    assert _gotos(journal, "unit_ambulance") == []
+
+
+async def test_la_orden_al_pueblo_sale_aunque_nadie_evacue(journal, fixed_planner) -> None:
+    """La orden de evacuación colgaba de que el plan asignara una unidad a la tarea.
+    Al quitarle el vehículo a la evacuación se habría quedado sin orden —y con ella el
+    pueblo sin quien reporte inmóviles, y el rescate sin nacer—, así que ahora sale de
+    la TAREA abierta."""
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)
+
+    orden = _calls(journal, "evacuation_order")
+    assert len(orden) == 1
+    assert orden[0].poi_id == "poi_pueblo_a"
+    assert orden[0].facts["role"] == "evacuation"
+    # Y el plazo y la ruta son los de quien sale andando, no los de un vehículo.
+    assert int(orden[0].facts["deadline_min"]) >= 1
+    assert "immobile" in orden[0].expect and "injuries" in orden[0].expect
+
+
+async def test_la_ambulancia_no_sale_hasta_que_cuelgan(
+    journal, fixed_planner, monkeypatch
+) -> None:
+    """El mismo invariante que el camión, que es lo que no se cumplía: un ciudadano
+    dice que hay alguien que no puede moverse, se le pide la ambulancia al centro, y
+    la unidad no arranca hasta que esa dotación cuelga."""
+    monkeypatch.setattr(settings, "ambulance_phone", "+34600000002")
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)
+    assert _gotos(journal, "unit_ambulance") == []
+
+    await _feed(core, _fact("poi:poi_pueblo_a:immobile", 2))
+
+    amb = _calls(journal, "ambulance_dispatch")
+    assert len(amb) == 1
+    unidad = amb[0].facts["unit_id"]
+    assert amb[0].facts["role"] == "ambulance"
+    assert amb[0].to == "+34600000002"
+    assert amb[0].facts["immobile"] == "2"
+    assert _gotos(journal, unidad) == [], "sale antes de que la dotación conteste"
+
+    await _hang_up(core, amb[0].task_id, t_sim=30.0)
+
+    salidas = _gotos(journal, unidad)
+    assert len(salidas) == 1
+    assert salidas[0].dispatch_confirmed is True
+
+
+async def test_un_inmovil_asumido_no_saca_ninguna_ambulancia(
+    journal, fixed_planner, monkeypatch
+) -> None:
+    """Regla 4 de punta a punta: `budget.safe_default` asume un inmóvil cuando se
+    agota el presupuesto, y ese hecho se ve en gris cursiva, pero no manda a nadie.
+    Una ambulancia sale porque alguien la pidió, no porque nadie contestara."""
+    monkeypatch.setattr(settings, "ambulance_phone", "+34600000002")
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)
+
+    await _feed(core, _fact("poi:poi_pueblo_a:immobile", 1, kind="assumed_default"))
+
+    assert "task_rescue_poi_pueblo_a" not in core.state().tasks
+    assert not _calls(journal, "ambulance_dispatch")
+    assert _gotos(journal, "unit_ambulance") == []
+
+
+async def test_un_herido_saca_la_ambulancia_igual_que_un_inmovil(
+    journal, fixed_planner, monkeypatch
+) -> None:
+    """«Hay un herido» y «hay alguien que no puede moverse» piden lo mismo. Y el
+    número llega a la dotación: sin guardarlo en el estado, el parte decía «una
+    persona que no puede moverse sola» de alguien que lo que tenía era una herida."""
+    monkeypatch.setattr(settings, "ambulance_phone", "+34600000002")
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)
+
+    await _feed(core, _fact("poi:poi_pueblo_a:injuries", 2))
+
+    assert "task_rescue_poi_pueblo_a" in core.state().tasks
+    amb = _calls(journal, "ambulance_dispatch")
+    assert len(amb) == 1
+    assert amb[0].facts["injuries"] == "2"
+    assert "2 heridos" in amb[0].facts["situation_brief"]
+    assert _gotos(journal, amb[0].facts["unit_id"]) == []
+
+
+async def test_un_relevo_de_unidad_hereda_la_retencion(
+    journal, fixed_planner, monkeypatch
+) -> None:
+    """La retención es de la TAREA, no de la unidad.
+
+    Visto en `runs/run_bc8247ef1ed1.jsonl`: la llamada salió pidiendo
+    `unit_ambulance2` (seq 519) y un replan seis eventos después puso a
+    `unit_ambulance` en el mismo rescate (seq 524), que arrancó con
+    `dispatch_confirmed=null` mientras la dotación seguía descolgando. Quien releva,
+    espera."""
+    monkeypatch.setattr(settings, "ambulance_phone", "+34600000002")
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)
+
+    ev = await _feed(core, _fact("poi:poi_pueblo_a:immobile", 2))
+    amb = _calls(journal, "ambulance_dispatch")[0]
+    llamada = amb.facts["unit_id"]
+    assert core._held.get(llamada) == amb.task_id
+    relevo = "unit_ambulance2" if llamada == "unit_ambulance" else "unit_ambulance"
+    espera_desde = core._held_since[llamada]
+
+    # El solver cambia de ambulancia para el mismo rescate.
+    plan = Plan(
+        id="plan_relevo",
+        run_id=RUN,
+        created_t=core.state().t_sim,
+        policy=Policy(rationale="relevo"),
+        assignments=[
+            Assignment(
+                unit_id=relevo,
+                task_id=amb.task_id,
+                route=["wp_base", "wp_cruce", "wp_pueblo_a"],
+                eta_s=60.0,
+                cost=1.0,
+            )
+        ],
+        context=PlanContext(world_seq=core.state().seq),
+    )
+    await core._emit_actions(plan, ev)
+
+    assert _gotos(journal, relevo) == [], "el relevo salió sin que nadie confirmara"
+    assert core._held.get(relevo) == amb.task_id
+    # Y sin regalarle otros 45 s a quien ya estaba sonando.
+    assert core._held_since[relevo] == espera_desde

@@ -249,7 +249,10 @@ def _apply_poi_fact(
             group = group.model_copy(update={"count": int(value)})
         case "injuries":
             group = group.model_copy(
-                update={"state": "trapped" if int(value) > 0 else group.state}
+                update={
+                    "injuries": int(value),
+                    "state": "trapped" if int(value) > 0 else group.state,
+                }
             )
         case "evacuated":
             group = group.model_copy(

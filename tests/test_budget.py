@@ -110,6 +110,8 @@ def test_assumed_field_yields_an_assumed_fact() -> None:
 
 def test_safe_default_never_invents_a_road_or_a_place() -> None:
     assert safe_default("people_immobile", FieldState()) == "1"
+    # Un herido no se asume nunca: `injuries` no entra en `ASK_PRIORITY` ni aquí.
+    assert safe_default("injuries", FieldState()) is None
     assert safe_default("road_blocked", FieldState()) is None
     assert safe_default("location_hint", FieldState()) is None
     assert safe_default("road_blocked", FieldState("open", ROAD, 0.7)) == ROAD

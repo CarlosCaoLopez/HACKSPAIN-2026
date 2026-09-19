@@ -89,8 +89,11 @@ pois:
     z: 44
     waypoint_id: wp_sur_02
 
-# 2 camiones, 1 ambulancia, 1 dron. `capabilities` es lo que el solver cruza con
+# 2 camiones, 4 ambulancias, 1 dron. `capabilities` es lo que el solver cruza con
 # `Task.required_capability` para poner coste infinito: una ambulancia no extingue.
+# Cuatro y no dos porque desde que la evacuación se hace a pie, las ambulancias solo
+# salen a rescates pedidos por alguien: valen para los que no pueden moverse, y ahí
+# hacen falta de verdad.
 units:
   - id: unit_truck1
     kind: fire_truck
@@ -104,6 +107,10 @@ units:
     z: 10
     capabilities: [extinguish]
     capacity: 0
+  # Las cuatro aparcadas DENTRO de los 3 m de `wp_hospital` (22, -77): fuera del
+  # radio, `_return_home` les manda un `goto` nada más arrancar el run para que se
+  # coloquen, y un `goto` de ambulancia que nadie ha pedido es justo lo que este
+  # cambio existe para quitar. Separadas lo justo para no pisarse en el render.
   - id: unit_ambulance
     kind: ambulance
     x: 22
@@ -112,8 +119,20 @@ units:
     capacity: 4
   - id: unit_ambulance2
     kind: ambulance
-    x: 22
-    z: -70
+    x: 24
+    z: -75
+    capabilities: [transport, medical]
+    capacity: 4
+  - id: unit_ambulance3
+    kind: ambulance
+    x: 20
+    z: -75
+    capabilities: [transport, medical]
+    capacity: 4
+  - id: unit_ambulance4
+    kind: ambulance
+    x: 24
+    z: -79
     capabilities: [transport, medical]
     capacity: 4
   - id: unit_drone

@@ -82,6 +82,9 @@ class CivilianGroup(BaseModel):
     poi_id: str
     count: int
     immobile: int = 0
+    injuries: int = 0
+    """Heridos reportados. Se guarda el número, no solo el flag `trapped` del estado:
+    sin él, a la dotación de la ambulancia no se le podía decir cuántos hay."""
     state: CivState = "exposed"
 
 

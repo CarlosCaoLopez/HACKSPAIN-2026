@@ -15,7 +15,7 @@ from contracts.calls import CallRequest, Urgency
 from contracts.factkeys import road_bare
 from contracts.plan import Assignment, Plan
 from contracts.world import POI, RoadEdge, Task, Unit, WorldState
-from core.solver import RoadGraph
+from core.solver import RoadGraph, fire_eta_s
 
 DEADLINE_MARGIN_MIN = 5
 """Minutos que se suman a la ETA de la unidad para el plazo que se dicta al vecino."""
@@ -346,6 +346,46 @@ def unit_eta_line(state: WorldState, assignment: Assignment | None) -> str:
     return f"va {articulo} {unit_name(unit)} y llega en {cuando}"
 
 
+def fire_eta_min(state: WorldState, poi: POI, graph: RoadGraph | None) -> float:
+    """Minutos que tarda el frente más cercano en llegar al POI con el viento de
+    ahora. `inf` si no hay fuego o no hay grafo con el que medir."""
+    burning = [c for c in state.cells.values() if c.state == "burning"]
+    if not burning or graph is None:
+        return math.inf
+    mejor = min(
+        fire_eta_s(*graph.cell_center(c), poi.x, poi.z, state.wind, graph)
+        for c in burning
+    )
+    return mejor / 60.0 if math.isfinite(mejor) else math.inf
+
+
+def on_foot_deadline_min(
+    state: WorldState | None, poi: POI, graph: RoadGraph | None
+) -> int:
+    """El plazo que se le dicta a un pueblo que sale a pie. Lo marca el fuego, no la
+    ETA de un vehículo: los minutos que faltan para que el frente llegue, menos el
+    margen con el que nadie debería jugársela. Nunca menos de uno, y sin fuego
+    medible el margen a secas: un plazo hay que dar."""
+    eta = fire_eta_min(state, poi, graph) if state is not None else math.inf
+    if not math.isfinite(eta):
+        return DEADLINE_MARGIN_MIN
+    return max(1, int(eta) - DEADLINE_MARGIN_MIN)
+
+
+def shelter_route(
+    state: WorldState | None, poi: POI, graph: RoadGraph | None
+) -> list[str]:
+    """Por dónde sale el pueblo hacia el refugio, con los cortes de ahora. Es la ruta
+    de los vecinos, no la de ningún medio: a quien evacúa se le dice por dónde irse,
+    no por dónde viene alguien."""
+    if state is None or graph is None:
+        return []
+    refugio = next((p for p in state.pois.values() if p.kind == "shelter"), None)
+    if refugio is None or not poi.waypoint_id or not refugio.waypoint_id:
+        return []
+    return graph.with_cuts(state).shortest_path(poi.waypoint_id, refugio.waypoint_id) or []
+
+
 def live_facts(
     state: WorldState,
     poi: POI,
@@ -422,12 +462,16 @@ def _situation_brief_evacuation(
     # es lo que importa, pero decir «confirmado» de algo que nadie confirmó sería la
     # misma clase de mentira que este cambio existe para quitar.
     confirmados = f" Medios en camino: {committed}." if committed else ""
+    por_donde = f" por {route}" if route else ""
     return (
-        f"Ha llegado la orden de evacuar {poi.name} por {route} en los próximos "
+        f"Ha llegado la orden de evacuar {poi.name}{por_donde} en los próximos "
         f"{deadline_min} minutos, por el {hazard}. Dígala completa una vez, "
         "despacio, y confirme que la persona la ha entendido y que la acepta. "
         f"Situación ahora mismo: {live['fire_status']}; {live['roads_status']}; "
-        f"medios: {live['resources']}; hacia su pueblo {live['unit_eta']}."
+        # Sin «hacia su pueblo» delante: una evacuación ya no lleva vehículo, y
+        # `unit_eta` dice entonces «todavía no hay ninguna unidad asignada a su
+        # pueblo», que con el prefijo se leía dos veces.
+        f"medios: {live['resources']}; {live['unit_eta']}."
         f"{confirmados}"
     )
 
@@ -491,14 +535,32 @@ def _situation_brief_crew(
     )
 
 
+def _people_line(immobile: int, injuries: int) -> str:
+    """A quién hay que ir a buscar, dicho como se dice por teléfono. Los dos números
+    por separado: un rescate puede nacer de heridos sin que nadie esté inmovilizado,
+    y decir «una persona que no puede moverse» cuando lo que hay es un herido manda a
+    la dotación con la idea equivocada."""
+    partes: list[str] = []
+    if immobile > 0:
+        partes.append(
+            f"{immobile} personas que no pueden moverse solas"
+            if immobile > 1
+            else "una persona que no puede moverse sola"
+        )
+    if injuries > 0:
+        partes.append(f"{injuries} heridos" if injuries > 1 else "una persona herida")
+    return " y ".join(partes) if partes else "personas que necesitan ayuda"
+
+
 def _situation_brief_ambulance(
-    live: dict[str, str], hazard: str, poi_name: str, immobile: int, peticion: str
+    live: dict[str, str],
+    hazard: str,
+    poi_name: str,
+    immobile: int,
+    peticion: str,
+    injuries: int = 0,
 ) -> str:
-    cuantos = (
-        f"{immobile} personas que no pueden moverse solas"
-        if immobile > 1
-        else "una persona que no puede moverse sola"
-    )
+    cuantos = _people_line(immobile, injuries)
     pide = f"Les pedimos {peticion}. " if peticion else ""
     return (
         f"Le piden una ambulancia en {poi_name}, por un {hazard}: hay {cuantos}. "
@@ -522,7 +584,7 @@ ADVICE_RULES = (
 def evacuation_call(
     task: Task,
     poi: POI,
-    assignment: Assignment,
+    assignment: Assignment | None,
     to: str,
     hazard_kind: str,
     roads: dict[str, RoadEdge] | None = None,
@@ -531,7 +593,12 @@ def evacuation_call(
     graph: RoadGraph | None = None,
     committed: str = "",
 ) -> CallRequest:
-    """La orden de evacuación para el POI de una tarea `evacuate` ya asignada.
+    """La orden de evacuación para el POI de una tarea `evacuate`.
+
+    `assignment` es opcional porque una evacuación **no necesita vehículo**: quien
+    puede andar se va solo en cuanto se le avisa, y las ambulancias quedan para quien
+    no puede. Sin asignación el plazo lo marca el fuego (`on_foot_deadline_min`) y la
+    ruta es la de los vecinos al refugio (`shelter_route`), no la de un medio.
 
     Al alcalde del pueblo que arde: se le dicta la orden, la ruta y el plazo, y se
     le pregunta cuánta gente hay, si hay heridos y si alguien no puede moverse por
@@ -541,9 +608,13 @@ def evacuation_call(
 
     Con `state` viajan además los datos en vivo (medios, frente, carreteras) para
     que el operador recomiende con el mundo de ese segundo y no con un guion fijo."""
-    deadline = math.ceil(assignment.eta_s / 60.0) + DEADLINE_MARGIN_MIN
     hazard = hazard_name(hazard_kind)
-    route = route_name(assignment.route, roads, aliases)
+    if assignment is not None:
+        deadline = math.ceil(assignment.eta_s / 60.0) + DEADLINE_MARGIN_MIN
+        route = route_name(assignment.route, roads, aliases)
+    else:
+        deadline = on_foot_deadline_min(state, poi, graph)
+        route = route_name(shelter_route(state, poi, graph), roads, aliases)
     live = _live_or_blank(state, poi, graph, assignment, aliases)
     return CallRequest(
         task_id=task.id,
@@ -566,7 +637,7 @@ def evacuation_call(
             "advice_rules": ADVICE_RULES,
             **live,
         },
-        expect=["confirmation", "headcount", "immobile"],
+        expect=["confirmation", "headcount", "immobile", "injuries"],
     )
 
 
@@ -627,13 +698,14 @@ Los minutos son lo único que se le puede decir al que está esperando al teléf
 
 
 def _situation_brief_queued(
-    live: dict[str, str], hazard: str, poi_name: str, immobile: int, prioritario: bool
+    live: dict[str, str],
+    hazard: str,
+    poi_name: str,
+    immobile: int,
+    prioritario: bool,
+    injuries: int = 0,
 ) -> str:
-    cuantos = (
-        f"{immobile} personas que no pueden moverse solas"
-        if immobile > 1
-        else "una persona que no puede moverse sola"
-    )
+    cuantos = _people_line(immobile, injuries)
     orden = (
         "Es prioritario: en cuanto terminen lo que tienen ahora, van directos allí."
         if prioritario
@@ -723,6 +795,7 @@ def ambulance_call(
     unit_id: str,
     immobile: int,
     state: WorldState | None = None,
+    injuries: int = 0,
     graph: RoadGraph | None = None,
     aliases: dict[str, str] | None = None,
     queued: bool = False,
@@ -751,9 +824,11 @@ def ambulance_call(
         else ""
     )
     brief = (
-        _situation_brief_queued(live, hazard, poi.name, immobile, priority)
+        _situation_brief_queued(live, hazard, poi.name, immobile, priority, injuries)
         if queued
-        else _situation_brief_ambulance(live, hazard, poi.name, immobile, peticion)
+        else _situation_brief_ambulance(
+            live, hazard, poi.name, immobile, peticion, injuries
+        )
     )
     return CallRequest(
         task_id=task.id,
@@ -774,6 +849,7 @@ def ambulance_call(
             "base_name": base.name,
             "hazard_kind": hazard,
             "immobile": str(immobile),
+            "injuries": str(injuries),
             "must_go_next": "sí" if priority else "no",
             "waiting_call_id": waiting_call_id,
             "situation_brief": brief,

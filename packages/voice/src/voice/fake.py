@@ -30,7 +30,7 @@ from typing import Any
 import httpx
 
 from contracts.bus import make_event, publish
-from contracts.calls import CallRequest, CallResult
+from contracts.calls import CallFacts, CallRequest, CallResult
 from contracts.events import EventType
 from contracts.settings import settings
 
@@ -73,18 +73,88 @@ class FakeVoice:
     async def _finish(self, call_id: str, req: CallRequest) -> None:
         await asyncio.sleep(self.delay_s)
         result = self.canned_result(req).model_copy(update={"call_id": call_id})
-        await publish(
-            make_event(
-                EventType.CALL_ENDED, result.model_dump(mode="json"), source="voice"
-            )
+        ended = make_event(
+            EventType.CALL_ENDED, result.model_dump(mode="json"), source="voice"
         )
+        await publish(ended)
+        await self._assert_facts(call_id, result.facts, ended)
+
+    async def _assert_facts(
+        self, call_id: str, facts: CallFacts | None, cause
+    ) -> None:
+        """Los hechos de la llamada enlatada al bus, igual que los publicaría el
+        webhook en directo.
+
+        Sin esto `--mock-calls` no asertaba **ni un solo hecho**: el plan B corría sin
+        confirmación de evacuación, sin inmóviles y por tanto sin rescate ni ambulancia.
+        Con las evacuaciones a pie eso además deja a los pueblos sin cerrar y
+        `civilians_safe` a cero, así que el plan B dejaba de puntuar."""
+        if facts is None:
+            return
+        from contracts.events import FactAsserted
+        from voice import to_facts
+
+        for fact in to_facts(facts, cause.t_sim, call_id):
+            await publish(
+                make_event(
+                    EventType.WORLD_FACT_ASSERTED,
+                    FactAsserted(
+                        key=fact.key,
+                        value=fact.value,
+                        confidence=fact.confidence,
+                        source=fact.source,
+                        severity=fact.severity,
+                        kind=fact.kind,
+                        call_id=fact.call_id,
+                    ).model_dump(mode="json"),
+                    source=f"call:{call_id}",
+                    causes=[cause.seq],
+                )
+            )
+
+    def canned_facts(self, req: CallRequest) -> CallFacts | None:
+        """Los hechos enlatados de `<intent>.facts.json`, anclados al POI **de la
+        petición**.
+
+        En una saliente el POI no se adivina del texto: lo sabe el core y viaja en el
+        `CallRequest`. Resolverlo por *fuzzy match* sobre la transcripción ataba la
+        confirmación de evacuación al pueblo equivocado.
+
+        Y `confirmed_order` solo cuenta en la orden de evacuación. El campo es
+        «si acepta la instrucción dada», y la instrucción no es la misma en cada
+        guion: al vecino se le pregunta si puede acoger gente, al retén si pueden
+        salir. Dejarlo pasar cerraba la evacuación de un pueblo al que solo se había
+        avisado."""
+        path = self._fixture(req, "facts.json")
+        if path is None:
+            return None
+        cf = CallFacts.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        cambios: dict[str, object] = {}
+        if req.poi_id:
+            cambios["resolved_poi_id"] = req.poi_id
+        if req.facts.get("role") != "evacuation":
+            cambios["confirmed_order"] = None
+        return cf.model_copy(update=cambios) if cambios else cf
+
+    def _fixture(self, req: CallRequest, suffix: str) -> Path | None:
+        """El fichero del guion: por `role` si existe uno suyo, y si no por `intent`.
+
+        Un solo `intent` atiende varios encargos —`ambulance_dispatch` es la ambulancia
+        que va y la que está en cola—, así que indexar solo por intent hacía que una
+        llamada «no queda ninguna libre» se simulara con el guion que dice «salimos del
+        hospital ahora mismo»."""
+        role = str(req.facts.get("role") or "")
+        for nombre in (role, req.intent):
+            if nombre and (path := self.dir / f"{nombre}.{suffix}").exists():
+                return path
+        return None
 
     def canned_result(self, req: CallRequest) -> CallResult:
         """La transcripción de fichero que corresponde a ese `intent`."""
-        path = self.dir / f"{req.intent}.txt"
+        path = self._fixture(req, "txt")
         transcript = (
             path.read_text(encoding="utf-8")
-            if path.exists()
+            if path is not None
             else f"operador: {req.facts.get('poi_name', req.poi_id)}, orden de evacuación.\nvecino: entendido, salimos ya."
         )
         now = time.time()
@@ -96,7 +166,7 @@ class FakeVoice:
             ended_t=now,
             outcome="answered",
             transcript=transcript,
-            facts=None,
+            facts=self.canned_facts(req),
         )
 
     async def signal(self, call_id: str, key: str, payload: dict) -> str | None:

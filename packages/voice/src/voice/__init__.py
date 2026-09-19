@@ -85,54 +85,61 @@ class VoiceGateway:
             return None
 
     def to_facts(self, cf: CallFacts, t_sim: float, call_id: str) -> list[Fact]:
-        """Un `CallFacts` produce de 0 a N `Fact`. Claves de
-        `contracts.factkeys`, `source="call:<call_id>"`. Camino sin Jev: salen como
-        `inferred` (sin confianza calibrada), y solo la dirección segura (cortar) puede
-        cambiar rutas.
+        """Un `CallFacts` produce de 0 a N `Fact`. Ver `to_facts`, la función: el
+        cuerpo vive fuera de la clase para que la telefonía simulada (`voice.fake`)
+        pueda asertar los mismos hechos sin construir un `VoiceGateway`."""
+        return to_facts(cf, t_sim, call_id)
 
-        Ningún hecho aparece en pantalla sin decir de qué llamada viene."""
-        source = f"call:{call_id}"
-        sev = cf.urgency
-        conf = cf.confidence
-        out: list[Fact] = []
 
-        def add(key: str, value: str | float | bool) -> None:
-            if validate_fact_key(key) is None:
-                log.warning("clave fuera del mapa, no se emite: %s", key)
-                return
-            out.append(
-                Fact(
-                    key=key,
-                    value=value,
-                    confidence=conf,
-                    source=source,
-                    severity=sev,
-                    t_sim=t_sim,
-                    kind="inferred",
-                    call_id=call_id,
-                )
+def to_facts(cf: CallFacts, t_sim: float, call_id: str) -> list[Fact]:
+    """Un `CallFacts` produce de 0 a N `Fact`. Claves de
+    `contracts.factkeys`, `source="call:<call_id>"`. Camino sin Jev: salen como
+    `inferred` (sin confianza calibrada), y solo la dirección segura (cortar) puede
+    cambiar rutas.
+
+    Ningún hecho aparece en pantalla sin decir de qué llamada viene."""
+    source = f"call:{call_id}"
+    sev = cf.urgency
+    conf = cf.confidence
+    out: list[Fact] = []
+
+    def add(key: str, value: str | float | bool) -> None:
+        if validate_fact_key(key) is None:
+            log.warning("clave fuera del mapa, no se emite: %s", key)
+            return
+        out.append(
+            Fact(
+                key=key,
+                value=value,
+                confidence=conf,
+                source=source,
+                severity=sev,
+                t_sim=t_sim,
+                kind="inferred",
+                call_id=call_id,
             )
+        )
 
-        if cf.road_blocked:
-            edge = pois.resolve_edge_local(cf.road_blocked)
-            if edge:
-                add(road_cut_key(edge), True)
-                add(road_cause_key(edge), cf.road_blocked)
-            else:
-                log.warning("carretera sin resolver: %r", cf.road_blocked)
-        poi = cf.resolved_poi_id or pois.resolve_poi_local(cf.location_hint)
-        if poi:
-            if cf.headcount is not None:
-                add(f"poi:{poi}:headcount", int(cf.headcount))
-            if cf.people_immobile is not None:
-                add(f"poi:{poi}:immobile", int(cf.people_immobile))
-            if cf.injuries is not None:
-                add(f"poi:{poi}:injuries", int(cf.injuries))
-            if cf.confirmed_order is not None:
-                add(f"poi:{poi}:confirmed", bool(cf.confirmed_order))
-        elif cf.people_immobile or cf.injuries or cf.confirmed_order is not None:
-            log.warning("hecho sin ubicar, no entra al estado: %r", cf.location_hint)
-        return out
+    if cf.road_blocked:
+        edge = pois.resolve_edge_local(cf.road_blocked)
+        if edge:
+            add(road_cut_key(edge), True)
+            add(road_cause_key(edge), cf.road_blocked)
+        else:
+            log.warning("carretera sin resolver: %r", cf.road_blocked)
+    poi = cf.resolved_poi_id or pois.resolve_poi_local(cf.location_hint)
+    if poi:
+        if cf.headcount is not None:
+            add(f"poi:{poi}:headcount", int(cf.headcount))
+        if cf.people_immobile is not None:
+            add(f"poi:{poi}:immobile", int(cf.people_immobile))
+        if cf.injuries is not None:
+            add(f"poi:{poi}:injuries", int(cf.injuries))
+        if cf.confirmed_order is not None:
+            add(f"poi:{poi}:confirmed", bool(cf.confirmed_order))
+    elif cf.people_immobile or cf.injuries or cf.confirmed_order is not None:
+        log.warning("hecho sin ubicar, no entra al estado: %r", cf.location_hint)
+    return out
 
 
 FENIC_OPENAI_MODEL = "gpt-5.6-luna"

@@ -40,6 +40,12 @@ def _count(value: str | None) -> int | None:
     return int(value) if value and value.isdigit() else None
 
 
+def _observed_count(st: FieldState) -> int | None:
+    """El conteo solo si lo dijo quien llamó. Un `assumed_default` vale para el plan
+    (gris cursiva, no funda rescate) pero no para repetírselo al vecino como suyo."""
+    return _count(st.value) if st.status == "observed" else None
+
+
 class CallPerception:
     def __init__(self, call_id: str, clock: Callable[[], float] = time.monotonic) -> None:
         self.call_id = call_id
@@ -209,12 +215,19 @@ class CallPerception:
         ]
 
     def call_facts(self) -> CallFacts:
-        """El resultado de la llamada para `call.ended`: solo lo observado o asumido,
-        con ids del escenario (nunca texto libre)."""
+        """El resultado de la llamada para `call.ended` y para el ack que el agente le
+        lee al vecino: con ids del escenario (nunca texto libre) y **solo lo
+        observado**.
+
+        Los conteos asumidos se quedan fuera a propósito. `budget.safe_default` da por
+        supuesto un inmóvil cuando se acaba el presupuesto, y está bien que lo haga
+        —va `assumed_default` y se pinta en gris cursiva—, pero colarlo aquí hacía que
+        el agente le repitiera al vecino «1 persona sin movilidad» que nunca había
+        mencionado. Lo asumido sigue publicándose por `Completeness.facts`; lo que no
+        hace es hablar por el que llamó."""
         f = self.completeness.fields
         loc = f["location_hint"]
         road = f["road_blocked"]
-        imm = f["people_immobile"]
         confs = [
             s.confidence for s in f.values() if s.status == "observed" and s.confidence
         ]
@@ -223,8 +236,8 @@ class CallPerception:
             location_hint=pois.poi_name(loc.value) if has_poi else None,
             resolved_poi_id=loc.value if has_poi else None,
             road_blocked=road.value if road.value and road.value != NOT_STATED else None,
-            people_immobile=_count(imm.value),
-            injuries=_count(f["injuries"].value),
+            people_immobile=_observed_count(f["people_immobile"]),
+            injuries=_observed_count(f["injuries"]),
             confirmed_order=self.confirmed_order,
             urgency=self.completeness.severity(),
             confidence=min(confs) if confs else 0.5,

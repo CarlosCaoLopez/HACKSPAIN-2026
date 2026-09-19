@@ -33,8 +33,10 @@ Reglas, todas deterministas y sin LLM:
   a tiro, la que antes llegará a él (el camión la espera en la carretera como
   cortafuegos).
 - `evacuate`: una por POI de tipo `village` con civiles `exposed`/`warned` mientras
-  haya fuego. Severidad por distancia al frente y por sotavento. Se cierra cuando
-  una unidad llega a su waypoint o cuando todos sus grupos están `safe`.
+  haya fuego. Severidad por distancia al frente y por sotavento. **No pide vehículo**
+  (`SELF_EVACUATE`): quien puede andar se va solo en cuanto se le avisa, y las
+  ambulancias quedan para quien no puede. Se cierra cuando el pueblo acepta la orden
+  (`poi:<id>:confirmed`) o cuando todos sus grupos están `safe`.
 - `rescue`: una por POI con un hecho `poi:<id>:immobile > 0` de `kind` `observed` o
   `inferred` (un `assumed_default` no funda una tarea: regla 4). Crítica. Se cierra
   cuando una unidad llega a su waypoint.
@@ -48,7 +50,13 @@ import math
 from contracts.calls import Fact
 from contracts.events import Event, EventType, UnitArrived
 from contracts.world import POI, Cell, Task, TaskSeverity, Wind, WorldState
-from core.solver import RoadGraph, attack_waypoint, attackable_from, fire_eta_s
+from core.solver import (
+    SELF_EVACUATE,
+    RoadGraph,
+    attack_waypoint,
+    attackable_from,
+    fire_eta_s,
+)
 
 log = logging.getLogger("core.tasks")
 
@@ -86,8 +94,10 @@ STICKY_CRITICAL = 0.9
 y el crítico vigente otro 90 %. Sin esto dos frentes parejos se intercambiaban la
 gravedad en cada celda que prendía, y con ella los camiones."""
 
-ARRIVAL_CLOSES: frozenset[str] = frozenset({"evacuate", "rescue"})
-"""Tareas que se cierran al llegar una unidad al waypoint del POI."""
+ARRIVAL_CLOSES: frozenset[str] = frozenset({"rescue"})
+"""Tareas que se cierran al llegar una unidad al waypoint del POI. `evacuate` ya no
+está: no lleva unidad, así que no hay llegada que la cierre (lo hace la orden
+aceptada, `_order_confirmed`)."""
 
 FRONT_PREFIX = "task_front_"
 
@@ -475,7 +485,9 @@ def _evacuate(state: WorldState, graph: RoadGraph) -> list[Task]:
         if existing is not None:
             if existing.done:
                 continue
-            if groups and all(g.state == "safe" for g in groups):
+            if (groups and all(g.state == "safe" for g in groups)) or _order_confirmed(
+                state, poi.id
+            ):
                 out.append(existing.model_copy(update={"done": True}))
             elif burning:
                 severity = _evac_severity(poi, burning, state.wind, graph)
@@ -491,7 +503,7 @@ def _evacuate(state: WorldState, graph: RoadGraph) -> list[Task]:
                 id=tid,
                 kind="evacuate",
                 target_poi=poi.id,
-                required_capability="transport",
+                required_capability=SELF_EVACUATE,
                 severity=_evac_severity(poi, burning, state.wind, graph),
                 created_t=state.t_sim,
             )
@@ -567,6 +579,22 @@ def _rescue(state: WorldState) -> list[Task]:
             )
         )
     return out
+
+
+def _order_confirmed(state: WorldState, poi_id: str) -> bool:
+    """¿El pueblo ha aceptado la orden de evacuación por teléfono?
+
+    Es lo que cierra una `evacuate` ahora que no lleva vehículo: sin esto la tarea
+    quedaba abierta para siempre, nadie llegaba al refugio y `civilians_safe` se
+    quedaba a cero. Un `assumed_default` no vale (regla 4): que nadie conteste no es
+    que hayan dicho que sí."""
+    fact = _latest_facts(state).get(f"poi:{poi_id}:confirmed")
+    if fact is None or fact.kind == "assumed_default":
+        return False
+    value = fact.value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "sí", "si", "yes")
+    return bool(value)
 
 
 def _latest_facts(state: WorldState) -> dict[str, Fact]:
