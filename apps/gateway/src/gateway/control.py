@@ -42,7 +42,7 @@ class InjectBody(BaseModel):
 
 class OverrideBody(BaseModel):
     kind: OverrideKind
-    target: str  # "unit_truck1" | "task_evac_a" | "road:wp_sur_03-wp_sur_04"
+    target: str  # "unit_truck1" | "task_evac_a" | "road:rd_sur01_sur02"
     value: str | float | bool | None = None
     note: str = ""
 

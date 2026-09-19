@@ -87,7 +87,7 @@ class Event(BaseModel):
 
 ### Convenciones que ahorran discusiones
 
-- **Los ids son strings con prefijo**: `unit_truck1`, `poi_pueblo_a`, `wp_sur_03`, `cell_14_22`, `task_evac_a`.
+- **Los ids son strings con prefijo**: `unit_truck1`, `poi_pueblo_a`, `wp_sur_01`, `rd_sur01_sur02`, `cell_14_22`, `task_evac_a`.
 - **Las coordenadas siempre son del mundo Minecraft** (x, z, con y implícita). El dashboard hace su propia proyección; el core nunca piensa en píxeles.
 - **El tiempo del dominio es `t_sim` en segundos flotantes.** `t_wall` solo sirve para depurar y para medir la latencia real de la llamada.
 - **Ningún evento se borra ni se edita.** Si algo cambia, se emite otro evento. El journal es append-only.
@@ -228,7 +228,7 @@ class PlanContext(BaseModel):
     world_seq: int                     # estado sobre el que se planificó
 
 class Assumption(BaseModel):
-    key: str                           # "road:wp_sur_03-wp_sur_04:open"
+    key: str                           # "road:rd_sur01_sur02:open"
     expected: str | float | bool
     weight: float = 1.0                # cuánto pesa si se rompe
 
@@ -310,7 +310,7 @@ class CallFacts(BaseModel):
 
 class Fact(BaseModel):
     """Lo que entra al WorldState. Un CallFacts produce de 0 a N de estos."""
-    key: str                           # "road:wp_sur_03-wp_sur_04:cut"
+    key: str                           # "road:rd_sur01_sur02:cut"
     value: str | float | bool
     confidence: float
     source: str                        # "call:hl_8821"
@@ -446,7 +446,7 @@ POST /control/override
 {
   "kind": "force_assignment" | "veto_assignment" | "assert_fact"
          | "force_replan" | "set_priority",
-  "target": "unit_truck1" | "task_evac_a" | "road:wp_sur_03-wp_sur_04",
+  "target": "unit_truck1" | "task_evac_a" | "road:rd_sur01_sur02",
   "value": "<depende de kind>",
   "note": "el jefe de bomberos dice que la sur está transitable"
 }

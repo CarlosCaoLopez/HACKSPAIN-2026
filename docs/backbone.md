@@ -85,7 +85,7 @@ El vecino llama y dice algo como: *"estoy en el molino viejo, la pista del sur e
 1. **Durante la llamada** no pasa nada en el mundo. humalike conversa; nosotros solo guardamos audio y transcripción parcial. Resistid la tentación de actuar en streaming: añade latencia y modos de fallo, y en escenario no se aprecia.
 2. **Al colgar**, humalike dispara su webhook a `POST /webhooks/humalike/call-ended` con la transcripción completa.
 3. El `voice` package la mete en un DataFrame de `fenic` de una fila y aplica `semantic.extract(CallFacts)`, donde `CallFacts` es un modelo Pydantic con campos `location_hint`, `road_blocked`, `people_immobile`, `confidence`. Esto tarda entre 1 y 2 segundos y devuelve tipos, no texto.
-4. Cada campo no nulo se publica como un evento `world.fact.asserted` con su procedencia (`source: call:hl_8821`). El Core marca la arista `wp_sur_03 → wp_sur_04` como `cut` y crea una tarea `rescue` con 3 personas inmóviles en el molino.
+4. Cada campo no nulo se publica como un evento `world.fact.asserted` con su procedencia (`source: call:hl_8821`). El Core marca la arista `rd_sur01_sur02` (wp_sur_01 → wp_sur_02) como `cut` y crea una tarea `rescue` con 3 personas inmóviles en el molino.
 5. El **detector de divergencia** compara el mundo que el plan vigente daba por supuesto contra el mundo actual. La ruta de evacuación asignada ya no es transitable, así que la divergencia supera el umbral y además el verificador de rutas devuelve infactible. Se interrumpe el plan.
 6. El planner recibe el estado nuevo y el motivo de la interrupción, emite política actualizada, el solver reasigna en 40 ms y el sim recibe nuevos `goto`.
 7. **En pantalla**: banner REPLAN con el texto *"pista sur cortada, confirmado por llamada entrante"*, las flechas cambian, y en Minecraft los dos camiones frenan y toman el desvío norte.
@@ -172,7 +172,7 @@ Policy(
             containment: 0.5},
   hard_constraints: ["no_unit_into_burning_cell",
                      "hospital_min_coverage:1",
-                     "no_civilian_route_through:wp_sur_03"],
+                     "no_civilian_route_through:wp_sur_01"],
   horizon_s: 600,
   escalate_to_human: false
 )
@@ -245,7 +245,7 @@ injects:
     payload: {bearing: 90, speed: 1.4}
   - at: 210
     type: road_cut
-    payload: {edge: wp_norte_02-wp_norte_03, cause: "árbol caído"}
+    payload: {edge: rd_sur01_sur02, cause: "árbol caído"}
   - at: 240
     type: unit_failure
     payload: {unit: truck2, reason: "avería de bomba"}
