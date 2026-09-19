@@ -89,6 +89,24 @@ class CannedVoice:
         script = self._script(req)
         if script is None:
             log.warning("sin guion para intent=%s: la llamada no se simula", req.intent)
+            # Y se cierra igual. El core retiene a la unidad de una llamada de
+            # despacho hasta que la llamada acaba: un intent sin guion dejaba al
+            # camión parado en el parque hasta agotar el plazo, en todos los runs
+            # con `--mock-calls`.
+            await self.rt.publish(
+                EventType.CALL_ENDED,
+                CallResult(
+                    call_id=call_id,
+                    task_id=req.task_id,
+                    direction="outbound",
+                    started_t=self.rt.hub.last_t_sim,
+                    ended_t=self.rt.hub.last_t_sim,
+                    outcome="failed",
+                    transcript="",
+                    facts=None,
+                ),
+                f"call:{call_id}",
+            )
             return call_id
         self.rt.spawn(f"call:{call_id}", self._converse(call_id, req, script))
         return call_id
@@ -165,7 +183,9 @@ class CannedVoice:
 
         return CallFacts.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
-    async def _assert_facts(self, call_id: str, req: CallRequest, facts, cause: int) -> None:
+    async def _assert_facts(
+        self, call_id: str, req: CallRequest, facts, cause: int
+    ) -> None:
         """`CallFacts` → `world.fact.asserted`, con `to_facts` de P3 si tiene cuerpo.
 
         Sin esta cadena no hay replan y no hay colgar → giro que medir: es el clímax

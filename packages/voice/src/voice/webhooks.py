@@ -407,9 +407,15 @@ def queued_message(minutos: int | None, va: bool | None, prioritario: bool) -> s
     )
 
 
-def crew_ack(role: str, disponible: bool | None) -> str:
+def crew_ack(role: str, disponible: bool | None, ruta: str = "") -> str:
     """Lo que se le contesta a un medio al que se acaba de movilizar. Un «no puedo»
-    no se discute por teléfono: se anota y el plan se rehace sin él."""
+    no se discute por teléfono: se anota y el plan se rehace sin él.
+
+    La respuesta del tool es el ÚNICO canal que llega a una llamada saliente en
+    curso: las signals solo funcionan en las entrantes (el despachador se indexa por
+    `session_id` y una saliente propaga el `run_id` del hook). Por eso la ruta se
+    dice aquí, y por eso este ack dejó de prometer «les mandamos la ruta» sin
+    mandarla."""
     quien = "la ambulancia" if role == "ambulance" else "el retén"
     if disponible is False:
         return (
@@ -417,7 +423,8 @@ def crew_ack(role: str, disponible: bool | None) -> str:
             "los medios que quedan. Gracias."
         )
     if disponible is True:
-        return "Recibido, quedan movilizados. Les mandamos la ruta. Gracias."
+        por = f" Salen por {ruta}." if ruta else ""
+        return f"Recibido, quedan movilizados.{por} Gracias."
     return "Recibido, queda anotado. Gracias."
 
 
@@ -538,7 +545,7 @@ async def happyrobot_village(
             "ok": True,
             "facts_published": n,
             "ambulance_dispatched": bool(disponible) and role == "ambulance",
-            "message": crew_ack(role, disponible),
+            "message": crew_ack(role, disponible, str(body.get("route_name") or "")),
         }
 
     n = 0

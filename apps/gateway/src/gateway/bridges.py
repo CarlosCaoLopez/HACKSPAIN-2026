@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from contracts.calls import CallRequest
+from contracts.calls import CallRequest, CallResult
 from contracts.events import ActionRequested, Event, EventType
 from contracts.settings import settings
 from gateway.runtime import Runtime
@@ -62,7 +62,9 @@ async def _execute(rt: Runtime, ev: Event, seen: set[str]) -> None:
         return
     if req.action_id in seen:
         # La señal de que el puente está duplicado. Se cuenta, no se oculta.
-        rt.duplicate_actions[req.action_id] = rt.duplicate_actions.get(req.action_id, 0) + 1
+        rt.duplicate_actions[req.action_id] = (
+            rt.duplicate_actions.get(req.action_id, 0) + 1
+        )
         log.error("action_id repetido: %s · ¿puente duplicado?", req.action_id)
         return
     seen.add(req.action_id)
@@ -93,3 +95,29 @@ async def _place_call(rt: Runtime, ev: Event) -> None:
         # llamada no sale, se dice en `/api/health`, y la siguiente lo vuelve a intentar.
         rt.notes["calls"] = f"call.requested {req.task_id} sin salir: {exc!r}"
         log.warning("place_call falló para %s: %r", req.task_id, exc)
+        await _call_failed(rt, req, repr(exc))
+
+
+async def _call_failed(rt: Runtime, req: CallRequest, error: str) -> None:
+    """Una llamada que no llega a salir se cierra por el bus con `outcome="failed"`.
+
+    No es cosmético: el core retiene a la unidad de una llamada de despacho hasta que
+    esa llamada termina, y sin este `call.ended` se quedaría esperando al plazo
+    completo cada vez que falta el hook o se cae la red. Un fallo que solo vive en un
+    log es un fallo que congela camiones."""
+    t = rt.hub.last_t_sim
+    await rt.publish(
+        EventType.CALL_ENDED,
+        CallResult(
+            call_id=f"nocall_{req.task_id}",
+            task_id=req.task_id,
+            direction="outbound",
+            started_t=t,
+            ended_t=t,
+            outcome="failed",
+            transcript="",
+            facts=None,
+            analysis={"error": error},
+        ),
+        f"call:nocall_{req.task_id}",
+    )

@@ -21,7 +21,7 @@ import logging
 import math
 from datetime import UTC, datetime
 
-from contracts.calls import Fact
+from contracts.calls import CallResult, Fact
 from contracts.events import (
     ActionRequested,
     DivergenceReport,
@@ -77,6 +77,20 @@ su frente ya no se ataque desde ahí. Se aplica como coste de cambio en el solve
 AT_WAYPOINT_M = 3.0
 """A menos de esto de un waypoint, la unidad está en él (el sim la deja clavada en
 sus coordenadas al llegar)."""
+
+DISPATCH_HOLD_S = 45.0
+"""Lo que una unidad espera, como mucho, a que la dotación conteste al teléfono antes
+de salir igual.
+
+Un medio no sale hasta que dice «vamos»: ese es el punto de llamarle. Pero si nadie
+coge el teléfono la unidad sale de todas formas y se anota
+(`ActionRequested.dispatch_confirmed=False`), porque una demo con los camiones
+congelados no es una degradación aceptable. Mismo plazo que el `no_answer` de una
+saliente en `docs/interfaces.md`."""
+
+DISPATCH_ROLES = frozenset({"fire_crew", "ambulance"})
+"""Los `role` de llamada que retienen a su unidad. `ambulance_queued` no: esa unidad
+está ocupada en otra cosa y la llamada solo pregunta cuándo quedará libre."""
 
 RETURN_TASK = "return_to_base"
 """Marcador en `_last_actions` de un `goto` de vuelta a base: no es una tarea."""
@@ -141,6 +155,21 @@ class Core:
         # siguiente evento no es novedad, y no vuelve a llamar al modelo.
         self._residual: set[str] = set()
         self._warned_no_phone = False
+        # --- despacho por teléfono: nadie sale hasta que su dotación conteste ---
+        # unit_id → task_id de la llamada que la retiene, y t_sim en que empezó.
+        self._held: dict[str, str] = {}
+        self._held_since: dict[str, float] = {}
+        # unit_id → (task_id, ruta) del `goto` que se le debe cuando se suelte. Se
+        # sobreescribe en cada replan, así una unidad retenida sale por la ruta
+        # buena y no por la que se calculó al descolgar.
+        self._pending_goto: dict[str, tuple[str, tuple[str, ...]]] = {}
+        # unit_id → si salió con confirmación. Viaja al `action.requested`.
+        self._dispatch_confirmed: dict[str, bool] = {}
+        self._dispatch_called: set[str] = set()  # unidades ya telefoneadas
+        # task_id → (poi_id, asignación) de la orden de evacuación que espera a que
+        # los medios confirmen. Se construye al soltar, no al diferir: así la orden
+        # lleva los medios que van de verdad y no los que se pensaban mandar.
+        self._deferred_calls: dict[str, tuple[str, Assignment]] = {}
 
     async def run(self) -> None:
         """Consume el bus indefinidamente."""
@@ -164,6 +193,15 @@ class Core:
 
         self._state = belief.apply(self._state, ev)
         self._purge_vetoes()
+        # Despacho: un «no podemos» quita la retención, colgar la suelta, y el plazo
+        # la suelta igual. Va antes de planificar para que el plan de este evento ya
+        # vea las unidades liberadas.
+        self._drop_unavailable_holds()
+        if ev.type == EventType.CALL_ENDED:
+            await self._on_call_ended(ev)
+        await self._expire_holds(ev)
+        if not self._held and self._deferred_calls:
+            await self._flush_deferred_calls(ev)
         before = self._state.tasks
         changed = await self._sync_tasks(ev)
         await self._emit_rescue(changed, ev)
@@ -473,13 +511,20 @@ class Core:
         ]
 
     async def _after_plan(self, plan: Plan, cause: Event) -> None:
-        """Lo que sale de un plan nuevo, en este orden: órdenes al sim, llamadas
-        salientes y la señal a la llamada en curso que lo provocó."""
+        """Lo que sale de un plan nuevo, en este orden: primero se PIDEN los medios,
+        después se mueve lo que ya está confirmado, y solo entonces se le dicta la
+        orden al pueblo, con los medios que van de verdad.
+
+        El orden es el arreglo. Antes las acciones salían las primeras y las llamadas
+        detrás: medido en `runs/run_25b73a7f8a7d.jsonl`, el camión llevaba 30 s
+        conduciendo cuando el retén dijo «vamos», y la orden de evacuación colgaba en
+        el mismo segundo en que el retén confirmaba, así que nadie llegó a contarle al
+        pueblo qué le iba a llegar."""
+        await self._emit_crew_call(plan, cause)
+        await self._emit_ambulance_call(plan, cause)
         await self._emit_actions(plan, cause)
         await self._return_home(plan, cause)
         await self._emit_calls(plan, cause)
-        await self._emit_crew_call(cause)
-        await self._emit_ambulance_call(cause)
         await self._emit_signal(plan, cause)
         await self._emit_awaited_signals(plan)
 
@@ -493,8 +538,14 @@ class Core:
         segundo y le cortaba el sofocado. Tampoco se ordena ir a donde ya está (ruta
         de un waypoint, unidad parada en él). Las unidades que quedan fuera del plan
         conservan su última orden: es lo que siguen haciendo."""
+        self._drop_stale_holds(plan)
         for a in plan.assignments:
             route = tuple(a.route)
+            if a.unit_id in self._held:
+                # Aún no ha dicho «vamos». Se guarda la ruta ÚLTIMA, no la primera:
+                # un replan mientras está al teléfono la saca por la pista buena.
+                self._pending_goto[a.unit_id] = (a.task_id, route)
+                continue
             last = self._last_actions.get(a.unit_id)
             if last is not None and _same_way(last[1], route):
                 self._last_actions[a.unit_id] = (a.task_id, last[1])
@@ -511,7 +562,12 @@ class Core:
             await self._goto(a.unit_id, a.task_id, list(route), cause)
 
     async def _goto(
-        self, unit_id: str, task_id: str, route: list[str], cause: Event
+        self,
+        unit_id: str,
+        task_id: str,
+        route: list[str],
+        cause: Event,
+        confirmed: bool | None = None,
     ) -> None:
         self._action_seq += 1
         await self._emit(
@@ -520,6 +576,7 @@ class Core:
                 action_id=f"act_{self.run_id}_{self._action_seq}",
                 verb="goto",
                 args={"unit_id": unit_id, "route": route},
+                dispatch_confirmed=confirmed,
             ),
             cause,
         )
@@ -614,6 +671,139 @@ class Core:
         """El frente encima: ya no vale avisarle, hay que sacarlos."""
         return self._fire_distance(poi) <= AT_THE_DOOR_M
 
+    # --- despacho por teléfono: nadie sale hasta que su dotación conteste ------
+
+    def _hold_unit(self, unit_id: str, task_id: str) -> None:
+        """Retiene a una unidad hasta que contesten al teléfono. Idempotente: un
+        replan que vuelve a pasar por aquí no reinicia el plazo."""
+        if not unit_id or unit_id in self._held:
+            return
+        self._held[unit_id] = task_id
+        self._held_since[unit_id] = self._state.t_sim
+        self._dispatch_called.add(unit_id)
+        log.info("%s retenida a la espera de la llamada de %s", unit_id, task_id)
+
+    async def _release_unit(self, unit_id: str, confirmed: bool, cause: Event) -> None:
+        """Suelta a la unidad y le manda el `goto` que le debía."""
+        self._held.pop(unit_id, None)
+        self._held_since.pop(unit_id, None)
+        pending = self._pending_goto.pop(unit_id, None)
+        self._dispatch_confirmed[unit_id] = confirmed
+        if pending is None:
+            return
+        task_id, route = pending
+        await self._goto(unit_id, task_id, list(route), cause, confirmed=confirmed)
+
+    def _drop_hold(self, unit_id: str) -> None:
+        """Quita la retención sin mandar nada: esa unidad ya no sale. Los dos casos
+        son «no podemos» y «se cayó del plan» (la avería de los 240 s)."""
+        self._held.pop(unit_id, None)
+        self._held_since.pop(unit_id, None)
+        self._pending_goto.pop(unit_id, None)
+
+    def _drop_stale_holds(self, plan: Plan) -> None:
+        """Una unidad retenida que ya no está en el plan deja de estarlo: no hay nada
+        que mandarle y no tiene sentido que bloquee la orden del pueblo."""
+        asignadas = {a.unit_id for a in plan.assignments}
+        for unit_id in [u for u in self._held if u not in asignadas]:
+            log.info("%s sale del plan mientras estaba retenida: se suelta", unit_id)
+            self._drop_hold(unit_id)
+
+    def _drop_unavailable_holds(self) -> None:
+        """Un «no podemos salir» entra como `unit:<id>:available=false` por el tool,
+        antes de que cuelguen. Esa unidad no sale: el solver reparte sin ella."""
+        for unit_id in list(self._held):
+            unit = self._state.units.get(unit_id)
+            if unit is not None and unit.status == "unavailable":
+                log.info("%s no puede salir: se retira su orden pendiente", unit_id)
+                self._drop_hold(unit_id)
+
+    async def _on_call_ended(self, ev: Event) -> None:
+        """Colgar suelta a las unidades de esa llamada. `call.ended` llevaba en
+        `SUBSCRIBED` desde el principio y no lo trataba nadie."""
+        result = CallResult.model_validate(ev.payload)
+        if result.task_id is None:
+            return
+        # Contestaron y no dijeron que no (un «no podemos» ya habrá quitado la
+        # retención por `unit:<id>:available`): sale confirmada.
+        confirmed = result.outcome in ("answered", "hung_up")
+        for unit_id in [u for u, t in self._held.items() if t == result.task_id]:
+            await self._release_unit(unit_id, confirmed, ev)
+
+    async def _expire_holds(self, cause: Event) -> None:
+        """El plazo. Nadie contestó: la unidad sale igual y el `action.requested` lo
+        dice (`dispatch_confirmed=False`). Degradar y anotar, nunca congelarse."""
+        vencidas = [
+            u
+            for u, t0 in self._held_since.items()
+            if self._state.t_sim - t0 >= DISPATCH_HOLD_S
+        ]
+        for unit_id in vencidas:
+            log.warning(
+                "sin respuesta en %.0f s de sim: %s sale sin confirmar",
+                DISPATCH_HOLD_S,
+                unit_id,
+            )
+            await self._release_unit(unit_id, False, cause)
+
+    def _committed_resources(self) -> str:
+        """Los medios que van de verdad, para la orden de evacuación: los del plan
+        vigente cuya unidad sigue en servicio, y los telefoneados que se han caído."""
+        if self._plan is None:
+            return ""
+        vivos = [
+            a
+            for a in self._plan.assignments
+            if (u := self._state.units.get(a.unit_id)) is not None
+            and u.status != "unavailable"
+        ]
+        caidos = [
+            u
+            for uid in sorted(self._dispatch_called)
+            if (u := self._state.units.get(uid)) is not None and u.status == "unavailable"
+        ]
+        return calls.committed_resources_line(
+            self._state, vivos, caidos, self._state.roads, self.scenario.road_aliases
+        )
+
+    async def _flush_deferred_calls(self, cause: Event) -> None:
+        """Las órdenes de evacuación que esperaban a los medios. Se construyen AHORA,
+        no cuando se difirieron: por eso llevan los medios confirmados."""
+        for task_id, (poi_id, guardada) in list(self._deferred_calls.items()):
+            del self._deferred_calls[task_id]
+            task = self._state.tasks.get(task_id)
+            poi = self._state.pois.get(poi_id)
+            if task is None or poi is None:
+                continue
+            vigente = (
+                self._assignment_for_poi(self._plan, poi_id)
+                if self._plan is not None
+                else None
+            )
+            await self._emit_evacuation(task, poi, vigente or guardada, cause)
+
+    async def _emit_evacuation(
+        self, task: Task, poi: POI, a: Assignment, cause: Event
+    ) -> None:
+        """La orden al pueblo, y detrás el aviso a sus vecinos."""
+        to = settings.judge_phone or poi.contact_phone
+        if not to:
+            return
+        req = calls.evacuation_call(
+            task,
+            poi,
+            a,
+            to,
+            self.scenario.hazard.kind,
+            self._state.roads,
+            self.scenario.road_aliases,
+            state=self._state,
+            graph=self.graph,
+            committed=self._committed_resources(),
+        )
+        await self._emit(EventType.CALL_REQUESTED, req, cause)
+        await self._emit_neighbor_calls(task, poi, cause)
+
     async def _emit_calls(self, plan: Plan, cause: Event) -> None:
         """Una orden de evacuación (`call.requested`) por tarea `evacuate` recién
         asignada, y solo al pueblo que la necesita: el que tiene el fuego más cerca o
@@ -622,7 +812,12 @@ class Core:
 
         Una sola llamada por tarea y run. El número: `JUDGE_PHONE` si está (existe
         para cambiarlo cinco minutos antes de subir al escenario) y, si no, el
-        `contact_phone` del POI; sin ninguno se anota una vez y no se llama."""
+        `contact_phone` del POI; sin ninguno se anota una vez y no se llama.
+
+        **Espera a los medios.** Mientras haya una unidad retenida al teléfono no se
+        sabe qué va a llegarle al pueblo, y una orden de evacuación que promete un
+        camión que no ha confirmado es justo la clase de promesa que no se puede
+        cumplir. La orden se difiere y sale con `committed_resources` de verdad."""
         amenazado = self._most_threatened_village()
         for a in plan.assignments:
             task = self._state.tasks.get(a.task_id)
@@ -638,8 +833,7 @@ class Core:
                 and not self._fire_at_the_door(poi)
             ):
                 continue
-            to = settings.judge_phone or poi.contact_phone
-            if not to:
+            if not (settings.judge_phone or poi.contact_phone):
                 if not self._warned_no_phone:
                     log.warning(
                         "sin JUDGE_PHONE ni contact_phone: no se llama (tarea %s)",
@@ -647,20 +841,20 @@ class Core:
                     )
                     self._warned_no_phone = True
                 continue
-            req = calls.evacuation_call(
-                task,
-                poi,
-                a,
-                to,
-                self.scenario.hazard.kind,
-                self._state.roads,
-                self.scenario.road_aliases,
-                state=self._state,
-                graph=self.graph,
-            )
+            # `_called` se marca al DECIDIR llamar, no al emitir: si no, el siguiente
+            # tick volvería a decidir lo mismo y la orden se duplicaría. La que se
+            # difiere sale igual, por `_flush_deferred_calls`, y el plazo de
+            # `DISPATCH_HOLD_S` garantiza que ese momento llega.
             self._called.add(task.id)
-            await self._emit(EventType.CALL_REQUESTED, req, cause)
-            await self._emit_neighbor_calls(task, poi, cause)
+            if self._held:
+                self._deferred_calls[task.id] = (poi.id, a)
+                log.info(
+                    "orden de evacuación de %s en espera: %d medio(s) sin confirmar",
+                    poi.id,
+                    len(self._held),
+                )
+                continue
+            await self._emit_evacuation(task, poi, a, cause)
 
     async def _emit_neighbor_calls(
         self, source_task: Task, source_poi: POI, cause: Event
@@ -719,7 +913,7 @@ class Core:
             return unit
         return None
 
-    async def _emit_crew_call(self, cause: Event) -> None:
+    async def _emit_crew_call(self, plan: Plan, cause: Event) -> None:
         """Al retén, en cuanto hay una tarea de extinción: hay fuego, ¿pueden salir?
 
         Una vez por run. Si no hay ningún camión en condiciones no se llama: no se
@@ -745,7 +939,7 @@ class Core:
             return
         self._crew_called = True
         donde = self._where(task)
-        req = calls.fire_crew_call(
+        req_crew = calls.fire_crew_call(
             task,
             station,
             settings.fire_crew_phone,
@@ -755,8 +949,24 @@ class Core:
             state=self._state,
             graph=self.graph,
             aliases=self.scenario.road_aliases,
+            plan=plan,
+            roads=self._state.roads,
         )
-        await self._emit(EventType.CALL_REQUESTED, req, cause)
+        await self._emit(EventType.CALL_REQUESTED, req_crew, cause)
+        # Se retienen TODOS los camiones que la petición nombra, no solo el que
+        # cogió `_free_unit`: la llamada dice «les pedimos dos camiones», así que
+        # dejar salir al segundo mientras se pregunta por los dos es la misma
+        # incoherencia que había antes, más pequeña.
+        pedidas = {a.unit_id for a in plan.assignments if a.task_id == task.id}
+        pedidas.update(
+            a.unit_id
+            for a in plan.assignments
+            if (t := self._state.tasks.get(a.task_id)) is not None
+            and t.kind == "extinguish"
+        )
+        pedidas.add(req_crew.facts.get("unit_id", ""))
+        for unit_id in sorted(pedidas):
+            self._hold_unit(unit_id, task.id)
 
     def _where(self, task: Task) -> str:
         """Dónde arde, dicho como se dice por teléfono: el pueblo más cercano al
@@ -774,7 +984,7 @@ class Core:
         metros = int(round(math.hypot(cerca.x - cx, cerca.z - cz) / 10.0) * 10)
         return f"{metros} metros de {cerca.name}"
 
-    async def _emit_ambulance_call(self, cause: Event) -> None:
+    async def _emit_ambulance_call(self, plan: Plan, cause: Event) -> None:
         """A la ambulancia, solo si alguien la ha pedido.
 
         «Pedida» es una tarea de rescate abierta, y un rescate solo nace de un hecho
@@ -832,8 +1042,14 @@ class Core:
             queued=queued,
             priority=rescue.severity == "critical",
             waiting_call_id=self._who_asked(poi.id),
+            plan=plan,
+            roads=self._state.roads,
         )
         await self._emit(EventType.CALL_REQUESTED, req, cause)
+        # Una ambulancia en cola está ocupada en otra cosa y la llamada solo pregunta
+        # cuándo quedará libre: no se le retiene nada.
+        if req.facts.get("role") in DISPATCH_ROLES:
+            self._hold_unit(req.facts.get("unit_id", ""), rescue.id)
 
     def _busiest_unit(self, capability: str) -> Unit | None:
         """La unidad de ese tipo que está en servicio, aunque ocupada: a la que se

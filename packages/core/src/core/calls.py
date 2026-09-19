@@ -13,7 +13,7 @@ from itertools import pairwise
 
 from contracts.calls import CallRequest, Urgency
 from contracts.factkeys import road_bare
-from contracts.plan import Assignment
+from contracts.plan import Assignment, Plan
 from contracts.world import POI, RoadEdge, Task, Unit, WorldState
 from core.solver import RoadGraph
 
@@ -114,6 +114,29 @@ def urgency_of(task: Task) -> Urgency:
     return _SEVERITY_URGENCY.get(task.severity, "medium")
 
 
+def _assignment_for(plan: Plan | None, task_id: str) -> Assignment | None:
+    """La asignación del solver para esa tarea. Es lo que convierte una llamada de
+    despacho en una petición concreta: sin esto se le decía al retén que no había
+    ninguna unidad asignada mientras se le mandaba su propio camión."""
+    if plan is None:
+        return None
+    return next((a for a in plan.assignments if a.task_id == task_id), None)
+
+
+def _extinguish_assignments(
+    state: WorldState | None, plan: Plan | None
+) -> list[Assignment]:
+    """Todo lo que el plan manda al fuego. Al retén no se le pide un camión: se le
+    pide el conjunto que el solver ha puesto sobre los frentes."""
+    if plan is None or state is None:
+        return []
+    return [
+        a
+        for a in plan.assignments
+        if (t := state.tasks.get(a.task_id)) is not None and t.kind == "extinguish"
+    ]
+
+
 UNIT_STATUS_WORDS = {
     "working": "trabajando el fuego",
     "moving": "de camino",
@@ -130,6 +153,22 @@ def _plural(n: int, singular: str) -> str:
     return f"{n} {singular}" if n == 1 else f"{n} {plural}"
 
 
+def _count_kinds(kinds: list[str]) -> str:
+    """`["camión","camión","ambulancia"]` → "1 ambulancia, 2 camiones". Contar por
+    tipo es lo que hace legible una lista de medios dicha en voz alta."""
+    cuenta: dict[str, int] = {}
+    for k in kinds:
+        cuenta[k] = cuenta.get(k, 0) + 1
+    return ", ".join(_plural(n, k) for k, n in sorted(cuenta.items()))
+
+
+def _minutes(eta_s: float) -> str:
+    """Segundos del solver → los minutos que se dicen por teléfono. Nunca "cero
+    minutos": una unidad que ya está allí llega "en un minuto"."""
+    minutos = max(1, math.ceil(eta_s / 60.0))
+    return "un minuto" if minutos == 1 else f"unos {minutos} minutos"
+
+
 def resources_line(state: WorldState) -> str:
     """Qué medios hay y qué están haciendo, ahora mismo. Es lo que el operador puede
     prometer por teléfono sin inventarse nada: sale del `WorldState`, no del guion."""
@@ -137,14 +176,102 @@ def resources_line(state: WorldState) -> str:
     for unit in sorted(state.units.values(), key=lambda u: u.id):
         word = UNIT_STATUS_WORDS.get(unit.status, unit.status)
         by_status.setdefault(word, []).append(UNIT_NAMES.get(unit.kind, unit.kind))
-    partes: list[str] = []
-    for word, kinds in by_status.items():
-        cuenta: dict[str, int] = {}
-        for k in kinds:
-            cuenta[k] = cuenta.get(k, 0) + 1
-        nombres = ", ".join(_plural(n, k) for k, n in sorted(cuenta.items()))
-        partes.append(f"{nombres} {word}")
+    partes = [f"{_count_kinds(kinds)} {word}" for word, kinds in by_status.items()]
     return "; ".join(partes) if partes else "sin medios registrados"
+
+
+def requested_units_line(
+    state: WorldState,
+    assignments: list[Assignment],
+    roads: dict[str, RoadEdge] | None = None,
+    aliases: dict[str, str] | None = None,
+) -> str:
+    """Lo que se le PIDE al medio: qué unidades, por qué ruta y en cuánto.
+
+    `resources_line` dice qué hay y qué está haciendo; esto dice qué se le está
+    pidiendo. Sale del `Plan`, no del `WorldState`: es la decisión del solver dicha en
+    voz alta, y es lo único que el medio puede confirmar o negar por teléfono."""
+    pares = [
+        (a, state.units[a.unit_id])
+        for a in sorted(assignments, key=lambda a: a.unit_id)
+        if a.unit_id in state.units
+    ]
+    if not pares:
+        return "todavía no hay ninguna unidad asignada"
+    detalle = "; ".join(
+        f"{unit_name(u)} por {route_name(a.route, roads, aliases)}, {_minutes(a.eta_s)}"
+        for a, u in pares
+    )
+    return (
+        f"{_count_kinds([UNIT_NAMES.get(u.kind, u.kind) for _, u in pares])}: {detalle}"
+    )
+
+
+def committed_resources_line(
+    state: WorldState,
+    assignments: list[Assignment],
+    refused: list[Unit],
+    roads: dict[str, RoadEdge] | None = None,
+    aliases: dict[str, str] | None = None,
+) -> str:
+    """Los medios que van DE VERDAD, y los que han dicho que no pueden.
+
+    Es la diferencia entre `requested_units_line` (lo que se pidió) y esto (lo que
+    salió). Existe porque la orden de evacuación se dicta DESPUÉS de las llamadas de
+    despacho: al pueblo no se le promete un camión hasta que su dotación ha dicho
+    «vamos». Un «no ha podido salir» se dice también: es el beat honesto."""
+    partes: list[str] = []
+    if assignments:
+        partes.append(f"van {requested_units_line(state, assignments, roads, aliases)}")
+    if refused:
+        nombres = _count_kinds([UNIT_NAMES.get(u.kind, u.kind) for u in refused])
+        verbo = "ha podido" if len(refused) == 1 else "han podido"
+        partes.append(f"{nombres} no {verbo} salir")
+    return "; ".join(partes) if partes else "todavía no hay ningún medio confirmado"
+
+
+def _burning_area(n_cells: int, graph: RoadGraph | None) -> str:
+    """Celdas ardiendo → superficie. El lado de la celda es del escenario
+    (`hazard.cell_size`, 4 bloques en `wildfire_ridge`), así que la cifra no se
+    inventa aquí."""
+    if graph is None:
+        return f"{n_cells} celdas"
+    ha = n_cells * graph.cell_size**2 / 10_000.0
+    if ha < 1:
+        return "menos de una hectárea"
+    return "una hectárea" if round(ha) == 1 else f"unas {round(ha)} hectáreas"
+
+
+def coverage_line(state: WorldState, plan: Plan, graph: RoadGraph | None = None) -> str:
+    """Lo que el plan NO cubre, dicho como se puede decir por teléfono.
+
+    `plan.unassigned_tasks` no está vacío casi nunca —medido sobre cinco runs: el
+    100 % de los planes, con medianas de 23 a 284 tareas sin cubrir— pero «284 tareas»
+    no es una frase que se le pueda decir a nadie: una tarea de extinción es una celda
+    del grid, no un foco. Se dice en superficie ardiendo y medios encima, y quien
+    decide si falta gente es el solver (si dejó tareas de extinción sin asignar), no
+    una heurística de aquí."""
+    ardiendo = sum(1 for c in state.cells.values() if c.state == "burning")
+    if not ardiendo:
+        return "no hay superficie ardiendo ahora mismo"
+    encima = [
+        UNIT_NAMES.get(state.units[a.unit_id].kind, state.units[a.unit_id].kind)
+        for a in plan.assignments
+        if a.unit_id in state.units
+        and (t := state.tasks.get(a.task_id)) is not None
+        and t.kind == "extinguish"
+    ]
+    superficie = _burning_area(ardiendo, graph)
+    sin_cubrir = any(
+        (t := state.tasks.get(tid)) is not None and t.kind == "extinguish"
+        for tid in plan.unassigned_tasks
+    )
+    if not encima:
+        return f"hay {superficie} ardiendo y ningún medio encima"
+    medios = _count_kinds(encima)
+    if sin_cubrir:
+        return f"hay {superficie} ardiendo y solo {medios} encima: no llegamos a todo el frente"
+    return f"hay {superficie} ardiendo, cubierta con {medios}"
 
 
 def nearest_fire(
@@ -214,8 +341,7 @@ def unit_eta_line(state: WorldState, assignment: Assignment | None) -> str:
     unit = state.units.get(assignment.unit_id)
     if unit is None:
         return "todavía no hay ninguna unidad asignada a su pueblo"
-    minutos = max(1, math.ceil(assignment.eta_s / 60.0))
-    cuando = "un minuto" if minutos == 1 else f"unos {minutos} minutos"
+    cuando = _minutes(assignment.eta_s)
     articulo = "el" if unit_name(unit).startswith(("camión", "dron")) else "la"
     return f"va {articulo} {unit_name(unit)} y llega en {cuando}"
 
@@ -277,17 +403,32 @@ NEIGHBOR_CHECKLIST = (
 
 
 def _situation_brief_evacuation(
-    poi: POI, route: str, deadline_min: int, hazard: str, live: dict[str, str]
+    poi: POI,
+    route: str,
+    deadline_min: int,
+    hazard: str,
+    live: dict[str, str],
+    committed: str = "",
 ) -> str:
     """El parte que el operador lee al alcalde: la orden y, detrás, el estado real
     del incendio y de los medios. Todo sale del `WorldState` del momento en que se
-    pide la llamada, así que lo que diga por teléfono es verdad mientras lo dice."""
+    pide la llamada, así que lo que diga por teléfono es verdad mientras lo dice.
+
+    `committed` son los medios cuya dotación ya ha confirmado por teléfono. Es lo
+    único que se le puede prometer a un pueblo sin mentirle, y es la razón de que
+    esta llamada salga después de las de despacho y no antes."""
+    # «En camino», no «confirmados»: la lista incluye unidades que no se telefonean
+    # (las ambulancias solo reciben llamada si alguien las pide). Van de verdad, que
+    # es lo que importa, pero decir «confirmado» de algo que nadie confirmó sería la
+    # misma clase de mentira que este cambio existe para quitar.
+    confirmados = f" Medios en camino: {committed}." if committed else ""
     return (
         f"Ha llegado la orden de evacuar {poi.name} por {route} en los próximos "
         f"{deadline_min} minutos, por el {hazard}. Dígala completa una vez, "
         "despacio, y confirme que la persona la ha entendido y que la acepta. "
         f"Situación ahora mismo: {live['fire_status']}; {live['roads_status']}; "
         f"medios: {live['resources']}; hacia su pueblo {live['unit_eta']}."
+        f"{confirmados}"
     )
 
 
@@ -310,36 +451,59 @@ def _situation_brief_neighbor(
 
 
 CREW_CHECKLIST = (
-    "Solo necesitas una cosa: si pueden salir ya. Pregúntalo directamente y, en "
-    "cuanto te contesten, llama a la herramienta `reportar_situacion` con "
-    "`confirmed_order` a true si van y a false si no pueden. Si te dicen que no, "
-    "pregunta por qué en una frase y añádelo en `notes`. No alargues la llamada: "
-    "son treinta segundos."
+    "Necesitas dos cosas, en este orden. Primero: si pueden salir ya con lo que se "
+    "les pide. En cuanto te contesten, llama a la herramienta `reportar_situacion` "
+    "con `confirmed_order` a true si van y a false si no pueden; si te dicen que no, "
+    "pregunta por qué en una frase y añádelo en `notes`. Segundo: si pueden "
+    "movilizar más dotaciones de las pedidas, y cuántas. Vuelve a llamar a la "
+    "herramienta con `extra_units` (el número que te digan, 0 si ninguna) y el plazo "
+    "en `notes`. No alargues la llamada: es un minuto."
 )
 """Al retén y a la ambulancia se les llama para despachar, no para conversar: la
-llamada útil es la que acaba en «voy» o «no puedo» y libera la línea."""
+llamada útil es la que acaba en «voy» o «no puedo» y libera la línea. La segunda
+pregunta existe porque el solver deja tareas de extinción sin cubrir en la práctica
+totalidad de los planes: no preguntarla era ocultar el único dato que el retén sí
+puede cambiar."""
+
+AMBULANCE_CHECKLIST = (
+    "Necesitas dos cosas, en este orden. Primero: si pueden ir ya con lo que se les "
+    "pide. En cuanto te contesten, llama a la herramienta `reportar_situacion` con "
+    "`confirmed_order` a true si van y a false si no pueden, y el motivo en `notes` "
+    "si es que no. Segundo: si hay más unidades que puedan movilizar si hiciera "
+    "falta, y cuántas; vuelve a llamar a la herramienta con `extra_units`. No "
+    "alargues la llamada."
+)
 
 
-def _situation_brief_crew(live: dict[str, str], hazard: str, donde: str) -> str:
+def _situation_brief_crew(
+    live: dict[str, str], hazard: str, donde: str, peticion: str, cobertura: str
+) -> str:
+    """El parte al retén: dónde arde, qué se le pide exactamente y qué se queda sin
+    cubrir. La petición sale del `Plan`; la cobertura, de lo que el solver no pudo
+    asignar. Nada de esto es guion fijo."""
+    pide = f"Les pedimos {peticion}. " if peticion else ""
+    falta = f"{cobertura.capitalize()}. " if cobertura else ""
     return (
         f"Tiene un {hazard} declarado {donde}. {live['fire_status'].capitalize()}. "
-        f"{live['roads_status'].capitalize()}. Dígalo en dos frases, sin rodeos, y "
-        "pregunte si pueden salir ya."
+        f"{live['roads_status'].capitalize()}. {pide}{falta}"
+        "Dígalo sin rodeos: pregunte primero si pueden salir ya con lo que se les "
+        "pide y después si pueden movilizar más dotaciones."
     )
 
 
 def _situation_brief_ambulance(
-    live: dict[str, str], hazard: str, poi_name: str, immobile: int
+    live: dict[str, str], hazard: str, poi_name: str, immobile: int, peticion: str
 ) -> str:
     cuantos = (
         f"{immobile} personas que no pueden moverse solas"
         if immobile > 1
         else "una persona que no puede moverse sola"
     )
+    pide = f"Les pedimos {peticion}. " if peticion else ""
     return (
         f"Le piden una ambulancia en {poi_name}, por un {hazard}: hay {cuantos}. "
-        f"{live['roads_status'].capitalize()}. Dígalo en dos frases y pregunte si "
-        "pueden ir ya."
+        f"{live['roads_status'].capitalize()}. {pide}Dígalo en dos frases, pregunte "
+        "si pueden ir ya y después si tienen otra unidad disponible."
     )
 
 
@@ -365,6 +529,7 @@ def evacuation_call(
     aliases: dict[str, str] | None = None,
     state: WorldState | None = None,
     graph: RoadGraph | None = None,
+    committed: str = "",
 ) -> CallRequest:
     """La orden de evacuación para el POI de una tarea `evacuate` ya asignada.
 
@@ -393,8 +558,9 @@ def evacuation_call(
             "route_name": route,
             "deadline_min": str(deadline),
             "hazard_kind": hazard,
+            "committed_resources": committed,
             "situation_brief": _situation_brief_evacuation(
-                poi, route, deadline, hazard, live
+                poi, route, deadline, hazard, live, committed
             ),
             "checklist": EVACUATION_CHECKLIST,
             "advice_rules": ADVICE_RULES,
@@ -490,12 +656,33 @@ def fire_crew_call(
     state: WorldState | None = None,
     graph: RoadGraph | None = None,
     aliases: dict[str, str] | None = None,
+    plan: Plan | None = None,
+    roads: dict[str, RoadEdge] | None = None,
 ) -> CallRequest:
-    """Al retén, en cuanto se detecta el fuego: dónde es, qué tiene delante y si
+    """Al retén, en cuanto se detecta el fuego: dónde es, **qué se le pide** y si
     pueden salir. `unit_id` viaja con la llamada para que un «no podemos» entre al
-    estado como `unit:<id>:available=false` y el solver reparta con lo que queda."""
+    estado como `unit:<id>:available=false` y el solver reparta con lo que queda.
+
+    Con `plan` la llamada deja de ser un aviso y pasa a ser una petición: las
+    unidades que el solver puso sobre los frentes, con su ruta y su ETA, y lo que se
+    queda sin cubrir. Sin `plan` se comporta como antes."""
     hazard = hazard_name(hazard_kind)
-    live = _live_or_blank(state, station, graph, None, aliases)
+    asignada = _assignment_for(plan, task.id)
+    # Manda el `Assignment`: `unit_id` viene de `_free_unit`, que responde a «quién
+    # puede coger el teléfono», no a «a quién ha asignado el solver».
+    unidad = asignada.unit_id if asignada is not None else unit_id
+    live = _live_or_blank(state, station, graph, asignada, aliases)
+    pedidas = _extinguish_assignments(state, plan)
+    peticion = (
+        requested_units_line(state, pedidas, roads, aliases)
+        if state is not None and pedidas
+        else ""
+    )
+    cobertura = (
+        coverage_line(state, plan, graph)
+        if state is not None and plan is not None
+        else ""
+    )
     return CallRequest(
         task_id=task.id,
         poi_id=station.id,
@@ -506,15 +693,24 @@ def fire_crew_call(
         facts={
             "role": "fire_crew",
             "callee": "el retén de bomberos",
-            "unit_id": unit_id,
+            "unit_id": unidad,
             "poi_name": station.name,
             "hazard_kind": hazard,
-            "situation_brief": _situation_brief_crew(live, hazard, where),
+            # Viaja para que el ack del tool pueda decirla al confirmar: es la única
+            # forma de cumplir el «les mandamos la ruta» que el ack ya prometía.
+            "route_name": (
+                route_name(asignada.route, roads, aliases) if asignada is not None else ""
+            ),
+            "requested_units": peticion,
+            "coverage": cobertura,
+            "situation_brief": _situation_brief_crew(
+                live, hazard, where, peticion, cobertura
+            ),
             "checklist": CREW_CHECKLIST,
             "advice_rules": ADVICE_RULES,
             **live,
         },
-        expect=["confirmation"],
+        expect=["confirmation", "extra_units"],
     )
 
 
@@ -532,6 +728,8 @@ def ambulance_call(
     queued: bool = False,
     priority: bool = False,
     waiting_call_id: str = "",
+    plan: Plan | None = None,
+    roads: dict[str, RoadEdge] | None = None,
 ) -> CallRequest:
     """A la ambulancia, cuando alguien la ha pedido por teléfono (un rescate nace de
     un hecho `poi:<id>:immobile` de una llamada).
@@ -542,11 +740,20 @@ def ambulance_call(
     gravedad del rescate: con un caso crítico no se les pregunta si quieren, se les
     dice que en cuanto terminen van allí."""
     hazard = hazard_name(hazard_kind)
-    live = _live_or_blank(state, poi, graph, None, aliases)
+    # Una ambulancia en cola no tiene asignación a este rescate todavía: de eso va la
+    # llamada. Una libre sí, y es lo que se le pide.
+    asignada = None if queued else _assignment_for(plan, task.id)
+    unidad = asignada.unit_id if asignada is not None else unit_id
+    live = _live_or_blank(state, poi, graph, asignada, aliases)
+    peticion = (
+        requested_units_line(state, [asignada], roads, aliases)
+        if state is not None and asignada is not None
+        else ""
+    )
     brief = (
         _situation_brief_queued(live, hazard, poi.name, immobile, priority)
         if queued
-        else _situation_brief_ambulance(live, hazard, poi.name, immobile)
+        else _situation_brief_ambulance(live, hazard, poi.name, immobile, peticion)
     )
     return CallRequest(
         task_id=task.id,
@@ -558,7 +765,11 @@ def ambulance_call(
         facts={
             "role": "ambulance_queued" if queued else "ambulance",
             "callee": "la dotación de la ambulancia",
-            "unit_id": unit_id,
+            "unit_id": unidad,
+            "route_name": (
+                route_name(asignada.route, roads, aliases) if asignada is not None else ""
+            ),
+            "requested_units": peticion,
             "poi_name": poi.name,
             "base_name": base.name,
             "hazard_kind": hazard,
@@ -566,20 +777,27 @@ def ambulance_call(
             "must_go_next": "sí" if priority else "no",
             "waiting_call_id": waiting_call_id,
             "situation_brief": brief,
-            "checklist": QUEUED_CHECKLIST if queued else CREW_CHECKLIST,
+            "checklist": QUEUED_CHECKLIST if queued else AMBULANCE_CHECKLIST,
             "advice_rules": ADVICE_RULES,
             **live,
         },
-        expect=["confirmation", "available_after_min"] if queued else ["confirmation"],
+        expect=(
+            ["confirmation", "available_after_min"]
+            if queued
+            else ["confirmation", "extra_units"]
+        ),
     )
 
 
 __all__ = [
     "ambulance_call",
+    "committed_resources_line",
+    "coverage_line",
     "evacuation_call",
     "fire_crew_call",
     "hazard_name",
     "neighbor_alert_call",
+    "requested_units_line",
     "route_name",
     "unit_name",
     "urgency_of",

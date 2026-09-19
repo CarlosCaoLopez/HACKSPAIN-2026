@@ -19,6 +19,12 @@ export interface Action {
   t_sim: number
   seq: number
   closed: { ok: boolean; t_sim: number; text: string } | null
+  /** Si la unidad salió con el «vamos» de su dotación al teléfono.
+   *
+   *  `null` es el caso normal: la orden no dependía de ninguna llamada. `false` es el
+   *  que hay que ver — se agotó el plazo y la unidad salió igual. Se pinta porque un
+   *  despacho sin confirmar no puede parecerse a uno confirmado. */
+  dispatchConfirmed: boolean | null
 }
 
 /** `unknown_verb` es el fallo de integración más probable entre core y sim: se
@@ -42,6 +48,7 @@ export function actionRows(events: Event[]): Action[] {
         t_sim: ev.t_sim,
         seq: ev.seq,
         closed: null,
+        dispatchConfirmed: ev.payload.dispatch_confirmed ?? null,
       })
       continue
     }
@@ -93,6 +100,7 @@ function open(
     t_sim,
     seq,
     closed: null,
+    dispatchConfirmed: null,
   }
   byAction.set(actionId, fresh)
   return fresh

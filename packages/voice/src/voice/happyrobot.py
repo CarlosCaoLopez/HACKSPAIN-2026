@@ -95,6 +95,12 @@ async def trigger(req: CallRequest, run_id: str) -> str:
         # convierte al agente en un operador que recomienda con datos y no en un
         # contestador con un guion.
         "resources": req.facts.get("resources", ""),
+        # Lo que el SOLVER pide (`requested_units`), lo que se queda sin cubrir
+        # (`coverage`) y lo que va confirmado (`committed_resources`). Sin estas tres
+        # la llamada a un medio era un aviso, no una petición.
+        "requested_units": req.facts.get("requested_units", ""),
+        "coverage": req.facts.get("coverage", ""),
+        "committed_resources": req.facts.get("committed_resources", ""),
         "fire_status": req.facts.get("fire_status", ""),
         "roads_status": req.facts.get("roads_status", ""),
         "unit_eta": req.facts.get("unit_eta", ""),
