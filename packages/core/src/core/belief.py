@@ -12,10 +12,9 @@ import logging
 from contracts.calls import Fact
 from contracts.events import Event, EventType
 from contracts.factkeys import validate_fact_key
-from contracts.world import RoadEdge
 from contracts.plan import Plan
 from contracts.scenario import Scenario
-from contracts.world import Cell, CivilianGroup, Wind, WorldState
+from contracts.world import Cell, CivilianGroup, RoadEdge, Wind, WorldState
 
 log = logging.getLogger("core.belief")
 

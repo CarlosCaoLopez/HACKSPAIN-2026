@@ -149,3 +149,28 @@ curl -s -X POST localhost:8000/dev/signal -H 'content-type: application/json' \
 | La señal no llega | *Agent Signals* apagado, o `call_id` del curl no es el `session_id` de HappyRobot (mira `/dev/calls`) |
 | No hay `call.affect` | `HUMALIKE_API_KEY` vacío o sin créditos (`402` en el log, una vez) |
 | Sin `call.transcript.partial` en vivo | `HAPPYROBOT_API_KEY` vacío o el SSE devolvió 4xx; la transcripción llega igual al colgar |
+
+## Anexo · workflow saliente `test` → `evacuation_order` (montado por API el sábado)
+
+Estado (sábado 11:30): **publicado y vivo en development, versión 8**, origen `+1 484 558 1911` (Twilio; el Telnyx `+1 361 210 1724` no tiene salida internacional, `SIP 403`). Llamada real contestada: 63 s, transcripción por turnos, `call.ended` con `task_id` y `analyze`, del workflow `test` (`301cfio7aosi`). Probado de punta a punta con el `trigger()` de Carlos: el hook acepta con la key `sk_live_` como `Bearer`, el agente resuelve el `to`, marca desde `+1 361 210 1724` y el webhook de fin llega a `/webhooks/happyrobot/call` con `run_id` (el de la plataforma, el mismo que devolvió el hook), `task_id`, `to`, `status` y transcripción. Con el número Telnyx la llamada la rechazaba el operador (`sip_code 403`, sin salida internacional); con el Twilio `vela-out-twilio` conecta. Un intento fallido queda archivado como `call.ended` con `outcome: failed` (o `no_answer` si salta el buzón), así que el core puede reintentar o escalar.
+
+Nodos (ids de la versión 2):
+
+| Nodo | Tipo | Detalle |
+| --- | --- | --- |
+| Receive external update | trigger Webhook | Variables bajo `data.*` (`data.to`, `data.poi_name`, `data.route_name`, `data.deadline_min`, `data.hazard_kind`, `data.severity`, `data.run_id`, `data.task_id`). Payload de ejemplo enviado a `hooks/301cfio7aosi/9wsaydvqsgke` |
+| Coordinador 112 | Outbound Voice Agent | `to` = objeto variable `{group_id: <persistent_id del trigger>, variable_id: "data.to"}` (la forma cruda `{{$var:…}}` **no** se resuelve en campos de párrafo; el aviso *missing variable* al publicar es solo un aviso). `from_number` = `{type: static, static: {id: "+13612101724", name: "+13612101724"}}`: la plataforma busca el **trunk por su nombre**, ni el id del número ni el uuid del trunk valen. Voz Daniel HR, `es`, disclaimer UE, 180 s, buzón → colgar, `gracefully_handle_invalid_phone`, signals ON |
+| Prompt | prompt | Orden de evacuación con las variables del trigger como `{{<persistent_id del trigger>.data.poi_name}}` (probado en llamada: `{{$var:…}}`, `{{poi_name}}` y `@trigger.poi_name` se leen literales; `{{data.x}}` y `{{trigger.x}}` dan `<no-value>`); modelo `gpt-5.6-luna`. Sale "incompleto" en el listado igual que el del entrante; no bloquea |
+| POST call end | Webhook POST | `@VELA_URL/webhooks/happyrobot/call` con `X-Vela-Token`, cuerpo crudo con `{{$var:…}}`: `run_id` = `{{$var:current.run_id}}` (los campos del trigger en cuerpos crudos pueden resolver al payload de ejemplo), `session_id`/`status`/`transcript` del agente, `task_id`/`to` del trigger (`data.*`) |
+
+Cosas aprendidas de la API que no están en la documentación: las variables de un nodo se direccionan por su `persistent_id` (el de la versión original, no el de la bifurcación); los campos de un trigger Webhook cuelgan de `data.`; la API es la de la región de la organización (`platform.eu.happyrobot.ai`), la US rechaza la key; el hook responde `run_id`, no `call_id`; `update-a-node` es `PUT` y el `type` del cuerpo tiene que coincidir con el del nodo (el trigger creado en la UI es `action`).
+
+El entrante `citizen_report` (`ikdg6o9mjj9h`) está **publicado y vivo en development** desde la API: enlace de la web call `https://platform.eu.happyrobot.ai/deployments/development/ikdg6o9mjj9h`, sin login.
+
+## Anexo · plan B del entrante por teléfono: `citizen_report_phone`
+
+La wifi del evento bloquea UDP y la web call (WebRTC) no levanta el audio: el websocket de señalización conecta pero `could not establish pc connection`. Con hotspot del móvil debería ir. Como no puede depender de eso, hay una copia del entrante que se atiende **por teléfono**: workflow `citizen_report_phone` (`wyoxcfeop329`), trigger *Inbound to number* sobre el Twilio `+1 484 558 1911`, mismo agente, mismo prompt, mismo tool `report_fact` y mismos webhooks, **publicado y vivo en producción** (la lista de números del trigger solo cuenta como asignación de producción; el `Missing numbers` al publicar en development se resuelve desde la UI asignando el número a ese entorno).
+
+Uso: el vecino llama al `+1 484 558 1911` desde un móvil (llamada internacional a EE. UU., la paga quien llama). El resto es idéntico: tool → hechos → ack con plan → `call.ended`. El mismo número es el origen de la saliente `evacuation_order`; las dos cosas conviven.
+
+Montado por API: `POST /workflows/{slug}/duplicate` (solo copia; el trigger se sustituye a mano), `DELETE /versions/{v}/nodes/{id}` exige cuerpo JSON `{}`, el trigger copiado se actualiza con `type: "action"`, y `numbers` es una lista plana de `{id, name, number}` tal como la devuelve `available_options.phone_numbers`.

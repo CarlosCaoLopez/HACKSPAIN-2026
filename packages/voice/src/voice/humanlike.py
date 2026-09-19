@@ -36,7 +36,10 @@ from voice.perception import CallPerception
 log = logging.getLogger("voice.humanlike")
 
 HUMALIKE_BASE = "https://api.humalike.com"
-HAPPYROBOT_BASE = "https://platform.happyrobot.ai/api/v2"
+HAPPYROBOT_BASE = (
+    settings.happyrobot_api_base or "https://platform.eu.happyrobot.ai/api/v2"
+)
+"""La organización está en la región EU: el host US rechaza la key."""
 
 FORESEE_HOT_S = 3.0
 PLAN_WAIT_S = 3.5
@@ -212,6 +215,13 @@ class HumalikeClient:
         """Social Observability, al colgar: `health_score`, recepción, hallazgos."""
         if not transcript:
             return None
+        speakers = {t["speaker"] for t in transcript}
+        if agent_name not in speakers:
+            # `turns_from_text` etiqueta "operator"/"caller" (las etiquetas de Jev);
+            # analyze exige que agent_name sea un speaker literal de la transcripción.
+            agent_name = next(
+                (sp for sp in ("operator", AGENT_NAME) if sp in speakers), agent_name
+            )
         messages = [
             {"id": f"m{i + 1}", "speaker": t["speaker"], "text": t["text"]}
             for i, t in enumerate(transcript)
@@ -569,7 +579,10 @@ class ConversationMonitor:
     def jev_turns(self) -> list[dict[str, str]]:
         """La transcripción con las etiquetas que nombran las preguntas de Jev."""
         return [
-            {"speaker": "operator" if t["speaker"] == AGENT_NAME else "caller", "text": t["text"]}
+            {
+                "speaker": "operator" if t["speaker"] == AGENT_NAME else "caller",
+                "text": t["text"],
+            }
             for t in self.state.transcript
         ]
 
@@ -603,7 +616,10 @@ class ConversationMonitor:
         refina igual que el resto) y no espera: el bucle sigue."""
         n = len(self.state.transcript)
         field = await self.perception.tick(
-            self.jev_turns(), new_text=n != self.state.last_jev_len, final=final, wait=wait
+            self.jev_turns(),
+            new_text=n != self.state.last_jev_len,
+            final=final,
+            wait=wait,
         )
         if self.perception.active:
             self.state.last_jev_len = n
@@ -931,17 +947,30 @@ def parse_webhook(body: dict) -> CallResult:
     meta = (call.get("metadata") or {}).get("custom") if call else None
     meta = meta if isinstance(meta, dict) else {}
     call_id = str(body.get("session_id") or body.get("call_id") or call.get("id") or "")
-    task_id = body.get("task_id") or meta.get("task_id")
     direction = str(body.get("direction") or call.get("direction") or "inbound")
+    if direction == "outbound" and body.get("run_id"):
+        # En la saliente el id de la llamada es el `run_id` del workflow: es lo que
+        # devolvió el hook a `place_call` y lo que lleva `call.started`. Así la
+        # tarjeta abre y cierra con el mismo id, aunque la llamada no llegara a
+        # tener sesión (403 del operador, buzón, número inválido).
+        call_id = str(body["run_id"])
+    task_id = body.get("task_id") or meta.get("task_id")
     if direction not in ("inbound", "outbound"):
         direction = "inbound"
     status = str(body.get("status") or call.get("status") or "completed").lower()
     transcript = body.get("transcript") or call.get("transcript") or ""
+    if isinstance(transcript, str) and transcript.lstrip().startswith("["):
+        # HappyRobot serializa la transcripción del agente como JSON dentro del
+        # cuerpo crudo: [{"role": "user"|"assistant", "content": "...", ...}].
+        try:
+            transcript = json.loads(transcript)
+        except ValueError:
+            pass
     if isinstance(transcript, list):
         transcript = "\n".join(
-            f"{m.get('role') or m.get('speaker') or '?'}: {m.get('content') or m.get('text') or ''}"
+            f"{_speaker_label(m)}: {m.get('content') or m.get('text') or ''}"
             for m in transcript
-            if isinstance(m, dict)
+            if isinstance(m, dict) and (m.get("content") or m.get("text"))
         )
     now = time.time()
     started = _as_epoch(body.get("started_at") or call.get("started_at")) or now
@@ -975,6 +1004,11 @@ def turns_from_text(text: str) -> list[dict[str, str]]:
         speaker = "operator" if role.strip().lower() in AGENT_ROLES else "caller"
         turns.append({"speaker": speaker, "text": said.strip()})
     return turns
+
+
+def _speaker_label(m: dict) -> str:
+    role = str(m.get("role") or m.get("speaker") or "").lower()
+    return AGENT_NAME if role in AGENT_ROLES else CALLER_NAME
 
 
 def _as_epoch(value: Any) -> float | None:

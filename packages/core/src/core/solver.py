@@ -18,6 +18,8 @@ import heapq
 import math
 from itertools import pairwise
 
+from contracts.calls import Fact
+from contracts.factkeys import road_open_key
 from contracts.plan import (
     UNKNOWN_CONSTRAINT,
     Assignment,
@@ -29,8 +31,6 @@ from contracts.plan import (
     is_known_constraint,
     parse_constraint,
 )
-from contracts.calls import Fact
-from contracts.factkeys import road_open_key
 from contracts.scenario import Scenario
 from contracts.world import POI, Cell, Task, Unit, WorldState
 

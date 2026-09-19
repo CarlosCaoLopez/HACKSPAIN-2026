@@ -302,17 +302,20 @@ async def _on_end(body: dict) -> dict:
         result.facts = await _extract_without_jev(result, mon)
 
     # Humalike audita la llamada. Si falla, el CallResult va sin nota.
+    analysis = None
     if mon is not None:
         if not result.transcript and mon.state.transcript:
             result.transcript = mon.transcript_text()
         analysis = await mon.close()
-        if analysis:
-            result.analysis = analysis
-            score = analysis.get("health_score")
-            result.health_score = (
-                float(score) if isinstance(score, (int, float)) else None
-            )
         humanlike.forget(result.call_id)
+    elif result.transcript:
+        # Saliente (sin monitor): se audita igual sobre la transcripción del webhook.
+        hl, _ = humanlike.clients()
+        analysis = await hl.analyze(humanlike.turns_from_text(result.transcript))
+    if analysis:
+        result.analysis = analysis
+        score = analysis.get("health_score")
+        result.health_score = float(score) if isinstance(score, (int, float)) else None
 
     await publish(
         make_event(EventType.CALL_ENDED, result.model_dump(mode="json"), source="voice")

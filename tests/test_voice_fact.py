@@ -239,3 +239,93 @@ async def test_ack_without_plan_falls_back_to_signal(client, journal, fakes):
         "unit_dispatched", {"unit": "camión 2", "route": "pista norte", "eta_s": 40}, []
     )
     assert live.signals[-1]["kind"] == "unit_dispatched"
+
+
+async def test_failed_outbound_without_session_is_still_archived(client, journal, fakes):
+    body = {
+        "type": "end",
+        "session_id": "",
+        "run_id": "run_x",
+        "task_id": "task_evac_a",
+        "direction": "outbound",
+        "status": "failed",
+        "transcript": "",
+    }
+    r = await client.post("/webhooks/happyrobot/call", json=body, headers=HEADERS)
+    assert r.status_code == 200, r.text
+    ended = next(e for e in journal if e.type == EventType.CALL_ENDED)
+    assert ended.payload["call_id"] == "run_x"
+    assert ended.payload["task_id"] == "task_evac_a"
+    assert ended.payload["outcome"] == "failed"
+
+
+def test_parse_webhook_reads_json_transcript_string():
+    from voice.humanlike import parse_webhook
+
+    body = {
+        "type": "end",
+        "session_id": "s9",
+        "run_id": "run_9",
+        "task_id": "task_evac_a",
+        "direction": "outbound",
+        "status": "voicemail",
+        "transcript": '[{"content":"Buenos días, le llamo del 112","role":"assistant"},{"content":"Se te ha redirigido al buzón de voz","role":"user"}]',
+    }
+    r = parse_webhook(body)
+    assert r.call_id == "run_9" and r.outcome == "no_answer"
+    assert (
+        r.transcript
+        == "operador: Buenos días, le llamo del 112\nvecino: Se te ha redirigido al buzón de voz"
+    )
+
+
+async def test_outbound_end_without_monitor_is_analyzed(client, journal, fakes):
+    hl, _ = fakes
+    body = {
+        "type": "end",
+        "session_id": "s7",
+        "run_id": "run_7",
+        "task_id": "task_evac_a",
+        "direction": "outbound",
+        "status": "completed",
+        "transcript": "operador: Debe evacuar Pueblo A por la pista norte.\nvecino: Entendido, somos cuatro, salimos ya.",
+    }
+    r = await client.post("/webhooks/happyrobot/call", json=body, headers=HEADERS)
+    assert r.status_code == 200
+    ended = next(e for e in journal if e.type == EventType.CALL_ENDED)
+    assert ended.payload["call_id"] == "run_7" and ended.payload["outcome"] == "answered"
+    assert ended.payload["health_score"] == pytest.approx(0.82)
+    assert ("analyze", {"turns": 2}) in hl.calls
+
+
+def test_to_facts_includes_headcount():
+    from contracts.calls import CallFacts
+    from voice import VoiceGateway
+
+    cf = CallFacts(
+        location_hint="Pueblo B",
+        resolved_poi_id="poi_pueblo_b",
+        headcount=4,
+        people_immobile=1,
+        urgency="critical",
+    )
+    keys = {f.key: f.value for f in VoiceGateway().to_facts(cf, 1.0, "s")}
+    assert (
+        keys["poi:poi_pueblo_b:headcount"] == 4 and keys["poi:poi_pueblo_b:immobile"] == 1
+    )
+
+
+async def test_analyze_uses_a_real_speaker_as_agent(fakes):
+    from voice.humanlike import HumalikeClient, turns_from_text
+
+    seen = {}
+
+    class Rec(HumalikeClient):
+        async def _post(self, path, body, timeout):
+            seen.update(body)
+            return {"health_score": 0.5}
+
+    hl = Rec(token="x")
+    await hl.analyze(turns_from_text("operador: hola\nvecino: hola"))
+    assert seen["agent_name"] == "operator"
+    await hl.aclose()
