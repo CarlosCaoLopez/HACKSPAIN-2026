@@ -132,7 +132,16 @@ class Sim:
     # --- ciclo de vida ---
 
     async def start(self) -> None:
-        """Worldgen + tick loop. Publica `world.*` hasta que alguien pare."""
+        """Worldgen + tick loop. Publica `world.*` hasta que alguien pare.
+
+        Conecta el RCON él mismo. Quien construye el cliente no lo conecta a
+        propósito —`connect` reintenta con backoff y un puerto muerto serían varios
+        segundos de bloqueo al arrancar el run—, así que le toca a quien tiene el
+        ciclo de vida. Sin esto el primer comando del worldgen muere con
+        "RconClient sin conectar" y la task del sim se cae entera dos segundos
+        después de arrancar, con el resto del sistema corriendo en vacío.
+        """
+        await self.rcon.connect()
         await build(self.scenario, self.rcon)
         self._running = True
         await self._emit(
@@ -142,6 +151,19 @@ class Sim:
         )
         self._loop_task = asyncio.create_task(self._loop(), name="sim-tick")
         self._watch_task = asyncio.create_task(self._watch_roads(), name="sim-roads")
+
+    def set_speed(self, speed: float) -> None:
+        """Multiplicador del reloj de pared (D3). Lo llama el gateway con `--speed`.
+
+        `t_sim` no cambia: un tick sigue siendo un segundo simulado y el journal
+        sale idéntico. Lo único que se acorta es la espera entre ticks, así que a
+        10× los seis minutos de demo se corren en 36 s — que es lo que hace
+        viables los doce runs del domingo para el bonus de aprendizaje. A 1× no
+        pasa nada: es como se ensaya.
+        """
+        if speed <= 0:
+            raise ValueError(f"velocidad no positiva: {speed}")
+        self.speed = speed
 
     async def stop(self) -> None:
         self._running = False

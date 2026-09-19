@@ -73,7 +73,14 @@ class RconClient:
         self._req_id = 0
 
     async def connect(self) -> None:
-        """Abre la conexión. Reintenta con backoff: Paper tarda en arrancar."""
+        """Abre la conexión. Reintenta con backoff: Paper tarda en arrancar.
+
+        Idempotente: quien ya está conectado vuelve enseguida. `Sim.start` lo llama
+        siempre, y quien construye el cliente puede haberlo conectado ya; abrir un
+        segundo socket dejaría un worker huérfano quedándose respuestas.
+        """
+        if self._worker is not None and not self._worker.done():
+            return
         delay = 0.5
         for attempt in range(1, CONNECT_RETRIES + 1):
             try:
@@ -208,6 +215,9 @@ class FakeRcon:
     def __init__(self) -> None:
         self.commands: list[tuple[Priority, str]] = []
         self.connected = False
+        """Lo mira el test que comprueba que `Sim.start` conecta. El doble no
+        se queja de que lo usen sin conectar —demasiados tests llaman a `tick`
+        sin pasar por `start`— así que el descuido solo se ve si se asierta."""
 
     async def connect(self) -> None:
         self.connected = True

@@ -303,3 +303,31 @@ async def test_aplicar_dos_veces_el_mismo_corte_no_hace_nada(sim):
     antes = len(sim.rcon.commands)
     await sim.apply_road_change("wp_sur_01-wp_sur_02", True, "x")
     assert len(sim.rcon.commands) == antes
+
+
+async def test_start_conecta_el_rcon(sim):
+    """Quien construye el cliente no lo conecta —`connect` reintenta con backoff y
+    un puerto muerto bloquearía el arranque del run—, así que le toca a `Sim`, que
+    es quien tiene el ciclo de vida. Sin esto el primer comando del worldgen muere
+    con "RconClient sin conectar" y la task del sim se cae dos segundos después de
+    arrancar mientras el resto del sistema sigue en pie: pasó en el ensayo del
+    sábado y el gateway estuvo ocho minutos corriendo en vacío."""
+    assert sim.rcon.connected is False
+    await sim.start()
+    assert sim.rcon.connected is True, "el worldgen habría muerto al primer comando"
+    await sim.stop()
+
+
+async def test_set_speed_acelera_sin_tocar_el_tiempo_del_dominio(sim):
+    """El gateway lo llama con `--speed`. Sin este método degradaba a 1× y los doce
+    runs del domingo serían 72 minutos en vez de siete. `t_sim` no se entera: un
+    tick sigue siendo un segundo simulado y el journal sale idéntico."""
+    sim.set_speed(10.0)
+    assert sim.speed == 10.0
+    await sim.tick(1.0)
+    assert sim.t_sim == 1.0, "acelerar el reloj de pared no cambia el del dominio"
+
+
+async def test_una_velocidad_no_positiva_falla(sim):
+    with pytest.raises(ValueError, match="velocidad no positiva"):
+        sim.set_speed(0)
