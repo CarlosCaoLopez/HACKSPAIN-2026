@@ -359,3 +359,42 @@ async def test_set_speed_acelera_sin_tocar_el_tiempo_del_dominio(sim):
 async def test_una_velocidad_no_positiva_falla(sim):
     with pytest.raises(ValueError, match="velocidad no positiva"):
         sim.set_speed(0)
+
+
+async def test_una_evacuacion_camina_por_la_carretera_que_le_dijeron(sim):
+    """Con `route`, el pueblo ANDA: se le ve avanzar por esa carretera y llegar es lo
+    que le pone `safe`. Antes cualquier `rescue` era un `/tp` instantáneo al refugio,
+    así que el agente le decía al vecino «salgan por la pista sur» y en el mundo
+    aparecían de golpe en otro sitio."""
+    grupo = "civ_pueblo_a"
+    ruta = ["wp_pueblo_a", "wp_sur_02", "wp_sur_01"]
+    await sim.execute(
+        "act_walk",
+        "rescue",
+        {"civ_ids": [grupo], "shelter_id": "poi_pueblo_b", "route": ruta},
+    )
+
+    # Salen andando, no a salvo: mientras caminan siguen expuestos.
+    assert sim.civilians[grupo].state == "evacuating"
+    assert grupo in sim._walking
+    assert [e["state"] for e in eventos(EventType.WORLD_CIVILIANS_CHANGED)] == [
+        "evacuating"
+    ]
+    assert not eventos(EventType.ACTION_COMPLETED), "no ha llegado nadie todavía"
+
+    # Y avanzan por la ruta, no aparecen en el destino.
+    movimiento = sim._walking[grupo][0]
+    largo = movimiento.total_m
+    await sim.tick(1.0)
+    recorrido = movimiento.total_m - (largo - movimiento._travelled)
+    assert 0 < movimiento._travelled < largo, "ni quieto ni teletransportado"
+
+    # Hasta que llegan: entonces sí, `safe` y en el destino.
+    for _ in range(int(largo / runner_mod.WALK_SPEED_MPS) + 2):
+        await sim.tick(1.0)
+    assert sim.civilians[grupo].state == "safe"
+    assert sim.civilians[grupo].poi_id == "poi_pueblo_b"
+    assert grupo not in sim._walking
+    completadas = eventos(EventType.ACTION_COMPLETED)
+    assert [c["result"]["rescued"] for c in completadas] == [[grupo]]
+    assert completadas[0]["action_id"] == "act_walk"

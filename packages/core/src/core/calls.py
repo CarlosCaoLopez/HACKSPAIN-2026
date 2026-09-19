@@ -372,18 +372,98 @@ def on_foot_deadline_min(
     return max(1, int(eta) - DEADLINE_MARGIN_MIN)
 
 
-def shelter_route(
-    state: WorldState | None, poi: POI, graph: RoadGraph | None
+def evacuation_target(
+    state: WorldState | None,
+    poi: POI,
+    graph: RoadGraph | None,
+    ya_avisados: set[str] | None = None,
+) -> POI | None:
+    """A dónde va un pueblo que evacúa: **el pueblo vecino que esté a salvo** y, si no
+    hay ninguno, el refugio.
+
+    Al vecino ya se le ha avisado por teléfono de que puede llegarle gente
+    (`neighbor_alert`), así que mandarlos allí es lo que cierra la historia: antes se
+    le avisaba de veinticuatro personas que nunca aparecían porque el sim los
+    teletransportaba al refugio. Un vecino que también arde no vale —no se manda a
+    nadie a un sitio que se está evacuando—, y para eso está el refugio."""
+    if state is None:
+        return None
+    avisados = ya_avisados or set()
+    vecinos = [
+        p
+        for p in sorted(state.pois.values(), key=lambda p: p.id)
+        if p.kind == "village"
+        and p.id != poi.id
+        and p.id not in avisados
+        and _a_salvo(state, p, graph, poi)
+    ]
+    if vecinos and graph is not None:
+        cerca = min(vecinos, key=lambda p: math.hypot(p.x - poi.x, p.z - poi.z))
+        return cerca
+    return next((p for p in state.pois.values() if p.kind == "shelter"), None)
+
+
+def _ya_le_toca_salir(state: WorldState, poi: POI) -> bool:
+    """¿A ese pueblo ya se le ha dicho que salga?
+
+    No vale mirar la severidad de su tarea: con viento del oeste los dos pueblos del
+    valle quedan a sotavento y nacen `critical` a la vez, así que ningún vecino sería
+    destino nunca. Lo que distingue es si **ya ha recibido su propia orden** —el hecho
+    `poi:<id>:confirmed` o su gente ya en la carretera—, que es lo que de verdad lo
+    descarta como sitio a donde mandar a nadie. El caso de la orden ya PEDIDA pero aún
+    sin confirmar lo cubre `ya_avisados`, que lo sabe el loop y el estado no."""
+    for fact in reversed(state.facts):
+        if fact.key == f"poi:{poi.id}:confirmed" and fact.kind != "assumed_default":
+            return True
+    return any(
+        g.poi_id == poi.id and g.state in ("evacuating", "safe")
+        for g in state.civilians.values()
+    )
+
+
+SAFE_DESTINATION_M = 60.0
+"""Con el frente a menos de esto, un pueblo no es destino de nadie: es una emergencia
+propia. Mismo umbral que `loop.AT_THE_DOOR_M`, que es el que decide si a ese pueblo se
+le avisa o se le da su propia orden."""
+
+
+def _a_salvo(
+    state: WorldState, poi: POI, graph: RoadGraph | None, origen: POI
+) -> bool:
+    """Un pueblo al que se puede mandar gente.
+
+    No vale mirar si tiene tarea de evacuación abierta: `tasks._evacuate` abre una por
+    **cada** pueblo en cuanto arde una celda en cualquier parte del mapa, así que con
+    ese criterio ningún vecino es destino nunca y todo el mundo acaba en el refugio
+    (medido en `runs/run_984da0622d93.jsonl`: Pueblo A salió hacia el refugio teniendo
+    a Pueblo B a salvo). Lo que decide es el fuego: que no lo tenga en la puerta y que
+    esté más lejos de él que el pueblo que sale."""
+    if _ya_le_toca_salir(state, poi):
+        return False
+    d = nearest_fire(state, poi, graph)[0]
+    if d <= SAFE_DESTINATION_M:
+        return False
+    return d > nearest_fire(state, origen, graph)[0]
+
+
+def evacuation_route(
+    state: WorldState | None,
+    poi: POI,
+    graph: RoadGraph | None,
+    ya_avisados: set[str] | None = None,
 ) -> list[str]:
-    """Por dónde sale el pueblo hacia el refugio, con los cortes de ahora. Es la ruta
-    de los vecinos, no la de ningún medio: a quien evacúa se le dice por dónde irse,
-    no por dónde viene alguien."""
-    if state is None or graph is None:
+    """Por dónde sale el pueblo, con los cortes de ahora. Es la ruta de los vecinos,
+    no la de ningún medio: a quien evacúa se le dice por dónde irse, no por dónde
+    viene alguien. Y es la misma que después caminan (`loop._emit_rescue`), para que
+    «la carretera que se les ha instruido» sea literal y no una manera de hablar."""
+    destino = evacuation_target(state, poi, graph, ya_avisados)
+    if state is None or graph is None or destino is None:
         return []
-    refugio = next((p for p in state.pois.values() if p.kind == "shelter"), None)
-    if refugio is None or not poi.waypoint_id or not refugio.waypoint_id:
+    if not poi.waypoint_id or not destino.waypoint_id:
         return []
-    return graph.with_cuts(state).shortest_path(poi.waypoint_id, refugio.waypoint_id) or []
+    return (
+        graph.with_cuts(state).shortest_path(poi.waypoint_id, destino.waypoint_id) or []
+    )
 
 
 def live_facts(
@@ -449,6 +529,7 @@ def _situation_brief_evacuation(
     hazard: str,
     live: dict[str, str],
     committed: str = "",
+    destino: str = "",
 ) -> str:
     """El parte que el operador lee al alcalde: la orden y, detrás, el estado real
     del incendio y de los medios. Todo sale del `WorldState` del momento en que se
@@ -463,8 +544,11 @@ def _situation_brief_evacuation(
     # misma clase de mentira que este cambio existe para quitar.
     confirmados = f" Medios en camino: {committed}." if committed else ""
     por_donde = f" por {route}" if route else ""
+    # El destino se dice: antes la orden daba una carretera y ningún sitio al que ir,
+    # y el aviso al vecino prometía gente que el sim mandaba al refugio.
+    a_donde = f" hacia {destino}" if destino else ""
     return (
-        f"Ha llegado la orden de evacuar {poi.name}{por_donde} en los próximos "
+        f"Ha llegado la orden de evacuar {poi.name}{por_donde}{a_donde} en los próximos "
         f"{deadline_min} minutos, por el {hazard}. Dígala completa una vez, "
         "despacio, y confirme que la persona la ha entendido y que la acepta. "
         f"Situación ahora mismo: {live['fire_status']}; {live['roads_status']}; "
@@ -620,13 +704,15 @@ def evacuation_call(
     state: WorldState | None = None,
     graph: RoadGraph | None = None,
     committed: str = "",
+    destino: POI | None = None,
+    ruta: list[str] | None = None,
 ) -> CallRequest:
     """La orden de evacuación para el POI de una tarea `evacuate`.
 
     `assignment` es opcional porque una evacuación **no necesita vehículo**: quien
     puede andar se va solo en cuanto se le avisa, y las ambulancias quedan para quien
     no puede. Sin asignación el plazo lo marca el fuego (`on_foot_deadline_min`) y la
-    ruta es la de los vecinos al refugio (`shelter_route`), no la de un medio.
+    ruta es la de los vecinos a donde vayan (`evacuation_route`), no la de un medio.
 
     Al alcalde del pueblo que arde: se le dicta la orden, la ruta y el plazo, y se
     le pregunta cuánta gente hay, si hay heridos y si alguien no puede moverse por
@@ -642,7 +728,14 @@ def evacuation_call(
         route = route_name(assignment.route, roads, aliases)
     else:
         deadline = on_foot_deadline_min(state, poi, graph)
-        route = route_name(shelter_route(state, poi, graph), roads, aliases)
+        # El destino y la ruta los decide quien llama (`loop._emit_evacuation`) y se
+        # guardan para que sea LO MISMO que después caminan. Recalcularlos aquí hacía
+        # que la orden dijera un sitio y el pueblo saliera hacia otro.
+        if destino is None:
+            destino = evacuation_target(state, poi, graph)
+        if ruta is None:
+            ruta = evacuation_route(state, poi, graph)
+        route = route_name(ruta, roads, aliases)
     live = _live_or_blank(state, poi, graph, assignment, aliases)
     return CallRequest(
         task_id=task.id,
@@ -659,7 +752,8 @@ def evacuation_call(
             "hazard_kind": hazard,
             "committed_resources": committed,
             "situation_brief": _situation_brief_evacuation(
-                poi, route, deadline, hazard, live, committed
+                poi, route, deadline, hazard, live, committed,
+                destino.name if destino is not None else "",
             ),
             "checklist": EVACUATION_CHECKLIST,
             "advice_rules": ADVICE_RULES,

@@ -306,13 +306,13 @@ async def test_assumed_default_immobile_does_not_create_rescue(
     assert "task_rescue_poi_pueblo_a" not in core.state().tasks
 
 
-async def test_la_orden_aceptada_cierra_la_evacuacion_y_saca_a_la_gente(
+async def test_la_orden_aceptada_cierra_la_evacuacion_y_al_colgar_echan_a_andar(
     journal, fixed_planner
 ) -> None:
     """Lo que cierra una evacuación es que el pueblo ACEPTE la orden, no que llegue
-    un vehículo: ya no lleva ninguno. Y al cerrarse sale el verbo `rescue`, que es lo
-    único que mueve a los vecinos al refugio; sin esa segunda causa se quedaban
-    plantados en el pueblo y `civilians_safe` no subía nunca."""
+    un vehículo: ya no lleva ninguno. Pero la gente no sale en ese instante —el hecho
+    entra por el tool con el operador todavía al teléfono—: sale al COLGAR, que es
+    cuando en la vida real alguien se despide y echa a andar."""
     core = loop.Core(bus, _scenario())
     await _ignite(core)
     assert core.state().units["unit_ambulance"].task_id is None
@@ -337,15 +337,42 @@ async def test_la_orden_aceptada_cierra_la_evacuacion_y_saca_a_la_gente(
     assert core.state().tasks["task_front_5_0"].done is False
     assert _tasks_in(journal)["task_evac_poi_pueblo_a"]["done"] is True
 
-    # Y la gente sale: el verbo `rescue` hacia el refugio, sin unidad de por medio.
-    rescates = [
-        ActionRequested.model_validate(e.payload)
-        for e in _of(journal, EventType.ACTION_REQUESTED)
-        if ActionRequested.model_validate(e.payload).verb == "rescue"
-    ]
+    def _rescates():
+        return [
+            ActionRequested.model_validate(e.payload)
+            for e in _of(journal, EventType.ACTION_REQUESTED)
+            if ActionRequested.model_validate(e.payload).verb == "rescue"
+        ]
+
+    assert _rescates() == [], "todavía están al teléfono: nadie sale del pueblo"
+
+    # Cuelgan, y entonces sí.
+    fin = _ev(
+        EventType.CALL_ENDED,
+        {
+            "call_id": "hl_evac",
+            "task_id": "task_evac_poi_pueblo_a",
+            "direction": "outbound",
+            "started_t": 0.0,
+            "ended_t": 100.0,
+            "outcome": "answered",
+            "transcript": "",
+            "facts": None,
+        },
+        source="call:hl_evac",
+        t_sim=100.0,
+    )
+    await bus.publish(fin)
+    await core.on_event(fin)
+
+    rescates = _rescates()
     assert len(rescates) == 1
     assert rescates[0].args["civ_ids"] == ["civ_a"]
+    # A pie, por la carretera que se les dictó: la ruta viaja en la acción, y sin
+    # pueblo vecino a salvo el destino es el refugio.
     assert rescates[0].args["shelter_id"] == "poi_refugio"
+    assert rescates[0].args["route"][0] == "wp_pueblo_a"
+    assert rescates[0].args["route"][-1] == "wp_refugio"
 
 
 async def test_un_assumed_default_no_cierra_la_evacuacion(

@@ -53,8 +53,11 @@ async def test_llegar_a_un_pueblo_pide_rescate(core, monkeypatch):
     grupo = CivilianGroup(id="civ_pueblo_a", poi_id="poi_pueblo_a", count=24, immobile=3)
     c._state = c._state.model_copy(update={"civilians": {grupo.id: grupo}})
 
+    # `rescue`, no `evacuate`: una evacuación ya no la cierra una llegada —se hace a
+    # pie y sale al colgar el teléfono—, así que lo que una ambulancia que llega se
+    # lleva es a quien no puede moverse.
     tarea = type(
-        "T", (), {"done": True, "kind": "evacuate", "target_poi": "poi_pueblo_a"}
+        "T", (), {"done": True, "kind": "rescue", "target_poi": "poi_pueblo_a"}
     )()
     llegada = Event(
         run_id="run_test",
@@ -81,7 +84,7 @@ async def test_no_se_rescata_a_quien_ya_esta_a_salvo(core):
     )
     c._state = c._state.model_copy(update={"civilians": {grupo.id: grupo}})
     tarea = type(
-        "T", (), {"done": True, "kind": "evacuate", "target_poi": "poi_pueblo_a"}
+        "T", (), {"done": True, "kind": "rescue", "target_poi": "poi_pueblo_a"}
     )()
     llegada = Event(
         run_id="run_test",
@@ -122,7 +125,7 @@ async def test_solo_dispara_con_una_llegada(core):
     grupo = CivilianGroup(id="civ_pueblo_a", poi_id="poi_pueblo_a", count=24, immobile=3)
     c._state = c._state.model_copy(update={"civilians": {grupo.id: grupo}})
     tarea = type(
-        "T", (), {"done": True, "kind": "evacuate", "target_poi": "poi_pueblo_a"}
+        "T", (), {"done": True, "kind": "rescue", "target_poi": "poi_pueblo_a"}
     )()
     tick = Event(
         run_id="run_test",
