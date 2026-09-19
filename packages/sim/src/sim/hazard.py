@@ -24,7 +24,7 @@ petaría, simplemente dejaría de ser el mismo incendio.
 import math
 import random
 import re
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -32,6 +32,10 @@ from contracts.scenario import HazardSpec
 from contracts.world import CellState, Wind
 
 CELL_ID = re.compile(r"^cell_(-?\d+)_(-?\d+)$")
+
+Cause = Literal["spread", "burnout", "extinguished", "inject", "at_risk"]
+"""Las causas del catálogo. El sim es quien las conoce: nadie más sabe si un
+`burnt` lo puso el viento o una manguera."""
 
 BURN_DURATION_S = 45.0
 """Lo que una celda arde antes de quedar `burnt`. Deja frente móvil y cicatriz."""
@@ -77,6 +81,12 @@ class CellChange(BaseModel):
     cell_id: str
     state: CellState
     hazard: str
+    cause: Cause | None = None
+    """Por qué cambió, espejo de `contracts.events.CellChanged.cause`.
+
+    `extinguished` es un `burnt` que ha puesto un camión, no el fuego. Se pinta
+    distinto y el dashboard lo distingue: sin esto, apagar y quemarse dejan la
+    misma cicatriz y el trabajo de los camiones no se ve."""
 
 
 class Hazard(Protocol):
@@ -150,10 +160,12 @@ class CellularHazard:
         self._state: dict[str, CellState] = {}
         self._active_for: dict[str, float] = {}
         self._pending: list[CellChange] = []
+        self._suppressed: dict[str, float] = {}
+        """Progreso de sofocación por celda, en celdas. Se acumula entre ticks."""
 
         # El primer `tick` devuelve la ignición: no se pierde por haber ocurrido
         # en el constructor.
-        self._pending.append(self._activate(spec.origin_cell))
+        self._pending.append(self._activate(spec.origin_cell, "inject"))
         self._pending.extend(self._mark_at_risk())
 
     # --- la interfaz ---
@@ -167,7 +179,7 @@ class CellularHazard:
                 if self._active_for[cid] >= self.DURATION:
                     self._state[cid] = self.TERMINAL
                     del self._active_for[cid]
-                    changes.append(self._change(cid, self.TERMINAL))
+                    changes.append(self._change(cid, self.TERMINAL, "burnout"))
 
         # Orden estable: un dict recorrido al azar rompe el determinismo aunque
         # el RNG esté bien sembrado.
@@ -199,6 +211,52 @@ class CellularHazard:
     def set_wind(self, wind: Wind) -> None:
         """Cambiar el viento es cambiar un vector en memoria."""
         self.wind = wind
+
+    def suppress(self, positions: list[tuple[float, float]], dt: float) -> list[CellChange]:
+        """Sofocar desde la carretera. Devuelve las celdas apagadas en este tick.
+
+        Cada unidad con capacidad trabaja las celdas `burning` a menos de
+        `suppress_reach_m` de donde está, a `suppress_rate` celdas por minuto
+        **repartidas entre las que tenga a tiro**: un camión no apaga más rápido
+        por tener más fuego delante, lo reparte.
+
+        Es física del mundo, no una decisión: el core manda el camión al frente
+        con un `goto` y el mundo responde. Por eso no hay un quinto verbo — los
+        cuatro siguen siendo `goto`, `set_marker`, `announce` y `rescue`.
+
+        El progreso se acumula por celda, así que a 3 celdas/min una celda tarda
+        veinte segundos en caer y se ve el trabajo, en vez de desaparecer de golpe.
+        """
+        if not positions or not self._active_for:
+            return []
+        reach = self.spec.suppress_reach_m
+        rate = self.spec.suppress_rate / SECONDS_PER_MINUTE
+
+        for x, z in positions:
+            alcance = [
+                cid for cid in sorted(self._active_for)
+                if math.dist((x, z), self.center_of(cid)) <= reach
+            ]
+            if not alcance:
+                continue
+            reparto = rate * dt / len(alcance)
+            for cid in alcance:
+                self._suppressed[cid] = self._suppressed.get(cid, 0.0) + reparto
+
+        changes = []
+        for cid, avance in sorted(self._suppressed.items()):
+            if avance >= 1.0 and cid in self._active_for:
+                self._state[cid] = "burnt"
+                del self._active_for[cid]
+                changes.append(self._change(cid, "burnt", "extinguished"))
+        for c in changes:
+            self._suppressed.pop(c.cell_id, None)
+        return changes
+
+    def center_of(self, cid: str) -> tuple[float, float]:
+        """Centro de la celda en bloques del mundo."""
+        x1, z1, x2, z2 = self.bounds(cid)
+        return (x1 + x2) / 2, (z1 + z2) / 2
 
     def render_commands(self, change: CellChange) -> list[str]:
         raise NotImplementedError
@@ -257,10 +315,10 @@ class CellularHazard:
     def _too_far(self, cx: int, cz: int) -> bool:
         return math.dist((cx, cz), self._origin) > MAX_RADIUS_CELLS
 
-    def _activate(self, cid: str) -> CellChange:
+    def _activate(self, cid: str, cause: Cause = "spread") -> CellChange:
         self._state[cid] = self.ACTIVE
         self._active_for[cid] = 0.0
-        return self._change(cid, self.ACTIVE)
+        return self._change(cid, self.ACTIVE, cause)
 
     def _mark_at_risk(self) -> list[CellChange]:
         changes: list[CellChange] = []
@@ -268,11 +326,15 @@ class CellularHazard:
         for cid in self.cells_at_risk(horizon, AT_RISK_P):
             if self.state_of(cid) == "intact":
                 self._state[cid] = "at_risk"
-                changes.append(self._change(cid, "at_risk"))
+                changes.append(self._change(cid, "at_risk", "at_risk"))
         return changes
 
-    def _change(self, cid: str, state: CellState) -> CellChange:
-        return CellChange(cell_id=cid, state=state, hazard=self.spec.kind)
+    def _change(
+        self, cid: str, state: CellState, cause: Cause | None = None
+    ) -> CellChange:
+        return CellChange(
+            cell_id=cid, state=state, hazard=self.spec.kind, cause=cause
+        )
 
 
 class Wildfire(CellularHazard):
@@ -305,9 +367,14 @@ class Wildfire(CellularHazard):
                 f"fill {x1} {y + 1} {z1} {x2} {y + 1} {z2} fire",
             ]
         if change.state == "burnt":
+            # Apagado por un camión, no consumido por el fuego: gris de ceniza
+            # mojada en vez de la cicatriz negra. Desde arriba se distingue el
+            # trabajo de las unidades del avance del incendio, que es lo que el
+            # contrato pide al separar `extinguished` de `burnout`.
+            suelo = "gray_concrete" if change.cause == "extinguished" else "coal_block"
             return [
                 f"fill {x1} {y + 1} {z1} {x2} {y + 1} {z2} air",
-                f"fill {x1} {y} {z1} {x2} {y} {z2} coal_block",
+                f"fill {x1} {y} {z1} {x2} {y} {z2} {suelo}",
             ]
         return []  # `intact` y `at_risk` son estado del modelo, no se pintan
 

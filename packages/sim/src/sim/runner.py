@@ -246,6 +246,7 @@ class Sim:
         )
         await self._advance_hazard(dt)
         await self._advance_units(dt)
+        await self._suppress(dt)
         await self._update_markers()
         for spec in self.injects.due(self.t_sim):
             await self.inject(spec.type, spec.payload)
@@ -255,10 +256,31 @@ class Sim:
             await self._emit(
                 EventType.WORLD_CELL_CHANGED,
                 {"cell_id": change.cell_id, "state": change.state,
-                 "hazard": change.hazard},
+                 "hazard": change.hazard, "cause": change.cause},
             )
             # Render en el carril lento (D7): el frente puede ir un tick tarde,
             # el `/tp` de un replan no.
+            for cmd in self.hazard.render_commands(change):
+                await self.rcon.send(cmd, LOW)
+
+    async def _suppress(self, dt: float) -> None:
+        """Las unidades con `extinguish` apagan lo que tienen a tiro.
+
+        Es física, no una orden: el core manda el camión al frente con un `goto`
+        y el mundo responde. Sin esto un camión de bomberos llegaba al fuego, se
+        paraba al lado y no pasaba nada — el jurado lo nota.
+        """
+        posiciones = [
+            (u.x, u.z)
+            for u in self.units.values()
+            if "extinguish" in u.capabilities and u.status != "unavailable"
+        ]
+        for change in self.hazard.suppress(posiciones, dt):
+            await self._emit(
+                EventType.WORLD_CELL_CHANGED,
+                {"cell_id": change.cell_id, "state": change.state,
+                 "hazard": change.hazard, "cause": change.cause},
+            )
             for cmd in self.hazard.render_commands(change):
                 await self.rcon.send(cmd, LOW)
 
