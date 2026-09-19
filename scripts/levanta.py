@@ -54,10 +54,10 @@ CLAVES = (
     "HAPPYROBOT_API_KEY",
     "HAPPYROBOT_HOOK_EVACUATION",
     "WEBHOOK_SHARED_TOKEN",
-    "JUDGE_PHONE",
-    "NEIGHBOR_PHONE",
-    "FIRE_CREW_PHONE",
-    "AMBULANCE_PHONE",
+    "PHONE_PUEBLO_A",
+    "PHONE_PUEBLO_B",
+    "PHONE_FIRE_CREW",
+    "PHONE_AMBULANCE",
 )
 """Lo mínimo para un run con las cuatro llamadas salientes. Los cuatro teléfonos van
 aquí porque cada uno que falte es una llamada que no se hace, y el síntoma es una
@@ -146,9 +146,15 @@ def limpiar(check: bool, force: bool) -> Paso:
         # verdad y se pelean por la cámara sin decir nada.
         zombis["directores de sobra"] = directores
     gateway = [p for p in _pids_en_puerto(PUERTO_GATEWAY) if p not in _pids("vite")]
-    if gateway and not demos:
+    if gateway and (not demos or force):
         # Con una demo viva el 8000 es suyo; sin ella, es un huérfano y es el fallo
         # que hace medir un run contra código viejo.
+        #
+        # `or force` porque si la demo se va a matar, deja de ser suyo. Sin esto el
+        # propio script provocaba el fallo nº 1 de su docstring: mataba la demo de las
+        # 19:49, perdonaba el gateway de las 18:14 «porque tenía dueño», y la demo
+        # nueva arrancaba contra él y moría con un 409 (el 8000 seguía ocupado y su
+        # run seguía abierto). Visto en `runs/.levanta/demo.log`.
         zombis["gateway huérfano"] = gateway
 
     if not zombis:

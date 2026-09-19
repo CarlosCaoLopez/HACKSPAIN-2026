@@ -24,11 +24,20 @@ Geografía: POIs `poi_base` `poi_pueblo_a`(24 civ,3 inmóviles) `poi_pueblo_b`(1
 
 | # | Dirección | A quién | `role` | Teléfono | Qué se le dice |
 | --- | --- | --- | --- | --- | --- |
-| 1 | saliente | retén de bomberos | `fire_crew` | `FIRE_CREW_PHONE` | **lo que pide el solver**: qué camiones, a qué frente, por qué ruta y en cuánto; y lo que queda sin cubrir |
-| 2 | saliente | dotación de la ambulancia | `ambulance` | `AMBULANCE_PHONE` | la misma petición, para el rescate. **Solo si alguien la ha pedido**: un rescate nace de un `poi:<id>:immobile` o `:injuries` que ha entrado por una llamada. Si no hay ninguna libre, `ambulance_queued`: *cuándo* la habrá |
-| 3 | saliente | responsable de Pueblo A | `evacuation` | `JUDGE_PHONE` | la orden de evacuación, **con los medios que ya han confirmado** |
-| 4 | saliente | Pueblo B (vecino) | `neighbor_alert` | `NEIGHBOR_PHONE` | puede llegarle gente huyendo; ¿tienen sitio? |
+| 1 | saliente | retén de bomberos | `fire_crew` | `PHONE_FIRE_CREW` | **lo que pide el solver**: qué camiones, a qué frente, por qué ruta y en cuánto; y lo que queda sin cubrir |
+| 2 | saliente | dotación de la ambulancia | `ambulance` | `PHONE_AMBULANCE` | la misma petición, para el rescate. **Solo si alguien la ha pedido**: un rescate nace de un `poi:<id>:immobile` o `:injuries` que ha entrado por una llamada. Si no hay ninguna libre, `ambulance_queued`: *cuándo* la habrá |
+| 3 | saliente | responsable de Pueblo A | `evacuation` | `PHONE_PUEBLO_A` | la orden de evacuación, **con los medios que ya han confirmado** |
+| 4 | saliente | Pueblo B (vecino) | `neighbor_alert` | `PHONE_PUEBLO_B` | puede llegarle gente huyendo; ¿tienen sitio? |
 | 5 | **entrante** | un vecino de Pueblo B | — | web call / 112 | lo que ve en el terreno; luego manda el pin por **Telegram** |
+
+**El número es del interlocutor, no del papel.** `PHONE_<POI>` (`PHONE_PUEBLO_A`,
+`PHONE_PUEBLO_B`) y, para los medios, `PHONE_FIRE_CREW` y `PHONE_AMBULANCE`. Importa
+porque el papel cambia con el viento: a Pueblo B se le avisa de que puede llegarle
+gente y, cuando el frente gira, se le ordena salir — pero quien coge el teléfono es la
+misma persona. Con el reparto por papel que había antes (`JUDGE_PHONE` ganaba a todos)
+el mismo móvil recibía las dos órdenes, una como Pueblo A y otra como Pueblo B: medido
+en `runs/run_1dfefd9171f8.jsonl`, seq 169 y 568. `PHONE_OVERRIDE` sigue mandándolo todo
+a un móvil para los cinco minutos antes de salir al escenario.
 
 Las cuatro salientes van por **un solo hook** de HappyRobot (`HAPPYROBOT_HOOK_EVACUATION`): la rama la
 decide el campo `role` del cuerpo, no el workflow (`voice/happyrobot.py:21-41`).

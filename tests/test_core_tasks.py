@@ -116,14 +116,15 @@ def journal(monkeypatch) -> list[Event]:
     events: list[Event] = []
     bus.reset()
     bus.configure(run_id=RUN, writer=events.append)
-    monkeypatch.setattr(settings, "judge_phone", JUDGE)
     # Los números salen del test, no del `.env` de quien lo corre: el de al lado tiene
-    # otro `NEIGHBOR_PHONE` y el test no puede depender de eso.
-    monkeypatch.setattr(settings, "neighbor_phone", "")
-    # Ni los de despacho: con `AMBULANCE_PHONE` en el `.env` de uno y no en el de
-    # otro, los tests de rescate daban resultados distintos según la máquina.
-    monkeypatch.setattr(settings, "fire_crew_phone", "")
-    monkeypatch.setattr(settings, "ambulance_phone", "")
+    # otros y el test no puede depender de eso. `PHONE_OVERRIDE` manda todas las
+    # llamadas a pueblos a un mismo número, que es lo que quieren los tests que no van
+    # de a quién se llama.
+    monkeypatch.setattr(settings, "phone_override", JUDGE)
+    monkeypatch.setattr(settings, "phone_pueblo_a", "")
+    monkeypatch.setattr(settings, "phone_pueblo_b", "")
+    monkeypatch.setattr(settings, "phone_fire_crew", "")
+    monkeypatch.setattr(settings, "phone_ambulance", "")
     yield events
     bus.reset()
 
@@ -499,10 +500,8 @@ async def test_evacuating_one_village_alerts_the_other(
     journal, fixed_planner, monkeypatch
 ) -> None:
     """Pueblo A se evacúa; Pueblo B, que no arde, recibe una llamada aparte: puede
-    llegarle gente. No es la orden de evacuación, así que va a su propio número, no
-    al de `JUDGE_PHONE`."""
-    monkeypatch.setattr(settings, "judge_phone", "")
-    monkeypatch.setattr(settings, "neighbor_phone", "")  # sin overrides: manda el POI
+    llegarle gente. No es la orden de evacuación, así que va a su propio número."""
+    monkeypatch.setattr(settings, "phone_override", "")  # sin palanca: manda el POI
     core = loop.Core(bus, _scenario_two_villages())
     await _ignite(core)
 
@@ -550,10 +549,11 @@ async def test_the_safe_village_has_its_own_number(
     journal, fixed_planner, monkeypatch
 ) -> None:
     """Las dos llamadas salen a la vez: con un solo número se pisaban en el mismo
-    móvil. `NEIGHBOR_PHONE` es del papel, no del pueblo — a salvo está uno u otro
-    según el viento."""
-    monkeypatch.setattr(settings, "judge_phone", JUDGE)
-    monkeypatch.setattr(settings, "neighbor_phone", "+34638383503")
+    móvil. Y el número es del PUEBLO, no del papel: quien atiende Pueblo B es el mismo
+    cuando se le avisa y cuando, girado el viento, se le ordena salir."""
+    monkeypatch.setattr(settings, "phone_override", "")
+    monkeypatch.setattr(settings, "phone_pueblo_a", JUDGE)
+    monkeypatch.setattr(settings, "phone_pueblo_b", "+34638383503")
     core = loop.Core(bus, _scenario_two_villages())
     await _ignite(core)
 
@@ -563,8 +563,8 @@ async def test_the_safe_village_has_its_own_number(
     ]
     evac = next(r for r in reqs if r.intent == "evacuation_order")
     alert = next(r for r in reqs if r.intent == "neighbor_alert")
-    assert evac.to == JUDGE  # el que arde, al número de la demo
-    assert alert.to == "+34638383503"  # el que está a salvo, al suyo
+    assert evac.to == JUDGE  # el que arde, al suyo
+    assert alert.to == "+34638383503"  # el vecino, al suyo
 
 
 async def test_both_villages_burning_does_not_alert_each_other(
@@ -572,7 +572,7 @@ async def test_both_villages_burning_does_not_alert_each_other(
 ) -> None:
     """Si el vecino también arde, ya se le manda su propia orden de evacuación: no
     hace falta avisarle además de que "puede llegarle gente"."""
-    monkeypatch.setattr(settings, "judge_phone", JUDGE)
+    monkeypatch.setattr(settings, "phone_override", JUDGE)
     core = loop.Core(bus, _scenario_two_villages())
     # Una sola ignición entre los dos pueblos (celda de 4 m centrada en 102, 50): a
     # 50 m de cada uno, los dos entran en `critical` a la vez.
@@ -591,18 +591,18 @@ async def test_both_villages_burning_does_not_alert_each_other(
 
 
 async def test_no_phone_no_call(journal, fixed_planner, monkeypatch, caplog) -> None:
-    monkeypatch.setattr(settings, "judge_phone", "")
+    monkeypatch.setattr(settings, "phone_override", "")
     core = loop.Core(bus, _scenario(contact_phone=None))
     with caplog.at_level(logging.WARNING, logger="core.loop"):
         await _ignite(core)
     assert not _of(journal, EventType.CALL_REQUESTED)
-    assert any("JUDGE_PHONE" in r.message for r in caplog.records)
+    assert any("PHONE_PUEBLO_A" in r.message for r in caplog.records)
 
 
-async def test_contact_phone_used_when_no_judge(
+async def test_contact_phone_used_when_no_override(
     journal, fixed_planner, monkeypatch
 ) -> None:
-    monkeypatch.setattr(settings, "judge_phone", "")
+    monkeypatch.setattr(settings, "phone_override", "")
     core = loop.Core(bus, _scenario(contact_phone="+34000000001"))
     await _ignite(core)
     req = CallRequest.model_validate(_of(journal, EventType.CALL_REQUESTED)[0].payload)
@@ -1313,7 +1313,7 @@ async def test_fire_detected_calls_the_crew_once(
 ) -> None:
     """Al retén se le llama en cuanto hay fuego: breve, con dónde arde y si pueden
     salir. Una vez por run, aunque el plan se rehaga veinte veces."""
-    monkeypatch.setattr(settings, "fire_crew_phone", "+34900000001")
+    monkeypatch.setattr(settings, "phone_fire_crew", "+34900000001")
     sc = _scenario()
     sc = sc.model_copy(
         update={
@@ -1369,7 +1369,7 @@ async def test_fire_detected_calls_the_crew_once(
 
 
 async def test_no_crew_phone_no_crew_call(journal, fixed_planner, monkeypatch) -> None:
-    monkeypatch.setattr(settings, "fire_crew_phone", "")
+    monkeypatch.setattr(settings, "phone_fire_crew", "")
     core = loop.Core(bus, _scenario())
     await _ignite(core)
     assert not [
@@ -1386,7 +1386,7 @@ async def test_ambulance_is_called_only_when_asked_for_and_free(
     un rescate nace de un `poi:<id>:immobile` que ha entrado por una llamada. Arder un
     pueblo no basta —la evacuación se hace a pie—, así que con dos ambulancias las dos
     siguen libres y se llama a la primera."""
-    monkeypatch.setattr(settings, "ambulance_phone", "+34900000002")
+    monkeypatch.setattr(settings, "phone_ambulance", "+34900000002")
     sc = _scenario()
     sc = sc.model_copy(
         update={
@@ -1447,7 +1447,7 @@ async def test_all_ambulances_busy_calls_to_ask_when(
     dotación ocupada para preguntarle CUÁNDO, y esa respuesta vuelve a quien sigue
     esperando al teléfono (`waiting_call_id`). Con un caso crítico, además, no se le
     pregunta si quiere: se le dice que va en cuanto termine."""
-    monkeypatch.setattr(settings, "ambulance_phone", "+34900000002")
+    monkeypatch.setattr(settings, "phone_ambulance", "+34900000002")
     sc = _scenario()
     sc = sc.model_copy(
         update={

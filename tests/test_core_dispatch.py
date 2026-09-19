@@ -108,10 +108,9 @@ def journal(monkeypatch) -> list[Event]:
     events: list[Event] = []
     bus.reset()
     bus.configure(run_id=RUN, writer=events.append)
-    monkeypatch.setattr(settings, "judge_phone", JUDGE)
-    monkeypatch.setattr(settings, "neighbor_phone", "")
-    monkeypatch.setattr(settings, "fire_crew_phone", CREW)
-    monkeypatch.setattr(settings, "ambulance_phone", "")
+    monkeypatch.setattr(settings, "phone_override", JUDGE)
+    monkeypatch.setattr(settings, "phone_fire_crew", CREW)
+    monkeypatch.setattr(settings, "phone_ambulance", "")
     yield events
     bus.reset()
 
@@ -400,7 +399,7 @@ async def test_la_ambulancia_no_sale_hasta_que_cuelgan(
     """El mismo invariante que el camión, que es lo que no se cumplía: un ciudadano
     dice que hay alguien que no puede moverse, se le pide la ambulancia al centro, y
     la unidad no arranca hasta que esa dotación cuelga."""
-    monkeypatch.setattr(settings, "ambulance_phone", "+34600000002")
+    monkeypatch.setattr(settings, "phone_ambulance", "+34600000002")
     core = loop.Core(bus, _scenario())
     await _ignite(core)
     await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)
@@ -429,7 +428,7 @@ async def test_un_inmovil_asumido_no_saca_ninguna_ambulancia(
     """Regla 4 de punta a punta: `budget.safe_default` asume un inmóvil cuando se
     agota el presupuesto, y ese hecho se ve en gris cursiva, pero no manda a nadie.
     Una ambulancia sale porque alguien la pidió, no porque nadie contestara."""
-    monkeypatch.setattr(settings, "ambulance_phone", "+34600000002")
+    monkeypatch.setattr(settings, "phone_ambulance", "+34600000002")
     core = loop.Core(bus, _scenario())
     await _ignite(core)
     await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)
@@ -447,7 +446,7 @@ async def test_un_herido_saca_la_ambulancia_igual_que_un_inmovil(
     """«Hay un herido» y «hay alguien que no puede moverse» piden lo mismo. Y el
     número llega a la dotación: sin guardarlo en el estado, el parte decía «una
     persona que no puede moverse sola» de alguien que lo que tenía era una herida."""
-    monkeypatch.setattr(settings, "ambulance_phone", "+34600000002")
+    monkeypatch.setattr(settings, "phone_ambulance", "+34600000002")
     core = loop.Core(bus, _scenario())
     await _ignite(core)
     await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)
@@ -472,7 +471,7 @@ async def test_un_relevo_de_unidad_hereda_la_retencion(
     `unit_ambulance` en el mismo rescate (seq 524), que arrancó con
     `dispatch_confirmed=null` mientras la dotación seguía descolgando. Quien releva,
     espera."""
-    monkeypatch.setattr(settings, "ambulance_phone", "+34600000002")
+    monkeypatch.setattr(settings, "phone_ambulance", "+34600000002")
     core = loop.Core(bus, _scenario())
     await _ignite(core)
     await _hang_up(core, _calls(journal, "fire_crew_dispatch")[0].task_id)

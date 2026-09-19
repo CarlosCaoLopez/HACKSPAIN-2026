@@ -863,7 +863,7 @@ class Core:
         self, task: Task, poi: POI, a: Assignment | None, cause: Event
     ) -> None:
         """La orden al pueblo, y detrás el aviso a sus vecinos."""
-        to = settings.judge_phone or poi.contact_phone
+        to = settings.phone_for_poi(poi.id, poi.contact_phone)
         if not to:
             return
         req = calls.evacuation_call(
@@ -887,9 +887,11 @@ class Core:
         el que ya lo tiene en la puerta. Al resto se les llama aparte, con el aviso de
         que pueden recibir gente (`_emit_neighbor_calls`).
 
-        Una sola llamada por tarea y run. El número: `JUDGE_PHONE` si está (existe
-        para cambiarlo cinco minutos antes de subir al escenario) y, si no, el
-        `contact_phone` del POI; sin ninguno se anota una vez y no se llama.
+        Una sola llamada por tarea y run. El número es del POI, no del papel
+        (`settings.phone_for_poi`): `PHONE_PUEBLO_A` para `poi_pueblo_a`, y si no, el
+        `contact_phone` del escenario; sin ninguno se anota una vez y no se llama.
+        `PHONE_OVERRIDE` sigue existiendo para mandarlo todo a un móvil cinco minutos
+        antes de subir al escenario.
 
         **Espera a los medios.** Mientras haya una unidad retenida al teléfono no se
         sabe qué va a llegarle al pueblo, y una orden de evacuación que promete un
@@ -917,10 +919,11 @@ class Core:
                 and not self._fire_at_the_door(poi)
             ):
                 continue
-            if not (settings.judge_phone or poi.contact_phone):
+            if not settings.phone_for_poi(poi.id, poi.contact_phone):
                 if not self._warned_no_phone:
                     log.warning(
-                        "sin JUDGE_PHONE ni contact_phone: no se llama (tarea %s)",
+                        "sin PHONE_%s ni contact_phone: no se llama (tarea %s)",
+                        poi.id.removeprefix("poi_").upper(),
                         task.id,
                     )
                     self._warned_no_phone = True
@@ -962,9 +965,11 @@ class Core:
                 continue  # ya se le ha dictado su propia orden de evacuación
             if self._fire_at_the_door(poi):
                 continue  # el fuego ya le llega: lo suyo es una orden, no un aviso
-            # `NEIGHBOR_PHONE` antes que `JUDGE_PHONE`: en el ensayo las dos llamadas
-            # iban al mismo móvil y se pisaban. Quien está a salvo tiene su número.
-            to = settings.neighbor_phone or settings.judge_phone or poi.contact_phone
+            # Su número, el del POI: quien atiende Pueblo B es el mismo cuando se le
+            # avisa de que puede llegarle gente y cuando, girado el viento, se le
+            # ordena salir. Con el reparto por papel las dos llamadas caían en el
+            # mismo móvil y se pisaban.
+            to = settings.phone_for_poi(poi.id, poi.contact_phone)
             if not to:
                 continue
             self._neighbor_called.add(pair)
@@ -1002,7 +1007,7 @@ class Core:
 
         Una vez por run. Si no hay ningún camión en condiciones no se llama: no se
         moviliza a quien no puede ir, y el teléfono queda libre para el resto."""
-        if self._crew_called or not settings.fire_crew_phone:
+        if self._crew_called or not settings.phone_fire_crew:
             return
         task = next(
             (
@@ -1026,7 +1031,7 @@ class Core:
         req_crew = calls.fire_crew_call(
             task,
             station,
-            settings.fire_crew_phone,
+            settings.phone_fire_crew,
             self.scenario.hazard.kind,
             unit.id,
             donde,
@@ -1079,7 +1084,7 @@ class Core:
         vaya a terminar para preguntarle en cuántos minutos estará libre y —si el
         caso es crítico— decirle que en cuanto acabe va allí. Esa respuesta vuelve al
         que sigue esperando al teléfono (`voice.webhooks`)."""
-        if not settings.ambulance_phone:
+        if not settings.phone_ambulance:
             return
         rescue = next(
             (
@@ -1115,7 +1120,7 @@ class Core:
             rescue,
             poi,
             base,
-            settings.ambulance_phone,
+            settings.phone_ambulance,
             self.scenario.hazard.kind,
             unit.id,
             immobile,

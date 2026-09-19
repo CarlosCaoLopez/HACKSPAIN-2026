@@ -300,10 +300,10 @@ reparte en el siguiente plan con los medios que quedan: la llamada cambia el pla
 solo el registro. El prompt saluda con `callee` («el retén de bomberos», «la dotación
 de la ambulancia», «el responsable de Pueblo A»), que lo calcula el backend.
 
-`FIRE_CREW_PHONE` y `AMBULANCE_PHONE` en el `.env`. Sin número, esa llamada no se
-hace y se anota una vez: no se cae en `JUDGE_PHONE` a propósito, porque dos llamadas
+`PHONE_FIRE_CREW` y `PHONE_AMBULANCE` en el `.env`. Sin número, esa llamada no se
+hace y se anota una vez: no se cae en el de otro a propósito, porque dos llamadas
 simultáneas al mismo móvil dan ocupado (visto el sábado con las dos órdenes de
-evacuación).
+evacuación). Los pueblos van por `PHONE_<POI>`, que es del interlocutor y no del papel.
 
 **Cada fork pierde el esquema del Tool Call Result**: hay que repetir `generate` +
 `visibility` antes de publicar, o el agente se queda sin `message` y habla de memoria.
