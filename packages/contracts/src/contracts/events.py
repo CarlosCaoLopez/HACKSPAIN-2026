@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from contracts.calls import CallRequest, CallResult, FactKind, Severity, Urgency
 from contracts.plan import Plan, Policy, Violation
-from contracts.world import CellState, CivState, UnitStatus, Wind
+from contracts.world import CellState, CivState, Task, UnitStatus, Wind
 
 Verb = Literal["goto", "set_marker", "announce", "rescue"]
 """`sim.execute` acepta exactamente estos cuatro. Cualquier otro emite
@@ -47,6 +47,8 @@ class EventType(StrEnum):
     WORLD_FIRE_DETECTED = "world.fire.detected"  # backbone.md: la ignición inicial
     WORLD_INJECT = "world.inject"
     WORLD_FACT_ASSERTED = "world.fact.asserted"
+
+    TASK_CHANGED = "task.changed"  # core: una tarea nace, cambia de severidad o se cierra
 
     CALL_REQUESTED = "call.requested"
     CALL_STARTED = "call.started"
@@ -156,6 +158,17 @@ class FactAsserted(BaseModel):
     severity: Severity
     kind: FactKind = "observed"
     call_id: str | None = None
+
+
+# --- Payloads: task.* ------------------------------------------------------
+
+
+class TaskChanged(BaseModel):
+    """El core mantiene `WorldState.tasks` y, como el estado es inmutable y el
+    journal append-only, cada alta, cambio de severidad o cierre (`done=True`) se
+    publica entero: `belief.apply` lo pliega y el dashboard lo pinta."""
+
+    task: Task
 
 
 # --- Payloads: call.* ------------------------------------------------------
@@ -302,6 +315,7 @@ PAYLOAD_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.WORLD_FIRE_DETECTED: FireDetected,
     EventType.WORLD_INJECT: Inject,
     EventType.WORLD_FACT_ASSERTED: FactAsserted,
+    EventType.TASK_CHANGED: TaskChanged,
     EventType.CALL_REQUESTED: CallRequest,
     EventType.CALL_STARTED: CallStarted,
     EventType.CALL_TRANSCRIPT_PARTIAL: TranscriptPartial,

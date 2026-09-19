@@ -14,6 +14,7 @@ como esquema (`Policy.model_json_schema()`): el mismo contrato es el esquema.
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -21,6 +22,8 @@ from openai import AsyncOpenAI
 from contracts.plan import Policy, Violation
 from contracts.settings import settings
 from contracts.world import WorldState
+
+log = logging.getLogger("core.planner")
 
 MODEL = "gpt-5.6-luna"
 """OpenAI. Se cambia aquí y en ningún otro sitio."""
@@ -138,7 +141,8 @@ def _render_critique(state: WorldState, violations: list[Violation]) -> str:
 async def _call(prompt: str) -> Policy:
     """Una llamada a OpenAI con tool-use forzado, dentro del presupuesto de tiempo.
     Cualquier fallo (timeout, red, JSON inválido, validación, sin key) cae a pesos
-    neutros: la demo nunca se queda sin `Policy`."""
+    neutros: la demo nunca se queda sin `Policy`. Pero se anota siempre: un servicio
+    caído se degrada y se registra, nunca un `except: pass`."""
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         resp = await asyncio.wait_for(
@@ -154,6 +158,7 @@ async def _call(prompt: str) -> Policy:
         args = resp.choices[0].message.tool_calls[0].function.arguments
         return Policy.model_validate(json.loads(args))
     except Exception:
+        log.exception("planner %s falló; se cae a la política neutra", MODEL)
         return neutral_policy()
 
 

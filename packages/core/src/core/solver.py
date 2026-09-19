@@ -377,13 +377,33 @@ def solve(
     """El plan óptimo bajo esos pesos. Lo que no se pudo cubrir sale en
     `unassigned_tasks`, y se muestra: un hueco visible es información.
 
+    Firma de contrato (`solve(state, policy) -> Plan`). Las violaciones blandas por
+    restricción desconocida las devuelve `solve_with_violations`, que es lo que usa
+    `loop.py` para publicarlas: aquí se descartan solo porque la firma no tiene
+    dónde ponerlas."""
+    plan, _violations = solve_with_violations(state, policy, graph, vetoes)
+    return plan
+
+
+def solve_with_violations(
+    state: WorldState,
+    policy: Policy,
+    graph: RoadGraph | None = None,
+    vetoes: set[tuple[str, str]] | None = None,
+) -> tuple[Plan, list[Violation]]:
+    """`solve` más las `Violation(verifier=UNKNOWN_CONSTRAINT, severity="soft")` que
+    levantó `apply_hard_constraints`. Una restricción desconocida no se ignora: sale
+    en el dashboard y vuelve al planner como crítica.
+
     `graph` lo inyecta `loop.py` desde el escenario; si falta, se cae a un grafo vacío
     y la asignación degrada a lo que permita el estado (la demo nunca se queda sin
     plan). `vetoes` son los pares vetados por un humano (coste infinito)."""
     live_graph = (graph or RoadGraph({}, {})).with_cuts(state)
 
     matrix, units, tasks, routes = cost_matrix(state, policy, live_graph, vetoes)
-    apply_hard_constraints(matrix, state, policy, live_graph, units, tasks, routes)
+    violations = apply_hard_constraints(
+        matrix, state, policy, live_graph, units, tasks, routes
+    )
 
     assignments: list[Assignment] = []
     for i, j in _match(matrix):
@@ -403,7 +423,7 @@ def solve(
     unassigned = [t.id for t in tasks if t.id not in assigned_tasks]
 
     context = build_context(state, assignments, live_graph)
-    return Plan(
+    plan = Plan(
         id=f"plan_{state.run_id}_{state.seq}",
         run_id=state.run_id,
         created_t=state.t_sim,
@@ -412,6 +432,7 @@ def solve(
         unassigned_tasks=unassigned,
         context=context,
     )
+    return plan, violations
 
 
 def _match(matrix: list[list[float]]) -> list[tuple[int, int]]:
