@@ -2,18 +2,24 @@
 //
 // Es un **modo a pantalla completa**, no un séptimo panel: la rejilla del H1 es la
 // pantalla del pitch y esto se enseña al final, con el run terminado. Cerrado no ocupa
-// ni un píxel.
+// ni un píxel. Dentro, el mismo marco que los seis paneles (SPEC-009 REQ-333).
 //
 // La regla que ordena el componente: **ningún número sin su procedencia**. Un run
 // sintético lo dice, una cifra contada por el gateway lo dice, y un journal a medias lo
 // dice. Dos columnas de números sin eso son una comparación que no se puede defender
-// cuando alguien pregunta de dónde sale el 0,92.
+// cuando alguien pregunta de dónde sale el 0,92. Lo que NO se dice es el caso normal
+// (REQ-335): «puntuado por journal.score» debajo de cada run era ruido.
 import { useEffect, useState } from 'react'
 
 import type { RunRow } from '../hooks/useRuns'
 import { useRuns } from '../hooks/useRuns'
-import { caveats, compare, defaultPair } from '../story/score'
+import { Panel } from '../components/Panel'
+import { caveats, compare, defaultPair, type Comparison } from '../story/score'
 import type { Event } from '../types'
+
+/** Control neutro (REQ-320), a 2.5rem: se pulsa con el ratón en directo. */
+const CONTROL =
+  'min-h-[2.5rem] rounded-lg border border-vela-edge bg-vela-panel px-3 text-base text-vela-ink hover:border-vela-ink'
 
 export function RunsPanel({ events, onClose }: { events: Event[]; onClose: () => void }) {
   const { rows, loading, error } = useRuns(events, true)
@@ -41,50 +47,47 @@ export function RunsPanel({ events, onClose }: { events: Event[]; onClose: () =>
   const a = rows.find((r) => r.run_id === left) ?? null
   const b = rows.find((r) => r.run_id === right) ?? null
   const table = compare(a?.score ?? null, b?.score ?? null)
+  const score = table.find((row) => row.label === 'puntuación')
+  const mejoras = table.filter((row) => row.verdict === 'mejor').length
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col bg-vela-bg/98 p-6">
-      <header className="flex shrink-0 items-baseline gap-4">
-        <h2 className="text-2xl font-semibold text-vela-ink">aprendizaje entre runs</h2>
-        <span className="text-sm text-vela-dim">
-          {rows.length} run{rows.length === 1 ? '' : 's'} en runs/
-          {loading && ' · leyendo…'}
-        </span>
-        <button
-          type="button"
-          onClick={onClose}
-          className="ml-auto min-h-[2.5rem] rounded-[9px] border border-vela-edge bg-vela-panel px-4 text-base text-vela-ink hover:border-vela-accent hover:text-vela-accent"
+    // Opaco: con el dashboard transparentándose detrás, la tabla no se lee (REQ-333).
+    <div className="absolute inset-0 z-20 flex justify-center bg-vela-bg p-6">
+      <div className="h-full w-full max-w-[1100px]">
+        <Panel
+          title="Comparar runs"
+          subtitle={loading ? 'leyendo…' : `${rows.length} ${rows.length === 1 ? 'run guardado' : 'runs guardados'}`}
+          stats={[
+            { label: 'puntuación A', value: score?.a ?? '—' },
+            { label: 'puntuación B', value: score?.b ?? '—' },
+            { label: 'mejoras de B sobre A', value: mejoras, tone: mejoras ? 'done' : undefined },
+          ]}
+          action={
+            <button type="button" onClick={onClose} className={CONTROL}>
+              Cerrar · Esc
+            </button>
+          }
         >
-          cerrar · Esc
-        </button>
-      </header>
+          {error && <p className="py-3 text-vela-replan">{error}</p>}
 
-      {error && <p className="mt-4 text-base text-vela-warn">{error}</p>}
-
-      {rows.length === 0 && !loading && !error ? (
-        // El estado vacío dice qué va a aparecer y cómo llenarlo, no "sin datos".
-        <p className="mt-8 text-base text-vela-dim">
-          Todavía no hay runs. Cada demo terminada deja uno en <code>runs/</code>; para
-          probar la comparación sin esperar:{' '}
-          <code>uv run python scripts/fake_journal.py --runs 3 --dir runs/</code>
-        </p>
-      ) : (
-        <div className="mt-6 min-h-0 flex-1 overflow-auto">
-          <div className="grid grid-cols-[1fr_auto_auto_auto] items-baseline gap-x-6 gap-y-1">
-            <Picker rows={rows} value={left} onChange={setLeft} label="run A" />
-            <Picker rows={rows} value={right} onChange={setRight} label="run B" />
-
-            {table.map((row) => (
-              <Row key={row.label} {...row} />
-            ))}
-          </div>
-
-          <div className="mt-8 grid grid-cols-2 gap-6">
-            <Caveats row={a} title="run A" />
-            <Caveats row={b} title="run B" />
-          </div>
-        </div>
-      )}
+          {rows.length === 0 && !loading && !error ? (
+            // El vacío dice qué va a aparecer y cómo llenarlo, no "sin datos".
+            <p className="py-3 text-vela-dim">
+              Todavía no hay runs. Cada demo terminada deja uno en <code>runs/</code>; para
+              probar la comparación sin esperar:{' '}
+              <code>uv run python scripts/fake_journal.py --runs 3 --dir runs/</code>
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-6 py-4">
+                <Picker rows={rows} value={left} onChange={setLeft} label="Run A" row={a} />
+                <Picker rows={rows} value={right} onChange={setRight} label="Run B" row={b} />
+              </div>
+              <ScoreTable table={table} />
+            </>
+          )}
+        </Panel>
+      </div>
     </div>
   )
 }
@@ -94,25 +97,19 @@ function Picker({
   value,
   onChange,
   label,
+  row,
 }: {
   rows: RunRow[]
   value: string | null
   onChange: (id: string) => void
   label: string
+  row: RunRow | null
 }) {
+  const notes = caveats(row)
   return (
-    // `col-start` deja la primera columna libre para los nombres de campo, y los dos
-    // selectores caen justo encima de sus cifras.
-    <label
-      className={`${label === 'run A' ? 'col-start-2' : 'col-start-3'} row-start-1 flex flex-col gap-1 text-xs text-vela-dim`}
-    >
+    <label className="flex flex-col gap-1 text-sm text-vela-dim">
       {label}
-      <select
-        value={value ?? ''}
-        onChange={(e) => onChange(e.target.value)}
-        // 2.5rem de alto: se pulsa con el ratón y se lee desde el fondo de la sala.
-        className="min-h-[2.5rem] rounded-[9px] border border-vela-edge bg-vela-panel px-3 text-base text-vela-ink"
-      >
+      <select value={value ?? ''} onChange={(e) => onChange(e.target.value)} className={CONTROL}>
         {rows.map((r) => (
           <option key={r.run_id} value={r.run_id}>
             {r.run_id}
@@ -120,60 +117,45 @@ function Picker({
           </option>
         ))}
       </select>
+      {/* Solo lo que obliga a desconfiar de los números (REQ-335). */}
+      {notes.map((note) => (
+        <span key={note}>{note}</span>
+      ))}
     </label>
   )
 }
 
-function Row({
-  label,
-  a,
-  b,
-  verdict,
-  delta,
-}: {
-  label: string
-  a: string | null
-  b: string | null
-  verdict: 'mejor' | 'peor' | 'igual' | null
-  delta: string | null
-}) {
-  // Verde y ámbar, nunca rojo: el rojo es del banner REPLAN y de nada más. Un run peor
-  // no es una emergencia, es un dato.
-  const tone =
-    verdict === 'mejor'
-      ? 'text-vela-good'
-      : verdict === 'peor'
-        ? 'text-vela-warn'
-        : 'text-vela-dim'
+/** Una fila por métrica, con sus cuatro columnas en la misma fila de tabla (REQ-334): la
+ *  rejilla de antes colocaba los selectores a mano y el resto fluía desalineado. */
+function ScoreTable({ table }: { table: Comparison[] }) {
   return (
-    <>
-      <span className="text-base text-vela-dim">{label}</span>
-      <span className="text-right text-lg tabular-nums text-vela-ink">{a ?? '—'}</span>
-      <span className="text-right text-lg tabular-nums text-vela-ink">{b ?? '—'}</span>
-      <span className={`text-base tabular-nums ${tone}`}>
-        {delta ?? (verdict === 'igual' ? '=' : '')}
-      </span>
-    </>
-  )
-}
-
-function Caveats({ row, title }: { row: RunRow | null; title: string }) {
-  const notes = caveats(row)
-  if (!row) return null
-  return (
-    <div className="text-sm text-vela-dim">
-      <p className="text-vela-ink">
-        {title} · {row.run_id}
-      </p>
-      {notes.length === 0 ? (
-        <p>puntuado por journal.score</p>
-      ) : (
-        <ul>
-          {notes.map((n) => (
-            <li key={n}>· {n}</li>
-          ))}
-        </ul>
-      )}
-    </div>
+    <table className="w-full text-base">
+      <thead>
+        <tr className="border-b border-vela-edge text-left text-sm text-vela-dim">
+          <th className="py-2 font-normal">Métrica</th>
+          <th className="py-2 text-right font-normal">Run A</th>
+          <th className="py-2 text-right font-normal">Run B</th>
+          <th className="py-2 text-right font-normal">Diferencia</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-vela-edge">
+        {table.map((row) => (
+          <tr key={row.label}>
+            <td className="py-2.5 text-vela-ink">{row.label}</td>
+            <td className="py-2.5 text-right tabular-nums text-vela-ink">{row.a ?? '—'}</td>
+            <td className="py-2.5 text-right tabular-nums text-vela-ink">{row.b ?? '—'}</td>
+            {/* Verde lo mejor y gris lo demás (REQ-321): un run peor no es una emergencia,
+                es un dato. */}
+            <td
+              className={`py-2.5 text-right tabular-nums ${
+                row.verdict === 'mejor' ? 'text-vela-good' : 'text-vela-dim'
+              }`}
+            >
+              {row.delta ?? (row.verdict === 'igual' ? '=' : '')}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }

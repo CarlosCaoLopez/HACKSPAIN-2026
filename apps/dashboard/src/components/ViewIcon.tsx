@@ -41,7 +41,7 @@ export const VIEW_TITLE: Record<View, string> = {
 export function ViewHeader({ view, children }: { view: View; children?: React.ReactNode }) {
   return (
     <div className="flex h-14 shrink-0 items-center gap-3 px-4">
-      <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-vela-accent text-white">
+      <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-vela-ink text-white">
         <ViewIcon view={view} className="h-[18px] w-[18px]" />
       </span>
       <h1 className="text-2xl font-semibold text-vela-ink">{VIEW_TITLE[view]}</h1>

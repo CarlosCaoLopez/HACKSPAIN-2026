@@ -8,8 +8,8 @@
 import { useEffect, useMemo, useRef } from 'react'
 
 import type { Event } from '../types'
-import { Empty, Panel, Skeleton, Truncated } from '../components/Panel'
-import { actionRows, isStale } from '../story/actions'
+import { Empty, Panel, Row, Rows, Skeleton, Truncated, type DataTone } from '../components/Panel'
+import { actionRows, isStale, type Action } from '../story/actions'
 import { mmss, seconds } from '../story/format'
 import { VERB } from '../story/labels'
 
@@ -31,7 +31,9 @@ export function ActionLog({
 
   const all = useMemo(() => actionRows(events), [events])
   const rows = all.slice(0, MAX_ROWS)
-  const abiertas = all.filter((row) => !row.closed).length
+  const enCurso = all.filter((row) => !row.closed).length
+  const hechas = all.filter((row) => row.closed?.ok).length
+  const fallidas = all.filter((row) => row.closed && !row.closed.ok).length
 
   // Auto-scroll solo si el panel está arriba, igual que el panel de cambios: si me he
   // desplazado a mirar algo, no me lo mueve debajo del dedo mientras lo explico.
@@ -43,8 +45,12 @@ export function ActionLog({
   return (
     <Panel
       title="Acciones"
-      count={all.length}
-      note={abiertas ? `${abiertas} en curso` : undefined}
+      subtitle={`${all.length} ${all.length === 1 ? 'orden' : 'órdenes'}${enCurso ? ` · ${enCurso} en curso` : ''}`}
+      stats={[
+        { label: 'en curso', value: enCurso },
+        { label: 'confirmadas', value: hechas, tone: hechas ? 'done' : undefined },
+        { label: 'fallidas', value: fallidas, tone: fallidas ? 'urgent' : undefined },
+      ]}
       bodyRef={bodyRef}
     >
       {awaitingSnapshot ? (
@@ -53,41 +59,41 @@ export function ActionLog({
         <Empty>Sin órdenes emitidas. Aparecen al publicarse el primer plan.</Empty>
       ) : (
         <>
-          <ol className="flex flex-col gap-2">
-          {rows.map((row) => (
-            <li key={row.actionId} className="border-l-2 border-vela-edge pl-2">
-              <div className="flex items-baseline gap-2">
-                <span className="tabular-nums text-vela-dim">{mmss(row.t_sim)}</span>
-                <span className="text-xs font-bold tracking-wide text-vela-accent">
-                  {row.verb ? VERB[row.verb] : 'ORDEN'}
-                </span>
-                <span className="ml-auto shrink-0 text-xs tabular-nums text-vela-dim">
-                  {row.closed
-                    ? `${seconds(row.closed.t_sim - row.t_sim)} en responder`
-                    : isStale(row, lastT)
-                      ? 'sin confirmar'
-                      : 'pedida'}
-                </span>
-              </div>
-              <p className="text-vela-ink">{row.what}</p>
-              {row.closed && (
-                <p
-                  className={
-                    row.closed.ok ? 'text-xs text-vela-dim' : 'text-xs text-vela-warn'
-                  }
-                >
-                  {row.closed.ok
-                    ? `hecha${row.closed.text ? ` · ${row.closed.text}` : ''}`
-                    : `FALLÓ · ${row.closed.text}`}
-                </p>
-              )}
-              <p className="text-xs text-vela-dim">{row.actionId}</p>
-            </li>
-          ))}
-          </ol>
+          <Rows>
+            {rows.map((row) => {
+              const { status, tone } = outcome(row, lastT)
+              return (
+                <Row
+                  key={row.actionId}
+                  time={mmss(row.t_sim)}
+                  // Sin verbo conocido no se inventa `ORDEN`: la frase basta (REQ-327).
+                  primary={row.verb ? `${capital(VERB[row.verb])} · ${row.what}` : row.what}
+                  status={status}
+                  tone={tone}
+                  meta={row.closed?.text || undefined}
+                  hint={row.actionId}
+                />
+              )
+            })}
+          </Rows>
           <Truncated n={all.length - rows.length} />
         </>
       )}
     </Panel>
   )
+}
+
+/** Lo que el mundo ha hecho con la orden. Lo que se mira es la latencia en `t_sim`: es lo
+ *  que enseña que el mundo responde de verdad y no que se pintan órdenes al vacío. */
+function outcome(row: Action, lastT: number): { status: string; tone?: DataTone } {
+  if (row.closed) {
+    return row.closed.ok
+      ? { status: `hecha en ${seconds(row.closed.t_sim - row.t_sim)}`, tone: 'done' }
+      : { status: 'falló', tone: 'urgent' }
+  }
+  return { status: isStale(row, lastT) ? 'sin confirmar' : 'pedida' }
+}
+
+function capital(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }

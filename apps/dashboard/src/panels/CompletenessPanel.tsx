@@ -29,6 +29,7 @@ function shown(field: FieldCompleteness): string {
   return shortId(value)
 }
 
+/** Sin color (SPEC-009 REQ-323): la regla 4 se distingue por relleno, borde y cursiva. */
 function chipClass(status: FieldCompleteness['status']): string {
   switch (status) {
     case 'observed':
@@ -36,7 +37,7 @@ function chipClass(status: FieldCompleteness['status']): string {
     case 'assumed_default':
       return 'border-vela-edge-bright bg-vela-bg text-vela-dim italic'
     case 'asked':
-      return 'border-dashed border-vela-call text-vela-dim'
+      return 'border-dashed border-vela-dim text-vela-dim'
     default:
       return 'border-dashed border-vela-edge-bright text-vela-dim'
   }
@@ -58,12 +59,14 @@ function suffix(field: FieldCompleteness): string {
 export function CompletenessPanel({ completeness }: { completeness: CallCompleteness }) {
   const { fields, budget_s, elapsed_s } = completeness
   const open = fields.filter((f) => f.status === 'open' || f.status === 'asked').length
+  // Verde solo si todo lo dijo quien llama (REQ-321): un campo asumido no es «completa».
+  const complete = fields.length > 0 && fields.every((f) => f.status === 'observed')
   const ratio = budget_s ? Math.min(1, elapsed_s / budget_s) : 0
 
   return (
-    <div className="mt-1.5" aria-label="Completitud de la llamada">
-      <p className="text-xs font-bold tracking-wide text-vela-dim">
-        COMPLETITUD{open > 0 ? ` · ${open} sin resolver` : ' · cerrada'}
+    <div className="mt-1.5 text-sm" aria-label="Completitud de la llamada">
+      <p className={complete ? 'text-vela-good' : 'text-vela-dim'}>
+        Completitud · {complete ? 'completa' : open > 0 ? `${open} sin resolver` : 'cerrada'}
       </p>
       <ul className="mt-1 flex flex-wrap gap-1">
         {fields.map((field) => (
@@ -78,16 +81,16 @@ export function CompletenessPanel({ completeness }: { completeness: CallComplete
         ))}
       </ul>
       {/* El reloj sale de la gravedad: no se retiene una ambulancia rellenando un
-          cuestionario. Sin `budget_s` aún no se sabe cuánto tiempo hay. */}
+          cuestionario. Sin `budget_s` aún no se sabe cuánto tiempo hay. Agotado, en rojo. */}
       {budget_s != null && (
         <div className="mt-1 flex items-center gap-2 text-xs text-vela-dim">
           <span className="h-1 flex-1 overflow-hidden rounded-full bg-vela-edge">
             <span
-              className={`block h-full ${ratio >= 1 ? 'bg-vela-warn' : 'bg-vela-accent'}`}
+              className={`block h-full ${ratio >= 1 ? 'bg-vela-replan' : 'bg-vela-ink'}`}
               style={{ width: `${ratio * 100}%` }}
             />
           </span>
-          <span className="tabular-nums">
+          <span className={`tabular-nums ${ratio >= 1 ? 'text-vela-replan' : ''}`}>
             {Math.round(elapsed_s)} / {Math.round(budget_s)} s
           </span>
         </div>
