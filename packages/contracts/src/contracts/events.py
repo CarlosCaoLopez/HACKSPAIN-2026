@@ -177,6 +177,7 @@ class DivergenceReport(BaseModel):
 class ReplanStarted(BaseModel):
     reason: str
     trigger: str
+    fired_rules: list[str] = []  # slugs de reglas de memoria que casaron: lineage → dashboard
 
 
 # --- Payloads: action.* ----------------------------------------------------
