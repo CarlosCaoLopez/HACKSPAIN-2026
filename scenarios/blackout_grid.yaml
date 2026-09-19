@@ -1,6 +1,13 @@
 # Segundo escenario · sábado 20-00. Es lo tercero en la lista de sacrificio si a
 # las 13:00 del sábado el sistema no decide y mueve unidades de punta a punta.
 # Esquema: contracts.scenario.Scenario
+#
+# Reutiliza la geometría de wildfire_ridge a propósito: es el mismo valle, otra
+# crisis. El mundo no hay que reconstruirlo, solo cambia el peligro — y eso es
+# justamente lo que demuestra que el sistema no está cableado a un escenario.
+#
+# Un apagón se propaga por la red, en cruz, y no se apaga solo. El viento le da
+# igual: va a cero y queda documentado en los dos sitios.
 
 id: blackout_grid
 name: Apagón en el valle
@@ -9,16 +16,119 @@ origin: [0, 0]
 
 hazard:
   kind: blackout
-  origin_cell: cell_08_11
+  origin_cell: cell_08_00 # (32, 0): la subestación, junto al cruce
   cell_size: 4
-  base_spread: 0.08
+  base_spread: 0.55 # celdas por minuto, isótropo
   wind:
     bearing_deg: 0
     speed: 0.0 # un apagón no lo mueve el viento
 
-pois: [] # TODO P2
-units: [] # TODO P2
-waypoints: [] # TODO P2
-roads: [] # TODO P2
-civilians: [] # TODO P2
-injects: [] # TODO P2
+pois:
+  - id: poi_base
+    name: Parque de bomberos
+    kind: base
+    x: -44
+    z: 0
+    waypoint_id: wp_base
+  - id: poi_pueblo_a
+    name: Pueblo A
+    kind: village
+    x: 187
+    z: 11
+    waypoint_id: wp_pueblo_a
+    min_coverage: 1
+    contact_phone: "+34000000001"
+  - id: poi_pueblo_b
+    name: Pueblo B
+    kind: village
+    x: 187
+    z: 94
+    waypoint_id: wp_pueblo_b
+    min_coverage: 1
+    contact_phone: "+34000000002"
+  - id: poi_hospital
+    name: Hospital comarcal
+    kind: hospital
+    x: 22
+    z: -77
+    waypoint_id: wp_hospital
+    contact_phone: "+34000000003"
+  - id: poi_refugio
+    name: Refugio municipal
+    kind: shelter
+    x: -33
+    z: 77
+    waypoint_id: wp_refugio
+
+# 2 camiones, 1 ambulancia, 1 dron. `capabilities` es lo que el solver cruza con
+# `Task.required_capability` para poner coste infinito: una ambulancia no extingue.
+
+units:
+  - id: unit_truck1
+    kind: fire_truck
+    x: -44
+    z: 0
+    capabilities: [extinguish]
+    capacity: 0
+  - id: unit_truck2
+    kind: fire_truck
+    x: -44
+    z: 10
+    capabilities: [extinguish]
+    capacity: 0
+  - id: unit_ambulance
+    kind: ambulance
+    x: 22
+    z: -77
+    capabilities: [transport, medical]
+    capacity: 4
+  - id: unit_drone
+    kind: drone
+    x: -44
+    z: -10
+    capabilities: [recon]
+    capacity: 0
+
+# La Y: del cruce salen el desvío norte (largo, a resguardo del incendio) y el sur
+# (corto, y justo por donde pasa el frente). Sin los dos, cortar una carretera no
+# obliga a replanificar y el clímax de la demo se queda sin mecanismo.
+
+waypoints:
+  - {id: wp_base, x: -44, z: 0}
+  - {id: wp_cruce, x: 33, z: 0}
+  - {id: wp_nor_01, x: 82, z: -50}
+  - {id: wp_nor_02, x: 148, z: -50}
+  - {id: wp_sur_01, x: 82, z: 28}
+  - {id: wp_sur_02, x: 143, z: 22}
+  - {id: wp_pueblo_a, x: 187, z: 11}
+  - {id: wp_pueblo_b, x: 187, z: 94}
+  - {id: wp_hospital, x: 22, z: -77}
+  - {id: wp_refugio, x: -33, z: 77}
+
+roads:
+  - {id: road:wp_base-wp_cruce, a: wp_base, b: wp_cruce, length_m: 77}
+  # desvío norte: 120 m más largo, pero el viento aleja el fuego de él
+  - {id: road:wp_cruce-wp_nor_01, a: wp_cruce, b: wp_nor_01, length_m: 70}
+  - {id: road:wp_nor_01-wp_nor_02, a: wp_nor_01, b: wp_nor_02, length_m: 66}
+  - {id: road:wp_nor_02-wp_pueblo_a, a: wp_nor_02, b: wp_pueblo_a, length_m: 72}
+  # desvío sur: el corto, y el que el incendio corta hacia el minuto 3
+  - {id: road:wp_cruce-wp_sur_01, a: wp_cruce, b: wp_sur_01, length_m: 56}
+  - {id: road:wp_sur_01-wp_sur_02, a: wp_sur_01, b: wp_sur_02, length_m: 61}
+  - {id: road:wp_sur_02-wp_pueblo_a, a: wp_sur_02, b: wp_pueblo_a, length_m: 45}
+  # ramales
+  - {id: road:wp_sur_02-wp_pueblo_b, a: wp_sur_02, b: wp_pueblo_b, length_m: 84}
+  - {id: road:wp_cruce-wp_hospital, a: wp_cruce, b: wp_hospital, length_m: 78}
+  - {id: road:wp_base-wp_refugio, a: wp_base, b: wp_refugio, length_m: 78}
+
+civilians:
+  - {id: civ_pueblo_a, poi_id: poi_pueblo_a, count: 24, immobile: 3}
+  - {id: civ_pueblo_b, poi_id: poi_pueblo_b, count: 15, immobile: 1}
+
+# Sin giro de viento: aquí no significa nada. Las sorpresas son de red y de medios.
+injects:
+  - at: 120
+    type: road_cut
+    payload: {edge: road:wp_cruce-wp_nor_01, cause: "poste caído sobre la calzada"}
+  - at: 200
+    type: unit_failure
+    payload: {unit: unit_drone, reason: "sin cobertura de control"}

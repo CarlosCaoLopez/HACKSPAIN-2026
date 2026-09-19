@@ -1,4 +1,4 @@
-.PHONY: help install dev-core dev-sim dev-voice dev-dash demo world replay check types clean
+.PHONY: help install server cam dev-core dev-sim dev-voice dev-dash demo world replay check types clean
 .DEFAULT_GOAL := help
 
 RUN ?=
@@ -30,6 +30,13 @@ dev-dash: ## gateway + WS en modo replay
 
 demo: ## todo de verdad, 6 minutos
 	uv run python scripts/demo.py --scenario $(SCENARIO)
+
+server: ## levanta Paper 1.21 en local (jar pelado, sin Docker). Déjalo en su terminal
+	./infra/server/start.sh
+
+cam: ## cámara del pitch · 1-4 EN ESTA TERMINAL, Minecraft en la 2ª pantalla
+	@test -n "$(PLAYER)" || { echo "falta PLAYER=<tu usuario de Minecraft>"; exit 1; }
+	uv run python -m sim.camera --live --who $(PLAYER) --scenario scenarios/$(SCENARIO).yaml
 
 world: ## regenera el mundo por RCON (idempotente: /kill @e[tag=vela] y otra vez)
 	uv run python -m sim.worldgen --scenario scenarios/$(SCENARIO).yaml

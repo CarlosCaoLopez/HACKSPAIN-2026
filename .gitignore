@@ -18,9 +18,36 @@ runs/*
 !runs/.gitkeep
 
 # El mundo construido a mano SÍ se commitea (infra/server/world/), el resto no.
+# Hasta H1 lo que hay en world/ es terreno generado al azar: NO commitear todavía.
 infra/server/logs/
 infra/server/cache/
 infra/server/*.jar
+# Paper lo reescribe en cada arranque. El versionado es server.properties.template.
+infra/server/server.properties
+infra/server/eula.txt
+infra/server/banned-*.json
+infra/server/ops.json
+infra/server/whitelist.json
+infra/server/usercache.json
+infra/server/versions/
+infra/server/libraries/
+infra/server/plugins/
+infra/server/config/
+# Config que Paper regenera en cada arranque con sus defaults.
+infra/server/bukkit.yml
+infra/server/spigot.yml
+infra/server/commands.yml
+infra/server/help.yml
+infra/server/permissions.yml
+infra/server/version_history.json
+# La demo es un valle en el overworld. Estos dos no se usan jamás.
+infra/server/world_nether/
+infra/server/world_the_end/
 
 # Notas de planificación personales de Carlos
 docs/carlos/
+
+# fenic deja bases locales al crear sesión
+*.duckdb
+*.duckdb.wal
+.DS_Store

@@ -8,6 +8,8 @@ dependencies = [
     "fastapi>=0.115",
     "httpx>=0.27",
     "fenic>=0.1",
+    "tqdm>=4",
+    "anthropic>=0.40,<1",
 ]
 
 [tool.uv.sources]
