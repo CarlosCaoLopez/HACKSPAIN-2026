@@ -1,11 +1,11 @@
-"""La capa estática del escenario: `GET /api/scenario` y el relleno provisional.
+"""La capa estática del escenario: `GET /api/scenario`.
 
 El mapa del dashboard no puede dibujar rutas ni cortes de carretera solo con eventos:
 `world.road.changed` trae un `edge_id` y nada más, y las celdas necesitan `origin` y
-`cell_size`. Todo eso lo sirve este endpoint.
+`cell_size`. Todo eso lo sirve este endpoint, tal cual lo declara P2 en el YAML.
 
-El test que de verdad importa es el último: **los ids de la capa son los que usa el
-fixture**. Si alguien renombra un waypoint en un sitio y no en el otro, el camión se
+El test que de verdad importa es el último: **los ids de los fixtures son los del YAML**.
+Si alguien renombra un waypoint o una carretera en un sitio y no en el otro, el camión se
 mueve hacia algo que no existe, el mapa lo pinta en el carril *sin ubicar*, y eso se
 descubre en la demo. Aquí salta antes.
 """
@@ -17,9 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from contracts.scenario import Scenario
-from contracts.world import POI
 from gateway.main import app
-from gateway.scenario_fallback import FILLABLE, WAYPOINT_XZ, fill
 from gateway.scenarios import load_scenario
 
 FAKE = Path("fixtures/run_fake.jsonl")
@@ -34,18 +32,19 @@ def client():
 
 def test_sirve_la_geometria_que_el_mapa_necesita(client: TestClient) -> None:
     body = client.get("/api/scenario").json()
+    sc = load_scenario("wildfire_ridge")
     assert body["id"] == "wildfire_ridge"
     assert body["origin"] == [0.0, 0.0]
     assert body["hazard"]["cell_size"] == 4  # sin esto no se proyecta una celda
-    assert len(body["waypoints"]) == len(WAYPOINT_XZ)
+    assert {w["id"] for w in body["waypoints"]} == {w.id for w in sc.waypoints}
+    assert {r["id"] for r in body["roads"]} == {r.id for r in sc.roads}
     assert {p["id"] for p in body["pois"]} >= {"poi_pueblo_a", "poi_pueblo_b"}
 
 
-def test_dice_que_es_provisional(client: TestClient) -> None:
-    """Mientras P2 tenga las listas a `[]`, el mapa tiene que avisarlo en pantalla."""
+def test_sirve_lo_que_dice_p2_sin_rellenar_nada(client: TestClient) -> None:
+    """Sin relleno provisional: lo que sale es el YAML, y el mapa no avisa de nada."""
     body = client.get("/api/scenario").json()
-    assert body["provisional"] is True
-    assert set(body["provisional_lists"]) == set(FILLABLE)
+    assert "provisional" not in body
     assert body["of_run"] is None  # sin run en curso, es el escenario por defecto
 
 
@@ -54,33 +53,20 @@ def test_escenario_por_id_y_404(client: TestClient) -> None:
     assert client.get("/api/scenario/no_existe").status_code == 404
 
 
-def test_el_relleno_no_pisa_los_datos_de_p2() -> None:
-    """Lista por lista: lo que declare el escenario manda siempre."""
-    sc = load_scenario("wildfire_ridge")
-    mio = POI(id="poi_suyo", name="El de P2", kind="village", x=1.0, z=2.0, waypoint_id="wp_x")
-    con_pois = sc.model_copy(update={"pois": [mio]})
-
-    filled, provisional = fill(con_pois)
-
-    assert filled.pois == [mio], "un POI de P2 no se sustituye por uno inventado"
-    assert "pois" not in provisional
-    assert filled.waypoints, "las listas que sí estaban vacías se completan"
-    assert "waypoints" in provisional
-
-
-def test_un_escenario_completo_no_es_provisional() -> None:
-    sc = load_scenario("wildfire_ridge")
-    completo, _ = fill(sc)  # relleno una vez...
-    _, provisional = fill(completo)  # ...y ya no hay nada que rellenar
-    assert provisional == []
+def test_los_escenarios_de_p2_traen_la_geometria_completa() -> None:
+    """Si P2 vacía una lista, el mapa se queda sin flechas y sin cortes: que salte aquí."""
+    for scenario_id in ("wildfire_ridge", "blackout_grid"):
+        sc = load_scenario(scenario_id)
+        for name in ("pois", "waypoints", "roads", "units", "civilians"):
+            assert getattr(sc, name), f"{scenario_id}: `{name}` viene vacío"
 
 
 @pytest.mark.parametrize("fixture", [FAKE, FAKE_V2])
-def test_los_ids_del_fixture_existen_en_la_capa(fixture: Path) -> None:
-    """Una sola fuente de ids: si el fixture y la capa se separan, el mapa miente."""
+def test_los_ids_del_fixture_existen_en_el_escenario(fixture: Path) -> None:
+    """Una sola fuente de ids: si el fixture y el YAML se separan, el mapa miente."""
     if not fixture.exists():
         pytest.skip(f"falta {fixture}")
-    scenario: Scenario = fill(load_scenario("wildfire_ridge"))[0]
+    scenario: Scenario = load_scenario("wildfire_ridge")
     units = {u.id for u in scenario.units}
     pois = {p.id for p in scenario.pois}
     waypoints = {w.id for w in scenario.waypoints}

@@ -41,7 +41,6 @@ from gateway.bridges import mount_bridges
 from gateway.control import router as control_router
 from gateway.rcon_null import NullRcon
 from gateway.runtime import SHUTDOWN_GRACE_S, Rt, Runtime
-from gateway.scenario_fallback import fill
 from gateway.scenarios import list_ids, load_scenario, scenario_path
 from gateway.voice_canned import CannedVoice
 from gateway.webhook_auth import webhook_token_guard
@@ -381,13 +380,8 @@ async def get_scenario(scenario_id: str, rt: Rt) -> dict:
 def _scenario_layer(rt: Runtime, scenario_id: str) -> dict:
     if not scenario_path(scenario_id).exists():
         raise HTTPException(404, f"escenario desconocido: {scenario_id}")
-    filled, provisional = fill(load_scenario(scenario_id))
     return {
-        **filled.model_dump(mode="json"),
-        # Qué listas son inventadas, para que el mapa lo avise en pantalla: una
-        # geometría de prueba presentada como real se cae en cuanto el jurado pregunta.
-        "provisional": bool(provisional),
-        "provisional_lists": provisional,
+        **load_scenario(scenario_id).model_dump(mode="json"),
         "of_run": rt.run_id,  # null = es el escenario por defecto, no hay run
     }
 

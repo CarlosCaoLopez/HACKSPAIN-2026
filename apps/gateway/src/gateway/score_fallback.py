@@ -4,7 +4,7 @@
 `score: null` y el run 1 vs run 12 —criterio explícito de puntos extra— no se puede ni
 construir. Esto cuenta lo que se puede contar de un journal mientras tanto.
 
-Es la misma figura que `scenario_fallback.py`, con sus mismas dos reglas:
+Se apaga sola, con dos reglas:
 
 - **Solo se rellena lo que falta.** En cuanto `journal.score` responda, esto no se llama.
 - **Lo que se ha contado aquí se dice.** `provisional: true` viaja hasta la pantalla y

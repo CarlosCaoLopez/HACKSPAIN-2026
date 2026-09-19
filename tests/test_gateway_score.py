@@ -25,6 +25,7 @@ from contracts.events import Event, EventType
 from contracts.settings import settings
 from gateway import main as gateway_main
 from gateway import score_fallback
+from gateway.scenarios import load_scenario
 
 FIXTURE = Path("fixtures/run_fake_v2.jsonl")
 
@@ -61,7 +62,10 @@ def test_solo_cuenta_el_estado_final_de_cada_celda() -> None:
 
 def test_civiles_por_grupo_y_no_por_evento() -> None:
     score = score_fallback.count(FIXTURE).score
-    assert score.civilians_safe == 18
+    # El grupo de Pueblo A llega a `safe` una sola vez, con el `count` que declara el YAML:
+    # contar eventos y no grupos daría más.
+    pueblo_a = next(c for c in load_scenario("wildfire_ridge").civilians if c.id == "civ_pueblo_a")
+    assert score.civilians_safe == pueblo_a.count
     assert score.civilians_exposed_end == 0
 
 

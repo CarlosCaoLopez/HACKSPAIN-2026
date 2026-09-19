@@ -72,18 +72,7 @@ from contracts.plan import (
 )
 from contracts.scenario import Scenario
 from contracts.world import Wind
-from gateway.scenario_fallback import (
-    AMBULANCE,
-    CIV_A,
-    CIV_B,
-    DRONE,
-    PUEBLO_A,
-    PUEBLO_B,
-    ROAD_NORTE,
-    TRUCK1,
-    TRUCK2,
-)
-from gateway.scenario_fallback import WAYPOINT_XZ as WAYPOINTS
+from gateway.scenarios import load_scenario
 
 OUT = {
     # v1 es el del H2/H3 y está CONGELADO: los criterios de aceptación de las dos specs
@@ -147,16 +136,74 @@ DURATION_S = 360.0  # seis minutos, como la demo
 
 # --- Entidades ------------------------------------------------------------------
 #
-# El YAML de P2 tiene `pois`, `units`, `waypoints`, `roads` y `civilians` a `[]`
-# todavía (TODO suyo). De él se lee lo que SÍ está: seed, viento, celda de ignición y
-# la línea temporal de injects.
+# Los ids, las coordenadas, las carreteras y el corte de la maqueta NO se declaran aquí:
+# salen de `scenarios/wildfire_ridge.yaml` (P2), que es lo mismo que sirve
+# `GET /api/scenario` al mapa del dashboard y lo que levanta `make world`. Si P2 renombra
+# un waypoint o quita una carretera, este script falla al **generar** —donde se ve— y no
+# con el camión moviéndose hacia un waypoint que no existe en mitad de la demo.
 #
-# Los ids y las coordenadas de la maqueta NO se declaran aquí: se importan de
-# `gateway.scenario_fallback`, que es lo mismo que sirve `GET /api/scenario` al mapa del
-# dashboard. Si el fixture dijera `wp_sur_04` y el mapa otra cosa, el camión se movería
-# hacia un waypoint que no existe y no se vería hasta la demo.
-#
-# Las tareas y los ids de llamada sí son de aquí: no son geometría, son el guion.
+# Lo que sí es de aquí es el guion: qué unidad va a dónde y las tareas. Las rutas están
+# escritas a mano y `_check_route` las comprueba contra las carreteras del YAML.
+
+_MAQUETA = load_scenario("wildfire_ridge")
+WAYPOINTS: dict[str, tuple[float, float]] = {w.id: (w.x, w.z) for w in _MAQUETA.waypoints}
+_ROADS = {frozenset((r.a, r.b)): r.id for r in _MAQUETA.roads}
+_CIVILIANS = {c.id: c for c in _MAQUETA.civilians}
+
+
+def _declared(kind: str, wanted: str, have: set[str]) -> str:
+    if wanted not in have:
+        raise SystemExit(f"el escenario ya no declara {kind} {wanted!r}: {sorted(have)}")
+    return wanted
+
+
+def _check_route(route: list[str]) -> list[str]:
+    """La ruta solo cruza waypoints y carreteras que el YAML declara."""
+    for a, b in zip(route, route[1:]):
+        _declared("el waypoint", a, set(WAYPOINTS))
+        if frozenset((a, b)) not in _ROADS:
+            raise SystemExit(f"el escenario no tiene carretera entre {a} y {b}")
+    _declared("el waypoint", route[-1], set(WAYPOINTS))
+    return route
+
+
+_UNITS = {u.id for u in _MAQUETA.units}
+_POIS = {p.id for p in _MAQUETA.pois}
+TRUCK1 = _declared("la unidad", "unit_truck1", _UNITS)
+TRUCK2 = _declared("la unidad", "unit_truck2", _UNITS)  # se avería en el inject de t=240
+AMBULANCE = _declared("la unidad", "unit_ambulance", _UNITS)
+DRONE = _declared("la unidad", "unit_drone", _UNITS)
+PUEBLO_A = _declared("el POI", "poi_pueblo_a", _POIS)
+PUEBLO_B = _declared("el POI", "poi_pueblo_b", _POIS)
+CIV_A = _declared("el grupo", "civ_pueblo_a", set(_CIVILIANS))
+CIV_B = _declared("el grupo", "civ_pueblo_b", set(_CIVILIANS))
+
+CIV_A_COUNT = _CIVILIANS[CIV_A].count
+CIV_A_IMMOBILE = _CIVILIANS[CIV_A].immobile
+CIV_B_COUNT = _CIVILIANS[CIV_B].count
+
+# La carretera que corta el inject `road_cut` del YAML. El id es el de la propia
+# carretera (`rd_*`): es el `edge_id` que emite el sim y el que casa con `roads[].id` en
+# el mapa, así que con otro formato el corte no se dibujaría.
+ROAD_CUT = next(i.payload["edge"] for i in _MAQUETA.injects if i.type == "road_cut")
+_declared("la carretera", ROAD_CUT, set(_ROADS.values()))
+
+# El desvío sur (corto, expuesto) es el de la primera orden; el norte es el rodeo cuando
+# se corta. A Pueblo B solo se llega por `wp_sur_02`, es decir, pasando por Pueblo A.
+ROUTE_EVAC_A = _check_route(["wp_base", "wp_cruce", "wp_sur_01", "wp_sur_02", "wp_pueblo_a"])
+ROUTE_EXTINGUISH = _check_route(["wp_base", "wp_cruce", "wp_sur_01"])
+ROUTE_RECON = _check_route(["wp_base", "wp_cruce", "wp_sur_01", "wp_sur_02"])
+ROUTE_NOTIFY_B = _check_route(
+    [
+        "wp_hospital",
+        "wp_cruce",
+        "wp_nor_01",
+        "wp_nor_02",
+        "wp_pueblo_a",
+        "wp_sur_02",
+        "wp_pueblo_b",
+    ]
+)
 
 TASK_EVAC_A = "task_evac_a"
 TASK_EXTINGUISH = "task_extinguish_ridge"
@@ -309,10 +356,10 @@ def _leg(
 
 
 def _entities(sc: Scenario) -> dict[str, list[str]]:
-    """Lo que declare el escenario manda; mientras esté a `[]`, las constantes."""
+    """Las unidades y POIs que declara el escenario."""
     return {
-        "units": [u.id for u in sc.units] or [TRUCK1, TRUCK2, AMBULANCE, DRONE],
-        "pois": [p.id for p in sc.pois] or [PUEBLO_A, PUEBLO_B],
+        "units": [u.id for u in sc.units],
+        "pois": [p.id for p in sc.pois],
     }
 
 
@@ -400,7 +447,10 @@ def build(
         causes=("fire",),
     )
     policy1 = Policy(
-        rationale="Pueblo A a sotavento con dos inmóviles: evacuar antes que contener.",
+        rationale=(
+            f"Pueblo A a sotavento con {CIV_A_IMMOBILE} inmóviles: "
+            "evacuar antes que contener."
+        ),
         weights={"life_safety": 0.6, "immobile_first": 0.25, "containment": 0.15},
         hard_constraints=["no_unit_into_burning_cell", "hospital_min_coverage:1"],
         horizon_s=600,
@@ -430,14 +480,14 @@ def build(
             Assignment(
                 unit_id=TRUCK1,
                 task_id=TASK_EVAC_A,
-                route=["wp_base", "wp_sur_01", "wp_sur_02", "wp_sur_03", "wp_sur_04"],
+                route=ROUTE_EVAC_A,
                 eta_s=94.0,
                 cost=12.4,
             ),
             Assignment(
                 unit_id=TRUCK2,
                 task_id=TASK_EXTINGUISH,
-                route=["wp_base", "wp_norte_01", "wp_norte_02"],
+                route=ROUTE_EXTINGUISH,
                 eta_s=70.0,
                 cost=18.1,
             ),
@@ -445,8 +495,8 @@ def build(
         unassigned_tasks=[TASK_NOTIFY_B],
         context=PlanContext(
             assumptions=[
-                Assumption(key=f"road:{ROAD_NORTE}:open", expected=True, weight=1.0),
-                Assumption(key=f"poi:{PUEBLO_A}:immobile", expected=2, weight=0.8),
+                Assumption(key=f"road:{ROAD_CUT}:open", expected=True, weight=1.0),
+                Assumption(key=f"poi:{PUEBLO_A}:immobile", expected=CIV_A_IMMOBILE, weight=0.8),
                 Assumption(key="wind:bearing_deg", expected=wind.bearing_deg, weight=0.6),
             ],
             world_seq=8,
@@ -458,7 +508,7 @@ def build(
         8.0,
         EventType.ACTION_REQUESTED,
         ActionRequested(
-            action_id="act_0001", verb="goto", args={"unit_id": TRUCK1, "to": "wp_sur_04"}
+            action_id="act_0001", verb="goto", args={"unit_id": TRUCK1, "to": ROUTE_EVAC_A[-1]}
         ),
         "core",
         label="act1",
@@ -485,7 +535,7 @@ def build(
     tl.add(
         10.0,
         EventType.WORLD_UNIT_STATUS,
-        UnitStatusChanged(unit_id=TRUCK1, status="moving", reason="goto wp_sur_04"),
+        UnitStatusChanged(unit_id=TRUCK1, status="moving", reason=f"goto {ROUTE_EVAC_A[-1]}"),
         "sim",
         causes=("act1",),
     )
@@ -494,7 +544,7 @@ def build(
     _leg(
         tl,
         TRUCK1,
-        ["wp_base", "wp_sur_01", "wp_sur_02", "wp_sur_03", "wp_sur_04"],
+        ROUTE_EVAC_A,
         12.0,
         100.0,
         rng,
@@ -502,14 +552,14 @@ def build(
     tl.add(
         101.0,
         EventType.WORLD_UNIT_ARRIVED,
-        UnitArrived(unit_id=TRUCK1, waypoint_id="wp_sur_04"),
+        UnitArrived(unit_id=TRUCK1, waypoint_id=ROUTE_EVAC_A[-1]),
         "sim",
         label="arrived1",
     )
     tl.add(
         101.5,
         EventType.ACTION_COMPLETED,
-        ActionCompleted(action_id="act_0001", result={"waypoint_id": "wp_sur_04"}),
+        ActionCompleted(action_id="act_0001", result={"waypoint_id": ROUTE_EVAC_A[-1]}),
         "sim",
         causes=("arrived1",),
     )
@@ -520,8 +570,8 @@ def build(
         "sim",
         causes=("arrived1",),
     )
-    _leg(tl, TRUCK2, ["wp_base", "wp_norte_01", "wp_norte_02"], 12.0, 80.0, rng)
-    _leg(tl, DRONE, ["wp_base", "wp_sur_01", "wp_sur_02"], 20.0, 120.0, rng, step=12.0)
+    _leg(tl, TRUCK2, ROUTE_EXTINGUISH, 12.0, 80.0, rng)
+    _leg(tl, DRONE, ROUTE_RECON, 20.0, 120.0, rng, step=12.0)
 
     # --- 00:40 · la llamada al agente: nos dicta la orden -------------------------------------------
     call_req = CallRequest(
@@ -584,7 +634,7 @@ def build(
             facts=CallFacts(
                 location_hint="Pueblo A",
                 resolved_poi_id=PUEBLO_A,
-                people_immobile=2,
+                people_immobile=CIV_A_IMMOBILE,
                 confirmed_order=True,
                 urgency="critical",
                 confidence=0.86,
@@ -599,7 +649,7 @@ def build(
         EventType.WORLD_FACT_ASSERTED,
         FactAsserted(
             key=f"poi:{PUEBLO_A}:immobile",
-            value=2,
+            value=CIV_A_IMMOBILE,
             confidence=0.86,
             source=f"call:{CALL_OUT}",
             severity="medium",
@@ -610,14 +660,14 @@ def build(
     tl.add(
         78.0,
         EventType.WORLD_CIVILIANS_CHANGED,
-        CiviliansChanged(group_id=CIV_A, count=18, state="warned", poi_id=PUEBLO_A),
+        CiviliansChanged(group_id=CIV_A, count=CIV_A_COUNT, state="warned", poi_id=PUEBLO_A),
         "sim",
         causes=("callend",),
     )
     tl.add(
         110.0,
         EventType.WORLD_CIVILIANS_CHANGED,
-        CiviliansChanged(group_id=CIV_A, count=18, state="evacuating", poi_id=PUEBLO_A),
+        CiviliansChanged(group_id=CIV_A, count=CIV_A_COUNT, state="evacuating", poi_id=PUEBLO_A),
         "sim",
         causes=("arrived1",),
     )
@@ -629,7 +679,7 @@ def build(
         (120.0, 0.11, []),
         (160.0, 0.19, ["wind:bearing_deg"]),
         (200.0, 0.22, ["wind:bearing_deg"]),
-        (218.0, 0.41, ["wind:bearing_deg", f"road:{ROAD_NORTE}:open"]),
+        (218.0, 0.41, ["wind:bearing_deg", f"road:{ROAD_CUT}:open"]),
         (260.0, 0.12, []),
         (320.0, 0.08, []),
     ]:
@@ -660,7 +710,7 @@ def build(
     tl.add(
         211.0,
         EventType.WORLD_ROAD_CHANGED,
-        RoadChanged(edge_id=ROAD_NORTE, cut=True, cause="árbol caído"),
+        RoadChanged(edge_id=ROAD_CUT, cut=True, cause="árbol caído"),
         "sim",
         label="roadcut",
         causes=("inject_210",),
@@ -696,8 +746,8 @@ def build(
     )
     for i, (who, text) in enumerate(
         [
-            ("caller", "Soy el jefe de bomberos, estoy en el desvío norte."),
-            ("caller", "La pista norte está cortada por un árbol, no pasa nadie."),
+            ("caller", "Soy el jefe de bomberos, estoy en el desvío sur."),
+            ("caller", "La pista sur está cortada por un árbol, no pasa nadie."),
             ("agent", "Entendido, lo doy por cortado y reencaminamos."),
         ]
     ):
@@ -719,12 +769,12 @@ def build(
             ended_t=228.0,
             outcome="hung_up",
             transcript=(
-                "Jefe de bomberos: la pista norte está cortada por un árbol, "
+                "Jefe de bomberos: la pista sur está cortada por un árbol, "
                 "no pasa nadie."
             ),
             facts=CallFacts(
-                location_hint="desvío norte",
-                road_blocked=ROAD_NORTE,
+                location_hint="desvío sur",
+                road_blocked=ROAD_CUT,
                 contradicts_known=True,
                 urgency="critical",
                 confidence=0.93,
@@ -738,7 +788,7 @@ def build(
         229.0,
         EventType.WORLD_FACT_ASSERTED,
         FactAsserted(
-            key=f"road:{ROAD_NORTE}:cut",
+            key=f"road:{ROAD_CUT}:cut",
             value=True,
             confidence=0.93,
             source=f"call:{CALL_IN}",
@@ -754,8 +804,8 @@ def build(
         Violation(
             verifier="route_feasible",
             severity="hard",
-            message=f"la ruta de {AMBULANCE} cruza {ROAD_NORTE}, cortado",
-            involved=[AMBULANCE, ROAD_NORTE, TASK_NOTIFY_B],
+            message=f"la ruta de {AMBULANCE} cruza {ROAD_CUT}, cortado",
+            involved=[AMBULANCE, ROAD_CUT, TASK_NOTIFY_B],
         ),
         "core",
         label="violation",
@@ -765,7 +815,7 @@ def build(
         230.0,
         EventType.PLAN_REPLAN_STARTED,
         ReplanStarted(
-            reason="pista norte cortada, confirmado por llamada entrante",
+            reason="pista sur cortada, confirmado por la llamada del vecino",
             trigger="hard_constraint_violation",
         ),
         "core",
@@ -773,7 +823,7 @@ def build(
         causes=("violation", "div_218"),
     )
     policy2 = Policy(
-        rationale="Norte cortado y viento girado: todo por el sur y proteger el refugio.",
+        rationale="Sur cortado y viento girado: todo por el norte y proteger el refugio.",
         weights={
             "life_safety": 0.5,
             "response_time": 0.2,
@@ -782,7 +832,7 @@ def build(
         },
         hard_constraints=[
             "no_unit_into_burning_cell",
-            "no_civilian_route_through:wp_norte_02",
+            "no_civilian_route_through:wp_sur_01",
             "reserve_capability:transport:1",
         ],
         horizon_s=420,
@@ -790,7 +840,7 @@ def build(
             NotifyIntent(
                 poi_id=PUEBLO_B,
                 audience="official",
-                message_intent="aviso de corte y desvío por el sur",
+                message_intent="aviso de corte y desvío por el norte",
                 urgency="medium",
             )
         ],
@@ -812,14 +862,14 @@ def build(
             Assignment(
                 unit_id=TRUCK1,
                 task_id=TASK_EVAC_A,
-                route=["wp_sur_04"],
+                route=[ROUTE_EVAC_A[-1]],
                 eta_s=0.0,
                 cost=3.2,
             ),
             Assignment(
                 unit_id=AMBULANCE,
                 task_id=TASK_NOTIFY_B,
-                route=["wp_base", "wp_sur_01", "wp_sur_02", "wp_sur_03"],
+                route=ROUTE_NOTIFY_B,
                 eta_s=88.0,
                 cost=21.7,
             ),
@@ -827,7 +877,7 @@ def build(
         unassigned_tasks=[TASK_EXTINGUISH],  # truck2 averiado: se enseña sin cubrir
         context=PlanContext(
             assumptions=[
-                Assumption(key=f"road:{ROAD_NORTE}:open", expected=False, weight=1.0),
+                Assumption(key=f"road:{ROAD_CUT}:open", expected=False, weight=1.0),
                 Assumption(key="wind:bearing_deg", expected=90.0, weight=0.6),
             ],
             world_seq=420,
@@ -842,7 +892,7 @@ def build(
         ActionRequested(
             action_id="act_0004",
             verb="goto",
-            args={"unit_id": AMBULANCE, "to": "wp_sur_03"},
+            args={"unit_id": AMBULANCE, "to": ROUTE_NOTIFY_B[-1]},
         ),
         "core",
         label="act4",
@@ -851,14 +901,14 @@ def build(
     tl.add(
         234.0,
         EventType.WORLD_UNIT_STATUS,
-        UnitStatusChanged(unit_id=AMBULANCE, status="moving", reason="goto wp_sur_03"),
+        UnitStatusChanged(unit_id=AMBULANCE, status="moving", reason=f"goto {ROUTE_NOTIFY_B[-1]}"),
         "sim",
         causes=("act4",),
     )
     _leg(
         tl,
         AMBULANCE,
-        ["wp_base", "wp_sur_01", "wp_sur_02", "wp_sur_03"],
+        ROUTE_NOTIFY_B,
         236.0,
         320.0,
         rng,
@@ -866,14 +916,14 @@ def build(
     tl.add(
         321.0,
         EventType.WORLD_UNIT_ARRIVED,
-        UnitArrived(unit_id=AMBULANCE, waypoint_id="wp_sur_03"),
+        UnitArrived(unit_id=AMBULANCE, waypoint_id=ROUTE_NOTIFY_B[-1]),
         "sim",
         causes=("act4",),
     )
     tl.add(
         322.0,
         EventType.ACTION_COMPLETED,
-        ActionCompleted(action_id="act_0004", result={"waypoint_id": "wp_sur_03"}),
+        ActionCompleted(action_id="act_0004", result={"waypoint_id": ROUTE_NOTIFY_B[-1]}),
         "sim",
         causes=("act4",),
     )
@@ -897,7 +947,7 @@ def build(
         ActionRequested(
             action_id="act_0005",
             verb="announce",
-            args={"poi_id": PUEBLO_B, "text": "desvío por la pista sur"},
+            args={"poi_id": PUEBLO_B, "text": "desvío por el norte"},
         ),
         "core",
         label="act5",
@@ -914,7 +964,7 @@ def build(
         280.0,
         EventType.ACTION_REQUESTED,
         ActionRequested(
-            action_id="act_0006", verb="rescue", args={"group_id": CIV_A, "count": 2}
+            action_id="act_0006", verb="rescue", args={"group_id": CIV_A, "count": CIV_A_IMMOBILE}
         ),
         "core",
         label="act6",
@@ -923,7 +973,7 @@ def build(
     tl.add(
         290.0,
         EventType.ACTION_COMPLETED,
-        ActionCompleted(action_id="act_0006", result={"rescued": 2}),
+        ActionCompleted(action_id="act_0006", result={"rescued": CIV_A_IMMOBILE}),
         "sim",
         causes=("act6",),
     )
@@ -944,13 +994,13 @@ def build(
     tl.add(
         330.0,
         EventType.WORLD_CIVILIANS_CHANGED,
-        CiviliansChanged(group_id=CIV_A, count=18, state="safe", poi_id=PUEBLO_A),
+        CiviliansChanged(group_id=CIV_A, count=CIV_A_COUNT, state="safe", poi_id=PUEBLO_A),
         "sim",
     )
     tl.add(
         332.0,
         EventType.WORLD_CIVILIANS_CHANGED,
-        CiviliansChanged(group_id=CIV_B, count=6, state="warned", poi_id=PUEBLO_B),
+        CiviliansChanged(group_id=CIV_B, count=CIV_B_COUNT, state="warned", poi_id=PUEBLO_B),
         "sim",
     )
     tl.add(

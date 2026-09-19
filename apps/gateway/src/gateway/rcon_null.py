@@ -8,7 +8,7 @@ del pitch. Con esto no hay espera porque no hay intento.
 
 Lo que se conserva es la **superficie** de `RconClient` —`connect`, `close`, `send`,
 `send_many`—: `Sim` recibe esto y no nota la diferencia, y `packages/sim/**` no se toca.
-Es el mismo truco que `scenario_fallback` con la geometría: sustituir una pieza de otro
+Es el mismo truco que `score_fallback` con la puntuación: sustituir una pieza de otro
 por una mía que se comporta igual y **que dice que es ella**.
 
 Los comandos se cuentan y no se tiran en silencio: `GET /api/health` enseña cuántos

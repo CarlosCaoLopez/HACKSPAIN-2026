@@ -7,14 +7,9 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { Event, Scenario, VelaEvent } from '../types'
 
-/** La respuesta de `GET /api/scenario`: el escenario tal cual lo genera `make types`,
- *  más lo que el gateway añade para ser honesto sobre lo que es inventado. */
+/** La respuesta de `GET /api/scenario`: el escenario de P2 tal cual lo genera
+ *  `make types`, más el run al que pertenece. */
 export interface ScenarioLayer extends Scenario {
-  /** Alguna lista la ha rellenado `gateway/scenario_fallback.py` porque el YAML de P2
-   *  la tiene vacía. El mapa lo avisa en pantalla: una geometría de prueba presentada
-   *  como real se cae en cuanto alguien pregunta por el pueblo. */
-  provisional: boolean
-  provisional_lists: string[]
   of_run: string | null
 }
 

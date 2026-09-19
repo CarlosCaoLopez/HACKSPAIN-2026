@@ -69,7 +69,7 @@ export function MapPanel({
   const waypoints = useMemo(() => waypointMap(layer?.waypoints ?? []), [layer])
 
   // Un id con datos pero sin geometría conocida no se esconde: va a un carril al pie
-  // del panel. El día que el golden traiga ids distintos a los de la capa provisional,
+  // del panel. El día que el golden traiga ids distintos a los de la capa del escenario,
   // quiero verlo ahí y no descubrirlo en el pitch.
   const unlocated = useMemo(() => {
     const known = new Set(layer?.pois.map((p) => p.id))
@@ -99,17 +99,7 @@ export function MapPanel({
       title="Mapa"
       count={units.length}
       level={1}
-      note={
-        layer.provisional ? (
-          // Honestidad antes que estética: esta geometría es de prueba mientras P2 no
-          // rellene el YAML, y quien mire la pantalla tiene derecho a saberlo.
-          <span className="text-vela-warn">
-            escenario provisional ({layer.provisional_lists.join(', ')})
-          </span>
-        ) : (
-          layer.name
-        )
-      }
+      note={layer.name}
       className="relative"
     >
       <svg

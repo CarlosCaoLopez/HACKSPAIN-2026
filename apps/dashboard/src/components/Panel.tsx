@@ -2,7 +2,7 @@
 //
 // `note` y `bodyRef` se añadieron en H3 y son aditivos: `note` para que un panel diga
 // en su cabecera algo que el usuario necesita saber para interpretar lo que ve (qué
-// criterio de orden usa, si la geometría es provisional), y `bodyRef` para que el panel
+// criterio de orden usa, qué escenario dibuja), y `bodyRef` para que el panel
 // de cambios pueda decidir si hace auto-scroll o no sin sacar el scroll del marco.
 //
 // El acabado (REQ-193…200) pasa casi entero por aquí, y los tres vacíos que exporta
