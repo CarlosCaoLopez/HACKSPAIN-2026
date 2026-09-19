@@ -52,5 +52,13 @@ class Settings(BaseSettings):
     # cada acción se ejecuta dos veces y la unidad se mueve doble en la demo.
     vela_bridges: bool = False
 
+    # P4 · fuentes reales (SPEC-007): datos de APIs públicas que entran como
+    # `world.fact.asserted` con procedencia. `off` deja la demo exactamente como estaba.
+    vela_feeds: Literal["off", "live", "recorded"] = "off"
+    vela_feeds_only: str = ""  # "open_meteo,dgt,firms,aemet"; vacío = todas
+    vela_feeds_dir: str = "fixtures/feeds"  # dónde se guardan y de dónde se leen las capturas
+    firms_map_key: str = ""  # NASA FIRMS (gratis, por email). Sin ella: FIRMS `off`
+    aemet_api_key: str = ""  # AEMET OpenData (gratis, por email). Sin ella: AEMET `off`
+
 
 settings = Settings()
