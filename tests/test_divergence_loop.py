@@ -160,7 +160,7 @@ def _install_belief(monkeypatch, initial: WorldState, applied: WorldState) -> No
 async def test_initial_plan_and_actions(monkeypatch) -> None:
     calls = {"n": 0}
 
-    async def _plan(state, reason):
+    async def _plan(state, reason, rules=""):
         calls["n"] += 1
         return Policy(rationale="test")
 
@@ -191,7 +191,7 @@ async def test_initial_plan_and_actions(monkeypatch) -> None:
 async def test_no_flag_no_llm(monkeypatch) -> None:
     calls = {"n": 0}
 
-    async def _plan(state, reason):
+    async def _plan(state, reason, rules=""):
         calls["n"] += 1
         return Policy(rationale="test")
 
@@ -210,7 +210,7 @@ async def test_no_flag_no_llm(monkeypatch) -> None:
 async def test_road_cut_forces_replan(monkeypatch) -> None:
     calls = {"n": 0}
 
-    async def _plan(state, reason):
+    async def _plan(state, reason, rules=""):
         calls["n"] += 1
         return Policy(rationale="test")
 

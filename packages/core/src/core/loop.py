@@ -26,8 +26,8 @@ from contracts.events import (
 from contracts.plan import MAX_REPLAN_ROUNDS, Plan, Violation
 from contracts.scenario import Scenario
 from contracts.world import WorldState
-from core import belief, planner
-from core.divergence import divergence, should_replan
+from core import belief, memory, planner
+from core.divergence import _angular_gap, divergence, should_replan
 from core.planner import neutral_policy
 from core.solver import RoadGraph, solve
 from core.verifiers import verify
@@ -48,6 +48,7 @@ class Core:
         self.run_id = bus.current_run_id()
         self.graph = RoadGraph.from_scenario(scenario)
         self._state = belief.initial_state(self.run_id, scenario)
+        self._rules = memory.load_rules()  # memoria entre runs; vacía en el run 1
         self._plan: Plan | None = None
         self._last_actions: dict[str, str] = {}  # unit_id -> task_id ya ordenado
         self._vetoes: dict[tuple[str, str], float] = {}  # (unit, task) -> expiry t_sim
@@ -94,13 +95,17 @@ class Core:
     async def replan(self, reason: str, trigger: str, cause: Event) -> Plan:
         """Planner → solver → verifiers, máximo dos vueltas. Siempre devuelve un
         plan: a la tercera, el del solver con pesos neutros."""
+        # Recall condicional: solo las reglas cuyo trigger casa con el estado. El
+        # planner recibe únicamente esas, y sus slugs van al journal como lineage.
+        selected = memory.select(self._state, self._rules, extra=self._recall_extra())
+        fired = [r.slug for r in selected]
         await self._emit(
             EventType.PLAN_REPLAN_STARTED,
-            ReplanStarted(reason=reason, trigger=trigger),
+            ReplanStarted(reason=reason, trigger=trigger, fired_rules=fired),
             cause,
         )
 
-        policy = await planner.plan(self._state, reason)
+        policy = await planner.plan(self._state, reason, memory.render(selected))
         await self._emit(EventType.PLAN_POLICY_EMITTED, policy, cause)
 
         vetoes = self._active_vetoes()
@@ -150,6 +155,18 @@ class Core:
         # force_assignment y set_priority no se implementan en este hito: se ignoran.
 
     # --- internos ----------------------------------------------------------
+
+    def _recall_extra(self) -> dict[str, float]:
+        """Features de trigger que no salen del estado por sí solo. `wind_shift_deg`
+        es el giro del viento respecto al rumbo que el plan vigente daba por bueno;
+        sin plan aún, no hay giro que medir."""
+        if self._plan is None:
+            return {}
+        for a in self._plan.context.assumptions:
+            if a.key == "wind:bearing_deg" and isinstance(a.expected, (int, float)):
+                gap = _angular_gap(self._state.wind.bearing_deg, float(a.expected))
+                return {"wind_shift_deg": gap}
+        return {}
 
     def _active_vetoes(self) -> set[tuple[str, str]]:
         return {pair for pair, exp in self._vetoes.items() if exp > self._state.t_sim}

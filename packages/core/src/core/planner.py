@@ -157,10 +157,11 @@ async def _call(prompt: str) -> Policy:
         return neutral_policy()
 
 
-async def plan(state: WorldState, reason: str) -> Policy:
+async def plan(state: WorldState, reason: str, rules: str = "") -> Policy:
     """Una llamada, salida tipada corta. `reason` es el motivo del replan y va al
-    prompt tal cual."""
-    return await _call(render_prompt(state, reason, ""))
+    prompt tal cual. `rules` son las reglas de memoria ya seleccionadas por trigger
+    (solo las que casan con el estado), resumidas a una frase cada una."""
+    return await _call(render_prompt(state, reason, rules))
 
 
 async def replan_with_critique(state: WorldState, violations: list[Violation]) -> Policy:
