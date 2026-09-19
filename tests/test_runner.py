@@ -256,15 +256,16 @@ async def test_cortar_una_carretera_se_ve_en_el_mundo(sim):
     """El clímax necesita imagen: el jurado ve al camión girar, y tiene que ver
     también por qué. Sin esto el motivo solo existe en el dashboard."""
     await sim.inject("road_cut", {"edge": "road:wp_sur_01-wp_sur_02", "cause": "árbol caído"})
-    pintados = [c for _, c in sim.rcon.commands if "red_concrete" in c]
-    assert pintados, "el tramo cortado tiene que repintarse"
+    valla = [c for _, c in sim.rcon.commands
+             if "black_concrete" in c or "yellow_concrete" in c]
+    assert valla, "el tramo cortado tiene que repintarse a franjas"
     assert any("oak_log" in c for _, c in sim.rcon.commands), "y el árbol caído"
 
 
 async def test_el_repintado_va_por_el_carril_lento(sim):
     """D7: es decorado; no puede adelantar al `/tp` del replan."""
     await sim.inject("road_cut", {"edge": "road:wp_sur_01-wp_sur_02", "cause": "x"})
-    assert all(p == LOW for p, c in sim.rcon.commands if "red_concrete" in c)
+    assert all(p == LOW for p, c in sim.rcon.commands if "black_concrete" in c)
 
 
 # --- lo que el sim deduce por su cuenta, sin que el core se lo pida ---
@@ -293,7 +294,7 @@ async def test_pinta_un_corte_que_no_ha_disparado_el(sim):
     YAML. Por ese camino el sim solo se entera si escucha el evento."""
     await sim.apply_road_change("road:wp_sur_01-wp_sur_02", True, "por la llamada")
     assert sim.graph.is_cut("road:wp_sur_01-wp_sur_02")
-    assert any("red_concrete" in c for _, c in sim.rcon.commands)
+    assert any("black_concrete" in c for _, c in sim.rcon.commands)
 
 
 async def test_aplicar_dos_veces_el_mismo_corte_no_hace_nada(sim):
