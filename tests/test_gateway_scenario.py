@@ -20,8 +20,9 @@ from contracts.scenario import Scenario
 from gateway.main import app
 from gateway.scenarios import load_scenario
 
-FAKE = Path("fixtures/run_fake.jsonl")
-FAKE_V2 = Path("fixtures/run_fake_v2.jsonl")
+# Solo el v3: los v1 y v2 están congelados con los ids de carretera de antes del renombrado
+# a `road:wp_a-wp_b` (`fixtures/**` solo se añade) y por diseño ya no casan con el YAML.
+FAKE_V3 = Path("fixtures/run_fake_v3.jsonl")
 
 
 @pytest.fixture
@@ -61,7 +62,7 @@ def test_los_escenarios_de_p2_traen_la_geometria_completa() -> None:
             assert getattr(sc, name), f"{scenario_id}: `{name}` viene vacío"
 
 
-@pytest.mark.parametrize("fixture", [FAKE, FAKE_V2])
+@pytest.mark.parametrize("fixture", [FAKE_V3])
 def test_los_ids_del_fixture_existen_en_el_escenario(fixture: Path) -> None:
     """Una sola fuente de ids: si el fixture y el YAML se separan, el mapa miente."""
     if not fixture.exists():

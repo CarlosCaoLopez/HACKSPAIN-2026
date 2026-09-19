@@ -175,6 +175,40 @@ function describeNarrowed(ev: VelaEvent): Described {
         sentence: `${ev.payload.speaker}: ${ev.payload.text}`,
       }
 
+    // --- voz en vivo de P3 (SPEC-006 · fixture v3) ---------------------------------
+    case 'call.affect': {
+      // Lo que Humalike lee del interlocutor en mitad de la llamada. Son ambiente, no un
+      // cambio: no entra en el panel de cambios (significant.ts), pero la frase existe
+      // porque el tipo está en el catálogo y `describe` los cubre todos.
+      const emotions = ev.payload.emotions
+        .map((e) => `${EMOTION[e.type] ?? e.type} ${pct(e.intensity)}`)
+        .join(' · ')
+      return {
+        label: 'ÁNIMO',
+        tone: 'call',
+        sentence: `${ev.payload.call_id} · ${emotions || 'sin lectura'}`,
+      }
+    }
+
+    case 'call.signal.requested':
+      return {
+        label: 'SEÑAL PEDIDA',
+        tone: 'decision',
+        sentence: `${SIGNAL[ev.payload.key] ?? ev.payload.key} → ${ev.payload.call_id}`,
+      }
+
+    case 'call.signal.sent':
+      return {
+        label: 'SEÑAL ENVIADA',
+        tone: 'call',
+        // Lo que se le pidió decir al agente y cuánto tardó: es la latencia del pitch.
+        sentence: `${ev.payload.message ?? SIGNAL[ev.payload.key] ?? ev.payload.key}${
+          ev.payload.latency_ms != null
+            ? ` · ${(ev.payload.latency_ms / 1000).toFixed(1).replace('.', ',')} s`
+            : ''
+        }`,
+      }
+
     // --- acciones (las pinta el ActionLog del H4, la frase ya está aquí) --------
     case 'action.requested':
       return {
@@ -238,6 +272,21 @@ function describeNarrowed(ev: VelaEvent): Described {
     default:
       return assertNever(ev)
   }
+}
+
+/** Las emociones y señales que hoy emite P3, en castellano. Claves abiertas a propósito
+ *  (`string`, no `Literal`): el contrato las deja libres, y una desconocida se enseña tal
+ *  cual en vez de romper la fila. */
+const EMOTION: Record<string, string> = {
+  fear: 'miedo',
+  frustration: 'frustración',
+  relief: 'alivio',
+  anger: 'enfado',
+  calm: 'calma',
+}
+const SIGNAL: Record<string, string> = {
+  unit_dispatched: 'unidad en camino',
+  coach: 'consejo al agente',
 }
 
 /** Un tipo de evento nuevo en `contracts` rompe la compilación aquí. Es el objetivo. */

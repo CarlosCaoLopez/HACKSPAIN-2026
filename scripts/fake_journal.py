@@ -2,7 +2,7 @@
 
 `fixtures/run_golden.jsonl` lo graba P2 el sábado a las 13:00 y es el artefacto más
 valioso del proyecto. Hasta entonces el dashboard no tiene con qué trabajar, así que
-este script fabrica un run de seis minutos con los 26 tipos del catálogo y una cadena
+este script fabrica un run de seis minutos con los 29 tipos del catálogo y una cadena
 de `causes` completa. Media hora de trabajo que quita una dependencia entera.
 
 Reglas que cumple y por qué:
@@ -14,7 +14,11 @@ Reglas que cumple y por qué:
   un tipo de evento es un cambio libre, y una lista copiada se desincroniza en silencio.
 - **Determinista**: seed del escenario y `t_wall` derivado de `t_sim` sobre una base
   fija. Dos ejecuciones producen bytes idénticos.
-- **`fixtures/**` solo se añade.** Esto genera `run_fake.jsonl` y no toca el golden.
+- **`fixtures/**` solo se añade.** Esto genera `run_fake_v3.jsonl` y no toca el golden ni
+  los fixtures anteriores. `run_fake.jsonl` (v1) y `run_fake_v2.jsonl` se quedan como
+  están: llevan los ids de carretera de antes de que P2 los renombrara a `road:wp_a-wp_b`
+  y los tres eventos de voz que P3 añadió después, así que **ya no se pueden regenerar**
+  (el escenario de hoy no produce esos bytes) y por eso ya no hay `--variant`.
 
     uv run python scripts/fake_journal.py             # genera
     uv run python scripts/fake_journal.py --validate  # revalida lo generado
@@ -40,10 +44,12 @@ from contracts.events import (
     ActionCompleted,
     ActionFailed,
     ActionRequested,
+    CallAffect,
     CallStarted,
     CellChanged,
     CiviliansChanged,
     DivergenceReport,
+    Emotion,
     Event,
     EventType,
     FactAsserted,
@@ -55,6 +61,8 @@ from contracts.events import (
     RoadChanged,
     RunEnded,
     RunStarted,
+    SignalRequested,
+    SignalSent,
     TranscriptPartial,
     UnitArrived,
     UnitPosition,
@@ -74,14 +82,11 @@ from contracts.scenario import Scenario
 from contracts.world import Wind
 from gateway.scenarios import load_scenario
 
-OUT = {
-    # v1 es el del H2/H3 y está CONGELADO: los criterios de aceptación de las dos specs
-    # anteriores van por sus `t_sim`, y meter una escena en medio los correría todos.
-    "v1": Path("fixtures/run_fake.jsonl"),
-    # v2 añade la llamada sin respuesta con `facts=None` y el override que escala de
-    # ella. `fixtures/**` solo se añade: es otro fichero, no otra versión del mismo.
-    "v2": Path("fixtures/run_fake_v2.jsonl"),
-}
+# v1 (`run_fake.jsonl`, H2/H3) y v2 (`run_fake_v2.jsonl`, H4) están CONGELADOS: los
+# criterios de aceptación de SPEC-003 y SPEC-004 van por sus `t_sim`. `fixtures/**` solo
+# se añade, así que v3 es otro fichero: v2 + los ids de carretera de hoy + la voz en vivo
+# de P3 (`call.affect`, `call.signal.requested`, `call.signal.sent`).
+OUT = Path("fixtures/run_fake_v3.jsonl")
 SCENARIO = Path("scenarios/wildfire_ridge.yaml")
 
 RUN_ID = "run_fake_0001"
@@ -97,9 +102,9 @@ class Variation:
     que Carlos corra los doce runs el domingo de madrugada.
 
     **Los valores por defecto son los de hoy, byte a byte**: `Variation()` produce
-    exactamente `run_fake.jsonl` y `run_fake_v2.jsonl`, y `test_es_determinista` lo
-    comprueba contra los ficheros commiteados. Un fixture que se mueve sin querer corre
-    los `t_sim` contra los que están escritos los criterios del H2, el H3 y el H4.
+    exactamente `run_fake_v3.jsonl`, y `test_es_determinista` lo comprueba contra el
+    fichero commiteado. Un fixture que se mueve sin querer corre los `t_sim` contra los
+    que están escritos los criterios.
 
     Y lo que sale de aquí **se etiqueta sintético** en pantalla (`/api/runs`): un run
     fabricado por mí no puede colarse en una comparación del pitch.
@@ -183,8 +188,10 @@ CIV_A_IMMOBILE = _CIVILIANS[CIV_A].immobile
 CIV_B_COUNT = _CIVILIANS[CIV_B].count
 
 # La carretera que corta el inject `road_cut` del YAML. El id es el de la propia
-# carretera (`rd_*`): es el `edge_id` que emite el sim y el que casa con `roads[].id` en
-# el mapa, así que con otro formato el corte no se dibujaría.
+# carretera (`road:wp_a-wp_b`): es el `edge_id` que emite el sim, el que casa con
+# `roads[].id` en el mapa y —tal cual, más `:cut`— la clave de hecho que documenta
+# `interfaces.md` (`road:wp_sur_01-wp_sur_02:cut`). Por eso las claves se forman con
+# `f"{ROAD_CUT}:cut"` y no con `"road:" + ROAD_CUT + ":cut"`, que duplicaría el prefijo.
 ROAD_CUT = next(i.payload["edge"] for i in _MAQUETA.injects if i.type == "road_cut")
 _declared("la carretera", ROAD_CUT, set(_ROADS.values()))
 
@@ -211,7 +218,7 @@ TASK_NOTIFY_B = "task_notify_b"
 
 CALL_OUT = "hl_8821"  # la orden: llamamos al agente (HappyRobot) y nos la dicta
 CALL_IN = "vh_1074"  # el vecino: info del terreno, humalike · dispara el clímax
-CALL_NO_ANSWER = "hl_9002"  # la orden que no se completa · solo en el variant v2
+CALL_NO_ANSWER = "hl_9002"  # la orden que no se completa · la orden a Pueblo B que no contesta
 
 
 # --- El armazón -----------------------------------------------------------------
@@ -368,18 +375,12 @@ BASELINE = Variation()
 `test_es_determinista`: construir sin variación tiene que dar los mismos bytes."""
 
 
-def build(
-    sc: Scenario, *, variant: str = "v2", var: Variation = BASELINE
-) -> list[Event]:
+def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
     """Seis minutos de incendio, con la llamada entrante del 03:30 como clímax.
 
-    `variant="v1"` reproduce **byte a byte** `fixtures/run_fake.jsonl`, que es contra
-    lo que están escritos los criterios del H2 y del H3 (van por `t_sim`, y meter una
-    escena en medio los correría todos). `fixtures/**` solo se añade: el v2 es otro
-    fichero, no una versión nueva del mismo.
-
     `var` es el mismo guion salido mejor o peor, para los runs sintéticos del H5. Con
-    `Variation()` —el valor por defecto— no cambia ni un byte.
+    `Variation()` —el valor por defecto— produce **byte a byte**
+    `fixtures/run_fake_v3.jsonl`.
     """
     rng = random.Random(sc.seed)
     tl = Timeline()
@@ -495,7 +496,7 @@ def build(
         unassigned_tasks=[TASK_NOTIFY_B],
         context=PlanContext(
             assumptions=[
-                Assumption(key=f"road:{ROAD_CUT}:open", expected=True, weight=1.0),
+                Assumption(key=f"{ROAD_CUT}:open", expected=True, weight=1.0),
                 Assumption(key=f"poi:{PUEBLO_A}:immobile", expected=CIV_A_IMMOBILE, weight=0.8),
                 Assumption(key="wind:bearing_deg", expected=wind.bearing_deg, weight=0.6),
             ],
@@ -679,7 +680,7 @@ def build(
         (120.0, 0.11, []),
         (160.0, 0.19, ["wind:bearing_deg"]),
         (200.0, 0.22, ["wind:bearing_deg"]),
-        (218.0, 0.41, ["wind:bearing_deg", f"road:{ROAD_CUT}:open"]),
+        (218.0, 0.41, ["wind:bearing_deg", f"{ROAD_CUT}:open"]),
         (260.0, 0.12, []),
         (320.0, 0.08, []),
     ]:
@@ -758,37 +759,28 @@ def build(
             f"call:{CALL_IN}",
             causes=("inbound",),
         )
-    tl.add(
-        228.0,
-        EventType.CALL_ENDED,
-        CallResult(
-            call_id=CALL_IN,
-            task_id=None,
-            direction="inbound",
-            started_t=212.0,
-            ended_t=228.0,
-            outcome="hung_up",
-            transcript=(
-                "Jefe de bomberos: la pista sur está cortada por un árbol, "
-                "no pasa nadie."
-            ),
-            facts=CallFacts(
-                location_hint="desvío sur",
-                road_blocked=ROAD_CUT,
-                contradicts_known=True,
-                urgency="critical",
-                confidence=0.93,
-            ),
-        ),
-        f"call:{CALL_IN}",
-        label="inboundend",
-        causes=("inbound",),
-    )
+    # Humalike lee al interlocutor mientras habla (`call.affect`): miedo alto cuando cuenta
+    # lo del árbol, alivio cuando el agente le dice que ya hay unidad en camino.
+    for t, emotions, risk in [
+        (216.0, [Emotion(type="fear", intensity=0.8)], 0.45),
+        (224.0, [Emotion(type="fear", intensity=0.7), Emotion(type="frustration", intensity=0.2)], 0.3),
+        (235.0, [Emotion(type="relief", intensity=0.6)], 0.1),
+    ]:
+        tl.add(
+            t,
+            EventType.CALL_AFFECT,
+            CallAffect(call_id=CALL_IN, emotions=emotions, risk=risk),
+            "voice",
+            causes=("inbound",),
+        )
+    # El hecho llega DURANTE la llamada (el tool `report_fact` del agente), no al colgar:
+    # en el flujo de P3 el replan no espera al final de la conversación. La llamada
+    # cuelga más abajo, cuando el agente ya ha dicho la señal.
     tl.add(
         229.0,
         EventType.WORLD_FACT_ASSERTED,
         FactAsserted(
-            key=f"road:{ROAD_CUT}:cut",
+            key=f"{ROAD_CUT}:cut",
             value=True,
             confidence=0.93,
             source=f"call:{CALL_IN}",
@@ -796,7 +788,7 @@ def build(
         ),
         "voice",
         label="fact_road",
-        causes=("inboundend",),
+        causes=("inbound",),
     )
     tl.add(
         229.5,
@@ -877,7 +869,7 @@ def build(
         unassigned_tasks=[TASK_EXTINGUISH],  # truck2 averiado: se enseña sin cubrir
         context=PlanContext(
             assumptions=[
-                Assumption(key=f"road:{ROAD_CUT}:open", expected=False, weight=1.0),
+                Assumption(key=f"{ROAD_CUT}:open", expected=False, weight=1.0),
                 Assumption(key="wind:bearing_deg", expected=90.0, weight=0.6),
             ],
             world_seq=420,
@@ -904,6 +896,77 @@ def build(
         UnitStatusChanged(unit_id=AMBULANCE, status="moving", reason=f"goto {ROUTE_NOTIFY_B[-1]}"),
         "sim",
         causes=("act4",),
+    )
+    # El core pide una señal a la sesión abierta y `voice` la publica en HappyRobot: el
+    # agente se lo dice al vecino sin colgar. El replan (230-232) no esperó a nada de esto.
+    tl.add(
+        232.5,
+        EventType.CALL_SIGNAL_REQUESTED,
+        SignalRequested(
+            call_id=CALL_IN,
+            key="unit_dispatched",
+            payload={"unit": "ambulancia", "route": "desvío norte", "eta_s": 88},
+        ),
+        "core",
+        label="sigreq",
+        causes=("plan2",),
+    )
+    tl.add(
+        233.4,
+        EventType.CALL_SIGNAL_SENT,
+        SignalSent(
+            call_id=CALL_IN,
+            key="unit_dispatched",
+            signal_id="sig_0001",
+            message="La ambulancia sale por el desvío norte, llega en minuto y medio.",
+            latency_ms=900.0,
+            refined=True,
+        ),
+        "voice",
+        label="sigsent",
+        causes=("sigreq",),
+    )
+    for i, (who, text) in enumerate(
+        [
+            ("agent", "La ambulancia sale por el desvío norte, llega en minuto y medio."),
+            ("caller", "Perfecto, gracias. Aquí seguimos."),
+        ]
+    ):
+        tl.add(
+            234.0 + i * 2.5,
+            EventType.CALL_TRANSCRIPT_PARTIAL,
+            TranscriptPartial(call_id=CALL_IN, speaker=who, text=text),
+            f"call:{CALL_IN}",
+            causes=("sigsent",),
+        )
+    # Cuelga cuando ya se ha dicho todo. Al final de la llamada llega la transcripción
+    # completa y `fenic` la extrae como red de seguridad: los hechos ya estaban dados.
+    tl.add(
+        238.0,
+        EventType.CALL_ENDED,
+        CallResult(
+            call_id=CALL_IN,
+            task_id=None,
+            direction="inbound",
+            started_t=212.0,
+            ended_t=238.0,
+            outcome="hung_up",
+            transcript=(
+                "Jefe de bomberos: la pista sur está cortada por un árbol, no pasa nadie. "
+                "Agente: la ambulancia sale por el desvío norte, llega en minuto y medio. "
+                "Jefe de bomberos: perfecto, gracias."
+            ),
+            facts=CallFacts(
+                location_hint="desvío sur",
+                road_blocked=ROAD_CUT,
+                contradicts_known=True,
+                urgency="critical",
+                confidence=0.93,
+            ),
+        ),
+        f"call:{CALL_IN}",
+        label="inboundend",
+        causes=("inbound", "sigsent"),
     )
     _leg(
         tl,
@@ -1023,7 +1086,7 @@ def build(
         "core",
     )
 
-    if variant == "v2" and not var.answered:
+    if not var.answered:
         _llamada_sin_respuesta(tl)
 
     return tl.events(var.run_id)
@@ -1131,7 +1194,7 @@ def write_runs(sc: Scenario, count: int, directory: Path) -> list[Path]:
         # Con un solo run, el peor; con varios, de 0 a 1 repartido.
         quality = i / (count - 1) if count > 1 else 0.0
         var = Variation(run_id=f"run_fake_{i + 1:02d}", quality=quality)
-        events = build(sc, variant="v2", var=var)
+        events = build(sc, var=var)
         path = directory / f"{var.run_id}.jsonl"
         write(events, path)
         errors = validate(path)
@@ -1187,13 +1250,7 @@ def main() -> None:
         stream.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
 
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument(
-        "--variant",
-        choices=sorted(OUT),
-        default="v2",
-        help="v1 = el fixture congelado del H2/H3; v2 = v1 + la llamada sin respuesta",
-    )
-    ap.add_argument("--out", type=Path, default=None, help="por defecto, el del variant")
+    ap.add_argument("--out", type=Path, default=OUT, help="por defecto, el fixture v3")
     ap.add_argument("--scenario", type=Path, default=SCENARIO)
     ap.add_argument(
         "--validate",
@@ -1213,7 +1270,7 @@ def main() -> None:
         help="dónde escribir los runs de --runs. `fixtures/` no se toca nunca",
     )
     args = ap.parse_args()
-    out: Path = args.out or OUT[args.variant]
+    out: Path = args.out
 
     if args.runs:
         sc = Scenario.model_validate(
@@ -1236,7 +1293,7 @@ def main() -> None:
 
     sc = Scenario.model_validate(yaml.safe_load(args.scenario.read_text(encoding="utf-8")))
     ents = _entities(sc)
-    events = build(sc, variant=args.variant)
+    events = build(sc)
     write(events, out)
     errors = validate(out)
     for e in errors:
@@ -1248,7 +1305,6 @@ def main() -> None:
         json.dumps(
             {
                 "out": str(out),
-                "variant": args.variant,
                 "events": len(events),
                 "types": types,
                 "t_sim": events[-1].t_sim,

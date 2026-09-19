@@ -27,7 +27,7 @@ from gateway import main as gateway_main
 from gateway import score_fallback
 from gateway.scenarios import load_scenario
 
-FIXTURE = Path("fixtures/run_fake_v2.jsonl")
+FIXTURE = Path("fixtures/run_fake_v3.jsonl")
 
 pytestmark = pytest.mark.skipif(
     not FIXTURE.exists(),
@@ -148,7 +148,11 @@ def test_las_llamadas_sin_resolver_se_dicen() -> None:
     fallo, y por eso viaja como nota hasta la pantalla."""
     counted = score_fallback.count(FIXTURE)
     assert any("sin orden que descienda" in n for n in counted.notes)
-    assert counted.score.mean_hangup_to_turn_s is not None
+    # En el v3 la llamada del vecino cuelga DESPUÉS de que el replan ya dio órdenes (el
+    # hecho llega durante la llamada, flujo de P3): no hay ninguna orden que descienda de
+    # un colgar, y «colgar → giro» sale `None` por construcción. Es un dato, no un fallo:
+    # la métrica del pitch pasa a ser hecho → señal enviada (`latency_ms`), no esta.
+    assert counted.score.mean_hangup_to_turn_s is None
 
 
 # --- lo que no puede romper ----------------------------------------------------------
@@ -200,10 +204,29 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         yield c
 
 
-def test_api_runs_marca_provisional_y_sintetico(client: TestClient) -> None:
+def test_api_runs_lo_puntua_journal_score_y_marca_sintetico(client: TestClient) -> None:
+    """Con `journal.score` implementado (P1), puntúa él y el run NO es provisional."""
     (run,) = client.get("/api/runs").json()
-    assert run["provisional"] is True  # lo ha contado el gateway, no P1
+    assert run["provisional"] is False  # lo ha puntuado P1, no lo ha contado el gateway
     assert run["synthetic"] is True  # `run_fake*`: no puede colarse en el pitch
     assert run["incomplete"] is False
+    assert run["score"]["total"] == 0.78
+    assert run["score"]["replans"] == 2
+
+
+def test_api_runs_cae_a_provisional_si_score_no_tiene_cuerpo(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """La degradación explícita sigue funcionando: si `journal.score` vuelve a no tener
+    cuerpo, cuenta el gateway y lo dice en pantalla. Era el comportamiento de antes de que
+    P1 lo implementara y sigue siendo el plan B."""
+    import journal
+
+    def sin_cuerpo(path: Path):
+        raise NotImplementedError
+
+    monkeypatch.setattr(journal, "score", sin_cuerpo)
+    (run,) = client.get("/api/runs").json()
+    assert run["provisional"] is True
     assert run["score"]["total"] is None
     assert run["score"]["replans"] == 2

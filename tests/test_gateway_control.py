@@ -114,7 +114,10 @@ def test_override_publicado_trae_su_seq(dev_client: TestClient) -> None:
     before = dev_client.get("/api/health").json()["last_seq"]
     body = dev_client.post("/control/override", json=VETO).json()
     assert body["published"] is True and body["echo"] is False
-    assert body["seq"] == before + 1
+    # El `seq` lo sella el bus (contador propio), no `hub.last_seq + 1`: lo que importa es
+    # que sea el de la fila que llega al chorro, no que sea el siguiente de un contador que
+    # solo ve lo que el hub ya ha recibido.
+    assert body["seq"] > before
     assert dev_client.get("/api/health").json()["last_seq"] == body["seq"]
 
 

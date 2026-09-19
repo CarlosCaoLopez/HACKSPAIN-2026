@@ -22,6 +22,10 @@ const SIGNIFICANT: ReadonlySet<EventType> = new Set<EventType>([
   'world.civilians.changed',
   'call.started',
   'call.ended',
+  // La señal del core al agente en vivo es un cambio con causa (cuelga del plan) y es la
+  // latencia del pitch. `call.affect` NO entra: es ambiente, tres por llamada.
+  'call.signal.requested',
+  'call.signal.sent',
   'human.override',
   'action.failed',
   'run.started',
