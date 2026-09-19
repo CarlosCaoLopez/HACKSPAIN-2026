@@ -17,8 +17,11 @@ apps/dashboard/src/types.ts
 runs/*
 !runs/.gitkeep
 
-# El mundo construido a mano SÍ se commitea (infra/server/world/), el resto no.
-# Hasta H1 lo que hay en world/ es terreno generado al azar: NO commitear todavía.
+# El mundo NO se versiona: se genera. `make world` lo reconstruye entero desde
+# scenarios/*.yaml en unos segundos, así que la fuente de verdad es ese texto y no
+# 34 MB de ficheros de región binarios que además cambian en cada arranque del
+# servidor — seis de ellos sin tocar nada — y que cuatro personas no podrían
+# fusionar. El backbone pedía commitearlo; medido, no es viable.
 infra/server/logs/
 infra/server/cache/
 infra/server/*.jar
@@ -41,6 +44,7 @@ infra/server/help.yml
 infra/server/permissions.yml
 infra/server/version_history.json
 # La demo es un valle en el overworld. Estos dos no se usan jamás.
+infra/server/world/
 infra/server/world_nether/
 infra/server/world_the_end/
 
