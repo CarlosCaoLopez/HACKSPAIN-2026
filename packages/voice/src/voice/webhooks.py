@@ -70,6 +70,44 @@ def ack_draft(
     return ", ".join(parts) + ". Estoy avisando a los equipos, no cuelgue."
 
 
+def telegram_bot() -> str | None:
+    """El bot al que el vecino puede mandar su ubicación, sin `@`, o None si el canal
+    no está configurado (`TELEGRAM_BOT_USERNAME` vacío o `VELA_NO_TELEGRAM`)."""
+    if settings.vela_no_telegram:
+        return None
+    name = settings.telegram_bot_username.strip().lstrip("@")
+    return name or None
+
+
+def telegram_hint(bot: str) -> str:
+    """La frase que cierra el hueco de `location_hint` por otro canal: la voz da el
+    *qué*, Telegram da el *dónde* exacto (use_cases, beats 3:50 y 4:25)."""
+    return (
+        f"Si tiene Telegram, mande su ubicación al bot @{bot} "
+        "y sabremos exactamente dónde está."
+    )
+
+
+def needs_telegram(resolved_poi_id: str | None) -> bool:
+    """Cuando la llamada no ha podido ubicar al vecino contra el escenario: sin
+    `location_hint`, o con uno que no resuelve (o resuelve por debajo del umbral de
+    percepción, que es lo mismo: `resolved_poi_id` queda a None)."""
+    return resolved_poi_id is None
+
+
+def with_telegram_hint(draft: str, bot: str | None, hint: bool) -> str:
+    return f"{draft} {telegram_hint(bot)}" if hint and bot else draft
+
+
+def ensure_bot_mentioned(message: str, bot: str | None, hint: bool) -> str:
+    """Humalike refina el tono, no los datos: si el refinado se ha comido el `@bot`,
+    la frase se vuelve a añadir tal cual. Sin el nombre del bot la indicación no sirve
+    de nada."""
+    if hint and bot and f"@{bot}" not in message:
+        return f"{message.rstrip()} {telegram_hint(bot)}"
+    return message
+
+
 @router.post("/happyrobot/fact")
 async def happyrobot_fact(
     request: Request, x_vela_token: str = Header(default="")
@@ -137,15 +175,19 @@ async def _fact_by_jev(mon: humanlike.ConversationMonitor, params: dict) -> dict
     cf = mon.perception.call_facts()
     n = mon.perception.facts_published
     road = pois.road_label(cf.road_blocked) if cf.road_blocked else None
-    message, got_plan = await _ack(
-        mon, ack_draft(cf.location_hint, road, cf.people_immobile), t0, n
+    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id)
+    draft = with_telegram_hint(
+        ack_draft(cf.location_hint, road, cf.people_immobile), bot, hint
     )
+    message, got_plan = await _ack(mon, draft, t0, n)
     return {
         "ack": True,
         "resolved_poi_name": cf.location_hint,
-        "message": message,
+        "message": ensure_bot_mentioned(message, bot, hint),
         "facts_published": n,
         "plan_included": got_plan,
+        "telegram_hint": bool(hint and bot),
+        "telegram_bot": bot,
     }
 
 
@@ -171,15 +213,19 @@ async def _fact_without_jev(
         mon.add_turn("user", _pseudo_turn(cf))
     edge = pois.resolve_edge_local(cf.road_blocked)
     road = pois.road_label(edge) if edge else None
-    message, got_plan = await _ack(
-        mon, ack_draft(name, road, cf.people_immobile, cf.injuries), t0, len(facts)
+    bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id)
+    draft = with_telegram_hint(
+        ack_draft(name, road, cf.people_immobile, cf.injuries), bot, hint
     )
+    message, got_plan = await _ack(mon, draft, t0, len(facts))
     return {
         "ack": True,
         "resolved_poi_name": name,
-        "message": message,
+        "message": ensure_bot_mentioned(message, bot, hint),
         "facts_published": len(facts),
         "plan_included": got_plan,
+        "telegram_hint": bool(hint and bot),
+        "telegram_bot": bot,
     }
 
 

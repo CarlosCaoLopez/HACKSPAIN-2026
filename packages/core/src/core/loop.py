@@ -57,6 +57,10 @@ RESOLVE_GAP_S = 5.0
 """Tareas que van hacia personas: las únicas que se cuentan como "ya va" por teléfono."""
 
 
+RESCUES: frozenset[str] = frozenset({"evacuate", "rescue"})
+"""Tareas cuya llegada mueve gente. Espejo de `tasks.ARRIVAL_CLOSES`: lo que se
+cierra al llegar es también lo que hay que ejecutar al llegar."""
+
 SUBSCRIBED: tuple[EventType, ...] = tuple(
     t for t in EventType if t.value.startswith("world.")
 ) + (EventType.CALL_ENDED, EventType.HUMAN_OVERRIDE)
@@ -115,7 +119,9 @@ class Core:
 
         self._state = belief.apply(self._state, ev)
         self._purge_vetoes()
+        before = self._state.tasks
         changed = await self._sync_tasks(ev)
+        await self._emit_rescue(changed, ev)
 
         # Plan inicial: en cuanto hay tareas abiertas y aún no hay plan.
         if self._plan is None:
@@ -149,7 +155,7 @@ class Core:
             self._pending_resolve = []
         elif changed:
             self._pending_resolve.extend(changed)
-            if self._resolve_due(changed):
+            if self._resolve_due(changed, before):
                 await self.resolve(self._pending_resolve, ev)
                 self._pending_resolve = []
                 self._last_resolve_t = self._state.t_sim
@@ -157,12 +163,19 @@ class Core:
     def _same_burst(self, ev: Event) -> bool:
         return self._burst == (ev.source, self._state.t_sim)
 
-    def _resolve_due(self, changed: list[Task]) -> bool:
-        """Cada celda que prende es una tarea `extinguish` nueva: re-resolver por cada
-        una era un plan por segundo (141 en 142 s de sim). Las altas de extinción se
-        agrupan y se resuelven cada `RESOLVE_GAP_S`; un cierre, una tarea hacia
-        personas o el primer alta tras un silencio van al momento."""
-        urgent = any(t.done or t.kind in PEOPLE_TASKS for t in changed)
+    def _resolve_due(self, changed: list[Task], before: dict[str, Task]) -> bool:
+        """Re-resolver por cada tarea que cambia era un plan por segundo (141 en
+        142 s de sim cuando había una tarea por celda). Los cambios de extinción (un
+        frente que nace o mueve su celda objetivo) se agrupan y se resuelven cada
+        `RESOLVE_GAP_S`; un cierre, una tarea hacia personas, un frente que sube a
+        `critical` (`before` es lo que había antes de sincronizar) o el primer cambio
+        tras un silencio van al momento."""
+        urgent = any(
+            t.done
+            or t.kind in PEOPLE_TASKS
+            or (t.severity == "critical" and _severity_before(before, t) != "critical")
+            for t in changed
+        )
         return urgent or self._state.t_sim - self._last_resolve_t >= RESOLVE_GAP_S
 
     async def replan(self, reason: str, trigger: str, cause: Event) -> Plan:
@@ -329,13 +342,17 @@ class Core:
         await self._emit_awaited_signals(plan)
 
     async def _emit_actions(self, plan: Plan, cause: Event) -> None:
-        """Un `goto` por asignación nueva o cambiada: cambia la tarea **o la ruta**.
-        Diffear evita reenviar la misma orden en cada replan; pero una arista cortada
-        por un hecho de llamada cambia la ruta sin cambiar la tarea, y sin reenviar
-        el `goto` el sim sigue por la pista cortada (visto en la integración 1)."""
+        """Un `goto` por asignación con ruta nueva. Diffear evita reenviar la misma
+        orden en cada replan; pero una arista cortada por un hecho de llamada cambia
+        la ruta sin cambiar la tarea, y sin reenviar el `goto` el sim sigue por la
+        pista cortada (visto en la integración 1). Una ruta que es un sufijo de la ya
+        ordenada (la unidad avanza por ella, o dos frentes se atacan desde el mismo
+        waypoint) no se reenvía: cada `goto` repetido ponía al camión `moving` un
+        segundo y le cortaba el sofocado."""
         current = {a.unit_id: (a.task_id, tuple(a.route)) for a in plan.assignments}
         for a in plan.assignments:
-            if self._last_actions.get(a.unit_id) == current[a.unit_id]:
+            last = self._last_actions.get(a.unit_id)
+            if last is not None and _same_way(last[1], current[a.unit_id][1]):
                 continue
             self._action_seq += 1
             await self._emit(
@@ -348,6 +365,47 @@ class Core:
                 cause,
             )
         self._last_actions = current
+
+    async def _emit_rescue(self, changed: list[Task], cause: Event) -> None:
+        """Llegar a un POI cierra su evacuación; mover a la gente es otra cosa.
+
+        `sim.execute` acepta cuatro verbos y el core solo pedía `goto`, así que
+        `rescue` no se ejecutaba nunca: la demo cantaba "Pueblo B evacuado" en el
+        minuto 5 con los aldeanos plantados donde estaban, que es justo lo que un
+        jurado mirando el mundo —y no el dashboard— nota. Y la condición de
+        `tasks.py` de cerrar una evacuación "cuando todos sus grupos están `safe`"
+        no podía cumplirse jamás, porque solo ese verbo pone un grupo a `safe`.
+
+        Se emite con la llegada, no con el plan: es la consecuencia de que una
+        unidad esté ya en el sitio, no una asignación nueva.
+        """
+        if cause.type != EventType.WORLD_UNIT_ARRIVED:
+            return
+        shelter = next(
+            (p.id for p in self._state.pois.values() if p.kind == "shelter"), None
+        )
+        if shelter is None:
+            return
+        for task in changed:
+            if not task.done or task.kind not in RESCUES or task.target_poi is None:
+                continue
+            groups = sorted(
+                g.id
+                for g in self._state.civilians.values()
+                if g.poi_id == task.target_poi and g.state != "safe"
+            )
+            if not groups:
+                continue
+            self._action_seq += 1
+            await self._emit(
+                EventType.ACTION_REQUESTED,
+                ActionRequested(
+                    action_id=f"act_{self.run_id}_{self._action_seq}",
+                    verb="rescue",
+                    args={"civ_ids": groups, "shelter_id": shelter},
+                ),
+                cause,
+            )
 
     async def _emit_calls(self, plan: Plan, cause: Event) -> None:
         """Una orden de evacuación (`call.requested`) por tarea `evacuate` recién
@@ -475,6 +533,16 @@ class Core:
         )
         await self.bus.publish(ev)
         return ev
+
+
+def _same_way(ordered: tuple[str, ...], route: tuple[str, ...]) -> bool:
+    """¿`route` es la ruta ya ordenada o un tramo final de ella?"""
+    return len(route) <= len(ordered) and ordered[len(ordered) - len(route) :] == route
+
+
+def _severity_before(before: dict[str, Task], task: Task) -> str | None:
+    prev = before.get(task.id)
+    return prev.severity if prev is not None else None
 
 
 def _poi_of_key(key: str) -> str | None:

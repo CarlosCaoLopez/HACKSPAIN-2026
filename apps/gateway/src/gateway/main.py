@@ -54,8 +54,10 @@ from gateway.ws import router as ws_router
 
 try:  # P3 puede tener el paquete a medias el viernes por la noche
     from voice import router as voice_router
+    from voice.telegram import router as telegram_router
 except Exception:  # noqa: BLE001 — sin telefonía se arranca igual
     voice_router = None  # type: ignore[assignment]
+    telegram_router = None  # type: ignore[assignment]
 
 log = logging.getLogger("vela.gateway")
 
@@ -147,6 +149,15 @@ def _check_voice(rt: Runtime) -> None:
 
         if "voice-signals" not in rt.tasks:
             rt.spawn("voice-signals", humanlike.signal_dispatcher())
+    with rt.guard("voice"):
+        # El segundo canal del reporte ciudadano: las señales de un chat `tg_*` van por
+        # `sendMessage`, no por HappyRobot. Sin token el canal se anota y no manda.
+        from voice import telegram
+
+        if "voice-telegram" not in rt.tasks:
+            rt.spawn("voice-telegram", telegram.signal_dispatcher())
+        if not settings.telegram_bot_token or settings.vela_no_telegram:
+            rt.notes["telegram"] = "sin token: el bot no contesta (canal ausente)"
 
 
 async def _shutdown(rt: Runtime) -> None:
@@ -160,7 +171,7 @@ async def _shutdown(rt: Runtime) -> None:
         with contextlib.suppress(Exception):
             await stop_run(rt)
 
-    await rt.stop_tasks("feeds", "voice-signals", "voice", "bridges", "core")
+    await rt.stop_tasks("feeds", "voice-telegram", "voice-signals", "voice", "bridges", "core")
     if rt.sim is not None:
         with contextlib.suppress(Exception):
             await asyncio.wait_for(rt.sim.stop(), timeout=SHUTDOWN_GRACE_S)
@@ -304,8 +315,14 @@ def _load_voice_scenario(rt: Runtime, scenario_id: str) -> None:
             rt.notes["voice-pois"] = f"{len(pois.pois())} POIs de {path}"
         else:
             scenario = load_scenario(scenario_id)
-            pois.set_scenario(scenario.pois, scenario.roads)
+            pois.set_scenario(scenario.pois, scenario.roads, geo=scenario.geo)
             rt.notes["voice-pois"] = f"{len(scenario.pois)} POIs del Scenario, sin alias"
+        # `geo` es lo que proyecta un pin de Telegram al mundo; sin él se anota.
+        rt.notes["voice-geo"] = (
+            "anclaje geo cargado"
+            if pois.geo()
+            else "sin `geo`: los pines no se proyectan"
+        )
         if not _voice_warmed:
             _voice_warmed = True
             voice.warmup()
@@ -380,11 +397,25 @@ def _close_journal(rt: Runtime) -> None:
 # --- La app ----------------------------------------------------------------------
 
 app = FastAPI(title="vela", lifespan=lifespan)
+
+TELEGRAM_WEBHOOK_PATH = "/webhooks/telegram"
+"""Telegram no puede mandar `X-Vela-Token`: esa ruta trae su propio secreto
+(`X-Telegram-Bot-Api-Secret-Token`) y lo comprueba `voice.telegram`."""
+
+
+async def _webhook_guard(request: Request, call_next):
+    if request.url.path == TELEGRAM_WEBHOOK_PATH:
+        return await call_next(request)
+    return await webhook_token_guard(request, call_next)
+
+
 # Antes de montar nada: `/webhooks/*` es lo único que ve internet (va por un túnel) y
 # el token se comprueba desde aquí, sin entrar en el router de P3.
-app.middleware("http")(webhook_token_guard)
+app.middleware("http")(_webhook_guard)
 if voice_router is not None:
     app.include_router(voice_router)
+if telegram_router is not None:
+    app.include_router(telegram_router, prefix="/webhooks")  # POST /webhooks/telegram
 app.include_router(control_router)
 app.include_router(ws_router)
 
@@ -553,7 +584,9 @@ async def get_runs(rt: Rt) -> list[dict]:
             item["score"] = score(path).model_dump(mode="json")
             item["partial"] = False
         except (ImportError, NotImplementedError):
-            rt.notes["score"] = "journal.score no disponible: cuenta el gateway (provisional)"
+            rt.notes["score"] = (
+                "journal.score no disponible: cuenta el gateway (provisional)"
+            )
             _count_here(item, path)
         except Exception as exc:  # noqa: BLE001
             # Un journal a medias es la norma: cada Ctrl-C deja uno. `journal.score` no

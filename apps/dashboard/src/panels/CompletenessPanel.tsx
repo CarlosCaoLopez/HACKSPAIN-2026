@@ -7,7 +7,14 @@
 // - **sólido** (`observed`): lo dijo quien llama y Jev lo eligió con confianza sobre el umbral.
 // - **gris cursiva** (`assumed_default`): no dio tiempo a preguntar y el LLM lo rellenó.
 //   Es una hipótesis que el sistema intenta falsar, NO un hecho: nunca se pinta sólido.
+//
+// Hay una cuarta vía, y es el beat 4:25: `location_hint` se queda gris porque el vecino
+// no sabe decir dónde está, y se pone **sólido** cuando llega el pin de Telegram anclado
+// a un POI (o un `poi:<id>:confirmed` observado). No lo pone Jev: lo pone `calls.ts`
+// (`Call.located`) y aquí se pinta con su procedencia («· Telegram») para que nadie
+// confunda un pin con una respuesta de la llamada.
 import type { CallCompleteness, FieldCompleteness } from '../types'
+import type { Located } from '../story/calls'
 import { pct, shortId } from '../story/format'
 
 const LABEL: Record<string, string> = {
@@ -56,12 +63,44 @@ function suffix(field: FieldCompleteness): string {
   }
 }
 
-export function CompletenessPanel({ completeness }: { completeness: CallCompleteness }) {
-  const { fields, budget_s, elapsed_s } = completeness
+/** Los campos de Jev con el hueco de ubicación cerrado desde fuera, si procede. Un
+ *  `observed` de Jev gana: lo dijo el vecino y se eligió con confianza; el pin solo
+ *  rellena lo que la voz dejó abierto. Sin vector de Jev (un chat de Telegram no pasa
+ *  por Jev), la ubicación es el único campo que hay, y se pinta igual. */
+function withLocated(fields: FieldCompleteness[], located: Located | null): FieldCompleteness[] {
+  if (!located) return fields
+  const solid: FieldCompleteness = {
+    key: 'location_hint',
+    status: 'observed',
+    value: located.poiId,
+    confidence: null,
+  }
+  const idx = fields.findIndex((f) => f.key === 'location_hint')
+  if (idx === -1) return [solid, ...fields]
+  if (fields[idx]!.status === 'observed') return fields
+  return fields.map((f, i) => (i === idx ? solid : f))
+}
+
+const VIA: Record<Located['via'], string> = { telegram: 'Telegram', fact: 'confirmado' }
+
+export function CompletenessPanel({
+  completeness,
+  located = null,
+}: {
+  completeness: CallCompleteness | null
+  located?: Located | null
+}) {
+  if (!completeness && !located) return null
+  const budget_s = completeness?.budget_s ?? null
+  const elapsed_s = completeness?.elapsed_s ?? 0
+  const fields = withLocated(completeness?.fields ?? [], located)
   const open = fields.filter((f) => f.status === 'open' || f.status === 'asked').length
   // Verde solo si todo lo dijo quien llama (REQ-321): un campo asumido no es «completa».
   const complete = fields.length > 0 && fields.every((f) => f.status === 'observed')
   const ratio = budget_s ? Math.min(1, elapsed_s / budget_s) : 0
+  // Qué chip viene del pin y no de Jev: solo si el pin fue quien lo puso en sólido.
+  const viaPin =
+    located && !completeness?.fields.some((f) => f.key === 'location_hint' && f.status === 'observed')
 
   return (
     <div className="mt-1.5 text-sm" aria-label="Completitud de la llamada">
@@ -76,7 +115,9 @@ export function CompletenessPanel({ completeness }: { completeness: CallComplete
           >
             <span className="opacity-80">{LABEL[field.key] ?? field.key}</span>
             {field.value ? `: ${shown(field)}` : ''}
-            {suffix(field)}
+            {field.key === 'location_hint' && viaPin && located
+              ? ` · ${VIA[located.via]}`
+              : suffix(field)}
           </li>
         ))}
       </ul>

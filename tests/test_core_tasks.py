@@ -158,7 +158,7 @@ async def test_ignition_creates_extinguish_and_evacuate(journal, fixed_planner) 
     await _ignite(core)
 
     st = core.state()
-    ext = st.tasks["task_ext_cell_5_0"]
+    ext = st.tasks["task_front_5_0"]
     assert ext.kind == "extinguish" and ext.target_cell == "cell_5_0"
     assert ext.required_capability == "extinguish" and not ext.done
     evac = st.tasks["task_evac_poi_pueblo_a"]
@@ -169,13 +169,13 @@ async def test_ignition_creates_extinguish_and_evacuate(journal, fixed_planner) 
 
     # Las tareas están en el journal, antes del plan, y el plan inicial salió.
     seen = _tasks_in(journal)
-    assert set(seen) == {"task_ext_cell_5_0", "task_evac_poi_pueblo_a"}
+    assert set(seen) == {"task_front_5_0", "task_evac_poi_pueblo_a"}
     types = [e.type for e in journal]
     assert types.index(EventType.TASK_CHANGED) < types.index(EventType.PLAN_EMITTED)
     assert fixed_planner["n"] == 1
     assigned = {a.task_id: a.unit_id for a in core.current_plan().assignments}
     assert assigned == {
-        "task_ext_cell_5_0": "unit_truck2",
+        "task_front_5_0": "unit_truck2",
         "task_evac_poi_pueblo_a": "unit_ambulance",
     }
     gotos = [
@@ -190,34 +190,44 @@ async def test_cell_changed_dedupes_and_burnt_closes(journal, fixed_planner) -> 
     await _ignite(core)
     n_before = len(_of(journal, EventType.TASK_CHANGED))
 
-    # La misma celda vuelve a llegar como `burning`: no nace otra tarea.
-    ev = _ev(
-        EventType.WORLD_CELL_CHANGED,
-        {"cell_id": "cell_5_0", "state": "burning", "hazard": "wildfire"},
-        t_sim=10.0,
-    )
-    await bus.publish(ev)
-    await core.on_event(ev)
+    # La misma celda vuelve a llegar como `burning`: no nace otra tarea. Una vecina
+    # que prende tampoco: es el mismo frente, y `at_risk` no es fuego.
+    for cell, state, t in (
+        ("cell_5_0", "burning", 10.0),
+        ("cell_6_0", "burning", 12.0),
+        ("cell_7_0", "at_risk", 14.0),
+    ):
+        ev = _ev(
+            EventType.WORLD_CELL_CHANGED,
+            {"cell_id": cell, "state": state, "hazard": "wildfire"},
+            t_sim=t,
+        )
+        await bus.publish(ev)
+        await core.on_event(ev)
     assert len(_of(journal, EventType.TASK_CHANGED)) == n_before
+    assert [t.id for t in core.state().tasks.values() if t.kind == "extinguish"] == [
+        "task_front_5_0"
+    ]
 
-    # Una celda `at_risk` nueva: tarea media. Se quema: se cierra.
+    # Una celda suelta lejos del frente es otro frente. Se quema: se cierra.
     ev = _ev(
         EventType.WORLD_CELL_CHANGED,
-        {"cell_id": "cell_6_0", "state": "at_risk", "hazard": "wildfire"},
+        {"cell_id": "cell_5_10", "state": "burning", "hazard": "wildfire"},
         t_sim=20.0,
     )
     await bus.publish(ev)
     await core.on_event(ev)
-    assert core.state().tasks["task_ext_cell_6_0"].severity == "medium"
+    assert core.state().tasks["task_front_5_10"].done is False
     ev = _ev(
         EventType.WORLD_CELL_CHANGED,
-        {"cell_id": "cell_6_0", "state": "burnt", "hazard": "wildfire"},
+        {"cell_id": "cell_5_10", "state": "burnt", "hazard": "wildfire"},
         t_sim=30.0,
     )
     await bus.publish(ev)
     await core.on_event(ev)
-    assert core.state().tasks["task_ext_cell_6_0"].done is True
-    assert _tasks_in(journal)["task_ext_cell_6_0"]["done"] is True
+    assert core.state().tasks["task_front_5_10"].done is True
+    assert _tasks_in(journal)["task_front_5_10"]["done"] is True
+    assert core.state().tasks["task_front_5_0"].done is False
     # Nada de esto llamó al modelo: solo el plan inicial.
     assert fixed_planner["n"] == 1
 
@@ -283,7 +293,7 @@ async def test_unit_arrival_marks_done(journal, fixed_planner) -> None:
     await bus.publish(ev)
     await core.on_event(ev)
     assert core.state().tasks["task_evac_poi_pueblo_a"].done is True
-    assert core.state().tasks["task_ext_cell_5_0"].done is False
+    assert core.state().tasks["task_front_5_0"].done is False
     assert _tasks_in(journal)["task_evac_poi_pueblo_a"]["done"] is True
     # Se replanificó solo con el solver (sin modelo) y la ambulancia queda libre.
     assert fixed_planner["n"] == 1
@@ -427,7 +437,7 @@ def test_sync_is_pure_and_idempotent() -> None:
         _ev(EventType.WORLD_FIRE_DETECTED, {"cell_id": "cell_5_0", "hazard": "wildfire"}),
     )
     first = tasks.sync(ignited, graph)
-    assert [t.id for t in first] == ["task_ext_cell_5_0", "task_evac_poi_pueblo_a"]
+    assert [t.id for t in first] == ["task_front_5_0", "task_evac_poi_pueblo_a"]
     assert tasks.sync(ignited, graph) == first
     folded = ignited.model_copy(update={"tasks": {t.id: t for t in first}})
     assert tasks.sync(folded, graph) == []

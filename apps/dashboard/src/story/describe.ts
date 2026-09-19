@@ -8,7 +8,7 @@
 // Regla del panel: aquí no se pinta JSON. Si un payload no se puede contar en una
 // frase, es que la frase está mal pensada, no que haga falta un `<pre>`.
 import type { Event, VelaEvent } from '../types'
-import { CALL_OUTCOME, CELL_STATE, CIV_STATE, OVERRIDE_KIND, UNIT_STATUS } from './labels'
+import { CALL_OUTCOME, CELL_CAUSE, CELL_STATE, CIV_STATE, OVERRIDE_KIND, UNIT_STATUS } from './labels'
 import { factValue, pct, seconds, shortId } from './format'
 
 /** `tone` decide el color. `replan` es el ÚNICO que usa el rojo: está reservado y si
@@ -142,12 +142,23 @@ function describeNarrowed(ev: VelaEvent): Described {
         }`,
       }
 
-    case 'world.cell.changed':
+    case 'world.cell.changed': {
+      const { cell_id, state, cause } = ev.payload
+      // Una celda apagada es el efecto de una orden nuestra (un camión en alcance), no
+      // el fuego haciendo lo suyo: etiqueta propia y la causa en la frase.
+      if (cause === 'extinguished') {
+        return {
+          label: 'CELDA APAGADA',
+          tone: 'decision',
+          sentence: `${cell_id} · ${CELL_CAUSE.extinguished}`,
+        }
+      }
       return {
         label: 'CELDA',
         tone: 'world',
-        sentence: `${ev.payload.cell_id} · ${CELL_STATE[ev.payload.state]}`,
+        sentence: `${cell_id} · ${CELL_STATE[state]}${cause ? ` · ${CELL_CAUSE[cause]}` : ''}`,
       }
+    }
 
     // --- telefonía -------------------------------------------------------------
     case 'call.requested':
@@ -157,12 +168,28 @@ function describeNarrowed(ev: VelaEvent): Described {
         sentence: `${ev.payload.intent.replace(/_/g, ' ')} a ${shortId(ev.payload.poi_id)}`,
       }
 
-    case 'call.started':
+    case 'call.started': {
+      // El canal se dice: un aviso por Telegram no es una llamada de voz, y en el
+      // pitch la diferencia es el beat entero («la voz da el qué, Telegram el dónde»).
+      const canal = ev.payload.channel === 'telegram' ? 'Telegram' : 'teléfono'
       return {
         label: ev.payload.direction === 'inbound' ? 'AVISO DEL VECINO' : 'ORDEN DEL AGENTE',
         tone: 'call',
-        sentence: `${ev.payload.call_id} · ${ev.payload.to}`,
+        sentence: `${ev.payload.call_id} · ${canal} ${ev.payload.to}`,
       }
+    }
+
+    case 'citizen.location': {
+      // El pin GPS del vecino, ya anclado (o no) a un POI por el core. `sin anclar` se
+      // dice en voz alta: un pin lejos de todo es información, no un fallo que esconder.
+      const { call_id, poi_name, text, live } = ev.payload
+      const donde = poi_name ? `ubicación anclada a ${poi_name}` : 'ubicación sin anclar'
+      return {
+        label: 'TELEGRAM',
+        tone: 'call',
+        sentence: `${call_id} · ${donde}${live ? ' · en vivo' : ''}${text ? ` · «${text}»` : ''}`,
+      }
+    }
 
     case 'call.ended': {
       const { call_id, outcome, facts, transcript } = ev.payload

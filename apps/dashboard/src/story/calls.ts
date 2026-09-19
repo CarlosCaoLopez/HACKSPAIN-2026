@@ -9,12 +9,49 @@
 //   hecho, así que no hace falta resolver `causes` para esto.
 // - **`facts: null` es un caso normal**, no un error: la extracción falla o tarda más
 //   de la cuenta. Entonces lo único que hay es lo que se dijo, y se enseña.
-import type { CallCompleteness, CallFacts, CallOutcome, Event, FactAsserted, VelaEvent } from '../types'
+//
+// Y desde el beat 4:25, un **chat de Telegram es una tarjeta más** (`call_id` `tg_<chat>`):
+// el vecino que no supo ubicarse por voz manda el pin, y el pin, el texto y el aviso
+// que se le devuelve por el bot se pintan igual que una llamada. Si el `citizen.location`
+// declara en `causes` la llamada de voz de la que viene, el pin también cierra el hueco
+// `location_hint` de ESA llamada: es el «dónde» que la voz dejó abierto.
+import type {
+  CallCompleteness,
+  CallFacts,
+  CallOutcome,
+  CallStarted,
+  CitizenLocation,
+  Event,
+  FactAsserted,
+  VelaEvent,
+} from '../types'
 import { factValue } from './format'
 
 export interface Line {
   speaker: string
   text: string
+  /** `signal`: lo que el core mandó decir (`call.signal.sent`), no lo que se transcribió. */
+  kind?: 'signal'
+}
+
+/** El pin del vecino tal cual llegó: `(x, z)` del mundo si el core lo proyectó, y el
+ *  POI al que se ancló si cayó dentro de `snap_m`. Sin `poi_id` es un pin «sin anclar». */
+export interface Pin {
+  x: number | null
+  z: number | null
+  poiId: string | null
+  poiName: string | null
+  text: string | null
+  live: boolean
+  t_sim: number
+}
+
+/** De dónde sale la ubicación cuando NO la dio Jev en la llamada: un pin de Telegram
+ *  anclado a un POI, o un hecho `poi:<id>:confirmed` observado. Solo `observed` puede
+ *  poner un hueco en sólido (invariante 8): un asumido nunca entra aquí. */
+export interface Located {
+  poiId: string
+  via: 'telegram' | 'fact'
 }
 
 export interface Ended {
@@ -30,6 +67,8 @@ export interface Call {
   seq: number
   t_sim: number
   direction: 'inbound' | 'outbound' | null
+  /** `voice` salvo que lo diga `call.started` o que la tarjeta la abra un pin de Telegram. */
+  channel: CallStarted['channel']
   to: string
   intent: string
   urgency: string
@@ -47,6 +86,12 @@ export interface Call {
   /** El último vector de completitud de Jev (`call.completeness`), o `null` si la
    *  llamada no pasó por Jev (mock, plan B). */
   completeness: CallCompleteness | null
+  /** Pins de Telegram recibidos en este chat (o colgados de esta llamada). */
+  pins: Pin[]
+  /** La ubicación que cerró el hueco de `location_hint` fuera de Jev, si la hubo. */
+  located: Located | null
+  /** La llamada de voz de la que viene este chat de Telegram, si el pin la declaró. */
+  afterCall: string | null
 }
 
 export function callCards(events: Event[]): Call[] {
@@ -54,6 +99,10 @@ export function callCards(events: Event[]): Call[] {
   // `call.requested` no trae `call_id` —la llamada aún no existe—, así que la intención
   // se guarda por `task_id` y la recoge el `call.started` que venga con ese task.
   const requested = new Map<string, { intent: string; urgency: string; poi_id: string }>()
+
+  // `seq` del `call.started` → `call_id`: es lo que permite que un `citizen.location`
+  // con `causes: [seq]` se cuelgue de la llamada de voz que lo motivó.
+  const startedAt = new Map<number, string>()
 
   const get = (callId: string, seq: number, t_sim: number): Call => {
     const existing = byId.get(callId)
@@ -63,6 +112,7 @@ export function callCards(events: Event[]): Call[] {
       seq,
       t_sim,
       direction: null,
+      channel: 'voice',
       to: '',
       intent: '',
       urgency: '',
@@ -71,9 +121,21 @@ export function callCards(events: Event[]): Call[] {
       ended: null,
       facts: [],
       completeness: null,
+      pins: [],
+      located: null,
+      afterCall: null,
     }
     byId.set(callId, fresh)
     return fresh
+  }
+
+  /** Una línea nueva, salvo que repita la última palabra por palabra: el `call.signal.sent`
+   *  y el `call.transcript.partial` del agente traen el mismo texto (uno es la orden,
+   *  el otro lo que se dijo), y en pantalla es UNA frase. */
+  const say = (call: Call, line: Line) => {
+    const last = call.lines[call.lines.length - 1]
+    if (last && last.text === line.text) return
+    call.lines.push(line)
   }
 
   for (const envelope of events) {
@@ -88,7 +150,10 @@ export function callCards(events: Event[]): Call[] {
 
       case 'call.started': {
         const call = get(ev.payload.call_id, ev.seq, ev.t_sim)
+        startedAt.set(ev.seq, ev.payload.call_id)
         call.direction = ev.payload.direction
+        // Un journal anterior al canal no trae `channel`: era voz.
+        call.channel = ev.payload.channel ?? 'voice'
         call.to = ev.payload.to
         const asked = ev.payload.task_id ? requested.get(ev.payload.task_id) : undefined
         if (asked) {
@@ -101,7 +166,46 @@ export function callCards(events: Event[]): Call[] {
 
       case 'call.transcript.partial': {
         const call = get(ev.payload.call_id, ev.seq, ev.t_sim)
-        call.lines.push({ speaker: ev.payload.speaker, text: ev.payload.text })
+        say(call, { speaker: ev.payload.speaker, text: ev.payload.text })
+        break
+      }
+
+      case 'call.signal.sent': {
+        // El aviso que el core manda decir (`unit_dispatched`…) se pinta como una línea
+        // del agente, venga por voz o por Telegram. Sin `message` no hay nada que leer.
+        if (!ev.payload.message) break
+        const call = get(ev.payload.call_id, ev.seq, ev.t_sim)
+        if (call.callId.startsWith('tg_')) {
+          call.channel = 'telegram'
+          call.direction ??= 'inbound'
+        }
+        say(call, { speaker: 'agent', text: ev.payload.message, kind: 'signal' })
+        break
+      }
+
+      case 'citizen.location': {
+        const call = get(ev.payload.call_id, ev.seq, ev.t_sim)
+        const p = ev.payload
+        call.channel = 'telegram'
+        call.direction ??= 'inbound'
+        if (!call.to) call.to = `chat ${p.chat_id}`
+        const pin = pinOf(p, ev.t_sim)
+        call.pins.push(pin)
+        if (p.text) say(call, { speaker: 'vecino', text: p.text })
+        if (p.poi_id) call.located ??= { poiId: p.poi_id, via: 'telegram' }
+        // La llamada de voz que motivó el pin (si `causes` la declara): el pin cierra
+        // también SU hueco de ubicación, que es lo que el beat 4:25 enseña.
+        for (const seq of envelope.causes ?? []) {
+          const origin = startedAt.get(seq)
+          if (!origin || origin === call.callId) continue
+          call.afterCall = origin
+          const voice = byId.get(origin)
+          if (voice) {
+            voice.pins.push(pin)
+            if (p.poi_id) voice.located ??= { poiId: p.poi_id, via: 'telegram' }
+          }
+          break
+        }
         break
       }
 
@@ -126,11 +230,21 @@ export function callCards(events: Event[]): Call[] {
       }
 
       case 'world.fact.asserted': {
-        const { source, key, value, confidence, kind } = ev.payload
-        if (!source.startsWith('call:')) break
-        const call = byId.get(source.slice('call:'.length))
+        const { source, key, value, confidence, kind, call_id } = ev.payload
+        // La procedencia va en `source` (`call:<id>`); `call_id` es el mismo dato
+        // explícito y vale como respaldo cuando el source es otro (`telegram`).
+        const id = source.startsWith('call:') ? source.slice('call:'.length) : call_id
+        const call = id ? byId.get(id) : undefined
+        if (!call) break
         // Un journal anterior a Jev no trae `kind`: eran observados.
-        if (call) call.facts.push({ key, value, confidence, kind: kind ?? 'observed' })
+        const k = kind ?? 'observed'
+        call.facts.push({ key, value, confidence, kind: k })
+        // `poi:<id>:confirmed` observado ubica al que llama en ese POI: es la otra
+        // forma de cerrar `location_hint` sin Jev. Solo observado (invariante 8).
+        const confirmed = /^poi:([^:]+):confirmed$/.exec(key)
+        if (confirmed?.[1] && k === 'observed' && value === true) {
+          call.located ??= { poiId: confirmed[1], via: 'fact' }
+        }
         break
       }
 
@@ -144,6 +258,24 @@ export function callCards(events: Event[]): Call[] {
     if (!a.ended !== !b.ended) return a.ended ? 1 : -1
     return b.seq - a.seq
   })
+}
+
+function pinOf(p: CitizenLocation, t_sim: number): Pin {
+  return {
+    x: p.x ?? null,
+    z: p.z ?? null,
+    poiId: p.poi_id ?? null,
+    poiName: p.poi_name ?? null,
+    text: p.text ?? null,
+    live: p.live,
+    t_sim,
+  }
+}
+
+/** Una llamada «en curso» es una de voz sin `call.ended`. Un chat de Telegram no cuelga
+ *  nunca, así que no cuenta: si contara, el contador diría «1 en curso» toda la demo. */
+export function inProgress(call: Call): boolean {
+  return call.ended === null && call.channel !== 'telegram'
 }
 
 /** Los campos no nulos de `CallFacts`, ya legibles. Un campo nulo no se pinta: es

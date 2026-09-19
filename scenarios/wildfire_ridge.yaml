@@ -24,6 +24,11 @@ hazard:
   origin_cell: cell_13_11 # (52,44): al suroeste del desvío sur, a 28 bloques
   cell_size: 4 # bloques por celda
   base_spread: 0.12 # celdas por minuto, isótropo
+  # Sofocar desde la carretera (sim) y alcance del frente (core). Medido el sábado: con
+  # rate 3 el fuego gana (258 quemadas a 339 s); con 4 los camiones se notan sin apagarlo
+  # antes del giro de viento; con 6 muere entero antes de los 150 s.
+  suppress_reach_m: 24
+  suppress_rate: 4
   wind:
     bearing_deg: 270 # viene del oeste, empuja hacia el este (+X)
     speed: 1.2 # celdas por minuto que suma a favor del viento
@@ -198,6 +203,8 @@ road_aliases:
   carretera del hospital: road:wp_cruce-wp_hospital
   carretera del refugio: road:wp_base-wp_refugio
   carretera de la base: road:wp_base-wp_cruce
+  "pista de pueblo b": "road:wp_sur_02-wp_pueblo_b"
+  "camino de pueblo b": "road:wp_sur_02-wp_pueblo_b"
 
 # Telegram: dónde cae un pin GPS en este valle. Un pin en Madrid (Puerta del Sol) cae en
 # Pueblo B; con `scale` 0.01 un kilómetro real son 10 m de mundo, así que cualquier pin de

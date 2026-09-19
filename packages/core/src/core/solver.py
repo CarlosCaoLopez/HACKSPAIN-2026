@@ -32,7 +32,7 @@ from contracts.plan import (
     parse_constraint,
 )
 from contracts.scenario import Scenario
-from contracts.world import POI, Cell, Task, Unit, WorldState
+from contracts.world import POI, Cell, Task, Unit, Wind, WorldState
 
 INFEASIBLE = float("inf")
 
@@ -58,12 +58,24 @@ evacuación `high` aunque esté algo más lejos."""
 Menor = el LLM manda más. El solver sigue siendo quien asigna."""
 
 
+DEFAULT_REACH_M = 24.0
+DEFAULT_BASE_SPREAD = 0.1
+"""Defaults de `HazardSpec.suppress_reach_m` y `base_spread`, para un grafo construido
+a mano (tests) sin escenario detrás."""
+
+
 class RoadGraph:
     """Copia de solo lectura del grafo de carreteras, propiedad de core.
 
     Reimplementa un Dijkstra mínimo; NO importa `sim/graph.py`. Las coordenadas de
     los waypoints salen del `Scenario` (las aristas de `WorldState.roads` no las
     traen), y los cortes vivos se refrescan con `with_cuts`.
+
+    Lleva también los dos números del peligro que hacen falta para decidir desde dónde
+    se ataca un frente: `reach_m` (hasta dónde sofoca un camión parado en un waypoint,
+    `HazardSpec.suppress_reach_m`) y `base_spread` (celdas/min sin viento, con lo que
+    se estima cuándo llega el fuego a un sitio). Van aquí y no en otro objeto porque
+    `tasks.sync(state, graph)` y el solver ya reciben el grafo y no el escenario.
     """
 
     def __init__(
@@ -72,12 +84,16 @@ class RoadGraph:
         adj: dict[str, list[tuple[str, float, str]]],
         origin: tuple[float, float] = (0.0, 0.0),
         cell_size: int = 4,
+        reach_m: float = DEFAULT_REACH_M,
+        base_spread: float = DEFAULT_BASE_SPREAD,
     ) -> None:
         # adj[a] = [(b, length_m, edge_id), ...], simétrico
         self.coords = coords
         self.adj = adj
         self.origin = origin
         self.cell_size = cell_size
+        self.reach_m = reach_m
+        self.base_spread = base_spread
 
     @classmethod
     def from_scenario(cls, scenario: Scenario) -> "RoadGraph":
@@ -90,7 +106,14 @@ class RoadGraph:
                 continue
             adj.setdefault(edge.a, []).append((edge.b, edge.length_m, edge.id))
             adj.setdefault(edge.b, []).append((edge.a, edge.length_m, edge.id))
-        return cls(coords, adj, scenario.origin, scenario.hazard.cell_size)
+        return cls(
+            coords,
+            adj,
+            scenario.origin,
+            scenario.hazard.cell_size,
+            reach_m=scenario.hazard.suppress_reach_m,
+            base_spread=scenario.hazard.base_spread,
+        )
 
     def with_cuts(self, state: WorldState) -> "RoadGraph":
         """Devuelve un grafo nuevo con los cortes vivos de `state.roads` aplicados.
@@ -102,7 +125,14 @@ class RoadGraph:
             node: [(b, length, eid) for (b, length, eid) in edges if eid not in cut_ids]
             for node, edges in self.adj.items()
         }
-        return RoadGraph(self.coords, adj, self.origin, self.cell_size)
+        return RoadGraph(
+            self.coords,
+            adj,
+            self.origin,
+            self.cell_size,
+            reach_m=self.reach_m,
+            base_spread=self.base_spread,
+        )
 
     def nearest_waypoint(self, x: float, z: float) -> str | None:
         best: str | None = None
@@ -158,6 +188,76 @@ class RoadGraph:
         cz = int((z - self.origin[1]) // self.cell_size)
         return f"cell_{cx}_{cz}"
 
+    def cell_center(self, cell: Cell) -> tuple[float, float]:
+        return (
+            self.origin[0] + (cell.cx + 0.5) * self.cell_size,
+            self.origin[1] + (cell.cz + 0.5) * self.cell_size,
+        )
+
+    def waypoint_distance(self, wp_id: str, x: float, z: float) -> float:
+        wx, wz = self.coords[wp_id]
+        return math.hypot(wx - x, wz - z)
+
+
+# --- desde dónde se ataca una celda ------------------------------------------
+
+
+def _angular_gap(a: float, b: float) -> float:
+    d = abs(a - b) % 360.0
+    return min(d, 360.0 - d)
+
+
+def bearing_deg(x: float, z: float, tx: float, tz: float) -> float:
+    """Rumbo de (x, z) a (tx, tz), 0 = norte (-z), horario, como `Wind.bearing_deg`."""
+    return math.degrees(math.atan2(tx - x, -(tz - z))) % 360.0
+
+
+def fire_eta_s(
+    x: float, z: float, tx: float, tz: float, wind: Wind, graph: RoadGraph
+) -> float:
+    """Segundos que tarda un frente en (x, z) en llegar a (tx, tz), con la misma
+    ley que el autómata del sim: `base_spread + viento · max(0, cos(ángulo))`
+    celdas/min. Es lo que dice hacia dónde va el fuego de verdad: a favor del viento
+    un pueblo a 90 m está más amenazado que otro a 60 m en contra."""
+    d = math.hypot(tx - x, tz - z)
+    if d == 0.0:
+        return 0.0
+    push = (wind.bearing_deg + 180.0) % 360.0  # el viento EMPUJA hacia aquí
+    gap = _angular_gap(bearing_deg(x, z, tx, tz), push)
+    rate = graph.base_spread + wind.speed * max(0.0, math.cos(math.radians(gap)))
+    if rate <= 0.0:
+        return INFEASIBLE
+    return d / (graph.cell_size * rate) * 60.0
+
+
+def attackable_from(x: float, z: float, graph: RoadGraph) -> str | None:
+    """El waypoint desde el que un camión parado sofoca esa celda (a ≤ `reach_m`),
+    o None: el camión solo puede estar en waypoints, así que solo ataca el fuego
+    que tiene la carretera a tiro."""
+    wp = graph.nearest_waypoint(x, z)
+    if wp is None or graph.waypoint_distance(wp, x, z) > graph.reach_m:
+        return None
+    return wp
+
+
+def intercept_waypoint(x: float, z: float, wind: Wind, graph: RoadGraph) -> str | None:
+    """El waypoint al que el fuego en (x, z) llega antes: donde un camión lo espera
+    como cortafuegos. No es el más cercano: un waypoint a barlovento a 10 m no verá
+    nunca el frente, y el que está a sotavento a 60 m sí."""
+    best: str | None = None
+    best_key: tuple[float, str] | None = None
+    for wid, (wx, wz) in graph.coords.items():
+        key = (fire_eta_s(x, z, wx, wz, wind, graph), wid)
+        if best_key is None or key < best_key:
+            best, best_key = wid, key
+    return best
+
+
+def attack_waypoint(x: float, z: float, wind: Wind, graph: RoadGraph) -> str | None:
+    """Desde dónde se trabaja la celda (x, z): su waypoint a tiro si lo hay, y si no
+    el de intercepción."""
+    return attackable_from(x, z, graph) or intercept_waypoint(x, z, wind, graph)
+
 
 def _unit_waypoint(unit: Unit, graph: RoadGraph) -> str | None:
     return graph.nearest_waypoint(unit.x, unit.z)
@@ -165,7 +265,8 @@ def _unit_waypoint(unit: Unit, graph: RoadGraph) -> str | None:
 
 def _task_waypoint(state: WorldState, task: Task, graph: RoadGraph) -> str | None:
     """Waypoint objetivo: el del POI si la tarea apunta a un POI; si apunta a una
-    celda, el waypoint más cercano al centro de esa celda."""
+    celda, desde donde se ataca esa celda (`attack_waypoint`): a tiro si se puede, y
+    si no donde el fuego va a llegar antes."""
     if task.target_poi is not None:
         poi: POI | None = state.pois.get(task.target_poi)
         return poi.waypoint_id if poi is not None else None
@@ -173,10 +274,22 @@ def _task_waypoint(state: WorldState, task: Task, graph: RoadGraph) -> str | Non
         cell: Cell | None = state.cells.get(task.target_cell)
         if cell is None:
             return None
-        cx = graph.origin[0] + (cell.cx + 0.5) * graph.cell_size
-        cz = graph.origin[1] + (cell.cz + 0.5) * graph.cell_size
-        return graph.nearest_waypoint(cx, cz)
+        cx, cz = graph.cell_center(cell)
+        return attack_waypoint(cx, cz, state.wind, graph)
     return None
+
+
+def _offroad_m(state: WorldState, task: Task, wp_id: str, graph: RoadGraph) -> float:
+    """Metros a pie del waypoint de ataque al centro de la celda objetivo. Un frente
+    a 20 m de la carretera cuesta poco más que su ruta; uno a 100 m, mucho más: el
+    camión no puede hacer nada con él salvo esperarlo."""
+    if task.target_cell is None:
+        return 0.0
+    cell = state.cells.get(task.target_cell)
+    if cell is None or wp_id not in graph.coords:
+        return 0.0
+    cx, cz = graph.cell_center(cell)
+    return graph.waypoint_distance(wp_id, cx, cz)
 
 
 def _active_units(state: WorldState) -> list[Unit]:
@@ -244,6 +357,13 @@ def cost_matrix(
     matrix: list[list[float]] = []
     routes: list[list[list[str]]] = []
 
+    # Waypoint de ataque y metros a pie por tarea, una vez y no por par.
+    task_wp = {t.id: _task_waypoint(state, t, graph) for t in tasks}
+    offroad = {
+        t.id: _offroad_m(state, t, task_wp[t.id], graph) if task_wp[t.id] else 0.0
+        for t in tasks
+    }
+
     for unit in units:
         row: list[float] = []
         row_routes: list[list[str]] = []
@@ -257,7 +377,7 @@ def cost_matrix(
                 row.append(INFEASIBLE)
                 row_routes.append([])
                 continue
-            t_wp = _task_waypoint(state, task, graph)
+            t_wp = task_wp[task.id]
             route = graph.shortest_path(u_wp, t_wp) if (u_wp and t_wp) else None
             if not route:
                 row.append(INFEASIBLE)
@@ -265,7 +385,7 @@ def cost_matrix(
                 continue
             base = graph.route_length_m(route)
             row.append(
-                _weighted_cost(base, state, task, policy)
+                _weighted_cost(base + offroad[task.id], state, task, policy)
                 if base != INFEASIBLE
                 else INFEASIBLE
             )
