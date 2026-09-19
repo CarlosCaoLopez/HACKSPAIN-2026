@@ -83,6 +83,11 @@ async def trigger(req: CallRequest, run_id: str) -> str:
         "must_go_next": req.facts.get("must_go_next", ""),
         "waiting_call_id": req.facts.get("waiting_call_id", ""),
         "immobile": req.facts.get("immobile", ""),
+        # `injuries` y `base_name` los produce `core.calls` y se quedaban aquí: un
+        # campo que no está en el cuerpo no existe para el prompt, por mucho que el
+        # core lo calcule.
+        "injuries": req.facts.get("injuries", ""),
+        "base_name": req.facts.get("base_name", ""),
         "poi_name": req.facts.get("poi_name", ""),
         "source_poi_name": req.facts.get("source_poi_name", ""),
         "route_name": req.facts.get("route_name", ""),

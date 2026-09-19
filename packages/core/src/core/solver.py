@@ -36,6 +36,13 @@ from contracts.world import POI, Cell, Task, Unit, Wind, WorldState
 
 INFEASIBLE = float("inf")
 
+SELF_EVACUATE = "self_evacuate"
+"""La capacidad que pide una evacuación, y que **ninguna unidad tiene**: es lo que
+hace que toda su columna salga `INFEASIBLE` y no se le asigne nadie. Un pueblo avisado
+sale andando; mandar una ambulancia a los que pueden caminar era gastar el único medio
+capaz de sacar a los que no. Vive aquí, y no en `core.tasks`, porque quien la usa es el
+cruce con `Unit.capabilities` (y porque `tasks` importa de `solver`, no al revés)."""
+
 UNIT_SPEED_MPS = 4.0
 """Velocidad plana para pasar de metros de ruta a `eta_s`. No es física, es un
 orden de magnitud estable para que `response_time` compare peras con peras. Va
@@ -724,7 +731,17 @@ def solve_with_violations(
             )
         )
     assigned_tasks = {a.task_id for a in assignments}
-    unassigned = list(dict.fromkeys(t.id for t in tasks if t.id not in assigned_tasks))
+    # Una evacuación no pide vehículo: no está «sin cubrir», está hecha a pie. Contarla
+    # como hueco pintaba dos tareas en rojo todo el run y una luz de «esperando
+    # ambulancia» con las ambulancias paradas en el hospital, que es justo la clase de
+    # pantalla que miente.
+    unassigned = list(
+        dict.fromkeys(
+            t.id
+            for t in tasks
+            if t.id not in assigned_tasks and t.required_capability != SELF_EVACUATE
+        )
+    )
 
     context = build_context(state, assignments, live_graph)
     plan = Plan(

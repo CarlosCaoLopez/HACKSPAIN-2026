@@ -168,7 +168,14 @@ class CannedVoice:
         extract = getattr(self.real, "extract", None)
         if extract is not None:
             try:
-                return await extract(transcript)
+                facts = await extract(transcript)
+                # `None` NO es una respuesta: `voice.extract` devuelve None cuando fenic
+                # falla o no hay clave, y tragárselo dejaba el plan B entero sin un solo
+                # `world.fact.asserted` —sin replan, sin rescate y sin ambulancia—, que
+                # es justo lo que el enlatado está para cubrir. Medido en
+                # `runs/run_b7a7da8a8427.jsonl`: cuatro `call.ended` con `facts=null`.
+                if facts is not None:
+                    return facts
             except (NotImplementedError, AttributeError):
                 pass  # P3 sin cuerpo: se sigue con el enlatado, que es el plan B
             except Exception as exc:  # noqa: BLE001 — una extracción que falla es normal

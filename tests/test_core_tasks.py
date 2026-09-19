@@ -48,6 +48,7 @@ def _scenario(contact_phone: str | None = None) -> Scenario:
             Waypoint(id="wp_nor_01", x=60, z=-40),
             Waypoint(id="wp_sur_01", x=60, z=40),
             Waypoint(id="wp_pueblo_a", x=100, z=0),
+            Waypoint(id="wp_refugio", x=-40, z=0),
         ],
         roads=[
             RoadEdge(id="road:wp_base-wp_cruce", a="wp_base", b="wp_cruce", length_m=30),
@@ -69,6 +70,9 @@ def _scenario(contact_phone: str | None = None) -> Scenario:
                 b="wp_pueblo_a",
                 length_m=56,
             ),
+            RoadEdge(
+                id="road:wp_base-wp_refugio", a="wp_base", b="wp_refugio", length_m=40
+            ),
         ],
         pois=[
             POI(
@@ -79,6 +83,16 @@ def _scenario(contact_phone: str | None = None) -> Scenario:
                 z=0,
                 waypoint_id="wp_pueblo_a",
                 contact_phone=contact_phone,
+            ),
+            # El refugio: sin él una evacuación no tiene por dónde salir ni dónde
+            # acabar, y el verbo `rescue` no se emite (`loop._emit_rescue`).
+            POI(
+                id="poi_refugio",
+                name="Refugio",
+                kind="shelter",
+                x=-40,
+                z=0,
+                waypoint_id="wp_refugio",
             ),
         ],
         units=[
@@ -106,6 +120,10 @@ def journal(monkeypatch) -> list[Event]:
     # Los números salen del test, no del `.env` de quien lo corre: el de al lado tiene
     # otro `NEIGHBOR_PHONE` y el test no puede depender de eso.
     monkeypatch.setattr(settings, "neighbor_phone", "")
+    # Ni los de despacho: con `AMBULANCE_PHONE` en el `.env` de uno y no en el de
+    # otro, los tests de rescate daban resultados distintos según la máquina.
+    monkeypatch.setattr(settings, "fire_crew_phone", "")
+    monkeypatch.setattr(settings, "ambulance_phone", "")
     yield events
     bus.reset()
 
@@ -166,7 +184,7 @@ async def test_ignition_creates_extinguish_and_evacuate(journal, fixed_planner) 
     assert ext.required_capability == "extinguish" and not ext.done
     evac = st.tasks["task_evac_poi_pueblo_a"]
     assert evac.kind == "evacuate" and evac.target_poi == "poi_pueblo_a"
-    assert evac.required_capability == "transport"
+    assert evac.required_capability == tasks.SELF_EVACUATE
     # Pueblo A está a sotavento (viento del oeste, pueblo al este): crítica.
     assert evac.severity == "critical"
 
@@ -176,16 +194,20 @@ async def test_ignition_creates_extinguish_and_evacuate(journal, fixed_planner) 
     types = [e.type for e in journal]
     assert types.index(EventType.TASK_CHANGED) < types.index(EventType.PLAN_EMITTED)
     assert fixed_planner["n"] == 1
+    # La evacuación NO lleva unidad: el solver no tiene ninguna con `self_evacuate`,
+    # así que el camión va al frente y la ambulancia se queda donde está. Mandar una
+    # ambulancia a los que pueden andar era gastar el único medio capaz de sacar a
+    # los que no.
     assigned = {a.task_id: a.unit_id for a in core.current_plan().assignments}
-    assert assigned == {
-        "task_front_5_0": "unit_truck2",
-        "task_evac_poi_pueblo_a": "unit_ambulance",
-    }
+    assert assigned == {"task_front_5_0": "unit_truck2"}
+    # Y tampoco cuenta como hueco: no está «sin cubrir», está hecha a pie. Pintarla en
+    # rojo todo el run sería una pantalla que miente.
+    assert core.current_plan().unassigned_tasks == []
     gotos = [
         ActionRequested.model_validate(e.payload)
         for e in _of(journal, EventType.ACTION_REQUESTED)
     ]
-    assert {g.args["unit_id"] for g in gotos} == {"unit_truck2", "unit_ambulance"}
+    assert {g.args["unit_id"] for g in gotos} == {"unit_truck2"}
 
 
 async def test_cell_changed_dedupes_and_burnt_closes(journal, fixed_planner) -> None:
@@ -283,14 +305,29 @@ async def test_assumed_default_immobile_does_not_create_rescue(
     assert "task_rescue_poi_pueblo_a" not in core.state().tasks
 
 
-async def test_unit_arrival_marks_done(journal, fixed_planner) -> None:
+async def test_la_orden_aceptada_cierra_la_evacuacion_y_saca_a_la_gente(
+    journal, fixed_planner
+) -> None:
+    """Lo que cierra una evacuación es que el pueblo ACEPTE la orden, no que llegue
+    un vehículo: ya no lleva ninguno. Y al cerrarse sale el verbo `rescue`, que es lo
+    único que mueve a los vecinos al refugio; sin esa segunda causa se quedaban
+    plantados en el pueblo y `civilians_safe` no subía nunca."""
     core = loop.Core(bus, _scenario())
     await _ignite(core)
-    assert core.state().units["unit_ambulance"].task_id == "task_evac_poi_pueblo_a"
+    assert core.state().units["unit_ambulance"].task_id is None
+    assert core.state().tasks["task_evac_poi_pueblo_a"].done is False
 
     ev = _ev(
-        EventType.WORLD_UNIT_ARRIVED,
-        {"unit_id": "unit_ambulance", "waypoint_id": "wp_pueblo_a"},
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_pueblo_a:confirmed",
+            "value": True,
+            "confidence": 0.9,
+            "source": "call:sess_ok",
+            "severity": "critical",
+            "kind": "observed",
+        },
+        source="call:sess_ok",
         t_sim=90.0,
     )
     await bus.publish(ev)
@@ -298,11 +335,41 @@ async def test_unit_arrival_marks_done(journal, fixed_planner) -> None:
     assert core.state().tasks["task_evac_poi_pueblo_a"].done is True
     assert core.state().tasks["task_front_5_0"].done is False
     assert _tasks_in(journal)["task_evac_poi_pueblo_a"]["done"] is True
-    # Se replanificó solo con el solver (sin modelo) y la ambulancia queda libre.
-    assert fixed_planner["n"] == 1
-    assert "task_evac_poi_pueblo_a" not in {
-        a.task_id for a in core.current_plan().assignments
-    }
+
+    # Y la gente sale: el verbo `rescue` hacia el refugio, sin unidad de por medio.
+    rescates = [
+        ActionRequested.model_validate(e.payload)
+        for e in _of(journal, EventType.ACTION_REQUESTED)
+        if ActionRequested.model_validate(e.payload).verb == "rescue"
+    ]
+    assert len(rescates) == 1
+    assert rescates[0].args["civ_ids"] == ["civ_a"]
+    assert rescates[0].args["shelter_id"] == "poi_refugio"
+
+
+async def test_un_assumed_default_no_cierra_la_evacuacion(
+    journal, fixed_planner
+) -> None:
+    """Regla 4 en el cierre: que nadie conteste al teléfono no es que hayan dicho que
+    sí. Un `confirmed` asumido deja la evacuación abierta."""
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    ev = _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_pueblo_a:confirmed",
+            "value": True,
+            "confidence": 0.3,
+            "source": "call:sess_ok",
+            "severity": "low",
+            "kind": "assumed_default",
+        },
+        source="call:sess_ok",
+        t_sim=90.0,
+    )
+    await bus.publish(ev)
+    await core.on_event(ev)
+    assert core.state().tasks["task_evac_poi_pueblo_a"].done is False
 
 
 # --- llamadas ----------------------------------------------------------------
@@ -331,7 +398,9 @@ async def test_evacuate_assignment_publishes_one_call(journal, fixed_planner) ->
     assert int(req.facts["deadline_min"]) >= 6
     assert "evacuar Pueblo A" in req.facts["situation_brief"]
     assert "reportar_situacion" in req.facts["checklist"]
-    assert req.expect == ["confirmation", "headcount", "immobile"]
+    # `injuries` también: el checklist lo pregunta desde hace tiempo y el contrato de
+    # la llamada no lo decía.
+    assert req.expect == ["confirmation", "headcount", "immobile", "injuries"]
     # `causes` apunta al evento que provocó el plan.
     fire = _of(journal, EventType.WORLD_FIRE_DETECTED)[0]
     assert _of(journal, EventType.CALL_REQUESTED)[0].causes == [fire.seq]
@@ -373,8 +442,9 @@ async def test_the_call_carries_the_live_state_not_a_fixed_script(
     assert "viento" in req.facts["fire_status"]
     # Carreteras: ninguna cortada todavía.
     assert req.facts["roads_status"] == "no hay ninguna carretera cortada"
-    # Quién va y cuándo.
-    assert "ambulancia" in req.facts["unit_eta"] and "minuto" in req.facts["unit_eta"]
+    # Quién va y cuándo: a un pueblo que se evacúa a pie no va nadie, y se dice tal
+    # cual en vez de prometerle una ambulancia que ahora se reserva para los rescates.
+    assert req.facts["unit_eta"] == "todavía no hay ninguna unidad asignada a su pueblo"
     # Y el parte que se lee en voz alta los lleva dentro.
     brief = req.facts["situation_brief"]
     assert req.facts["fire_status"] in brief and req.facts["resources"] in brief
@@ -823,7 +893,27 @@ async def test_signal_waits_until_the_pois_task_is_assigned(
     )
     core = loop.Core(bus, sc)
     await _ignite(core)
-    # La ambulancia está a las puertas de Pueblo A: la evacuación le sale gratis.
+    # Lo que ocupa a la única ambulancia es OTRO rescate: desde que las evacuaciones
+    # no llevan vehículo, es lo único que puede tenerla cogida. El hecho no viene de
+    # una llamada (`source="human"`), así que no genera señal por sí mismo.
+    ocupada = _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_pueblo_a:immobile",
+            "value": 2,
+            "confidence": 0.9,
+            "source": "human",
+            "severity": "critical",
+            "kind": "observed",
+        },
+        source="human",
+        t_sim=30.0,
+    )
+    await bus.publish(ocupada)
+    await core.on_event(ocupada)
+    assert core.state().units["unit_ambulance"].task_id == "task_rescue_poi_pueblo_a"
+
+    # Y está a las puertas de Pueblo A.
     arrive = _ev(
         EventType.WORLD_UNIT_POSITION,
         {"unit_id": "unit_ambulance", "x": 96, "z": 0, "heading": 90.0},
@@ -849,7 +939,7 @@ async def test_signal_waits_until_the_pois_task_is_assigned(
     assert not _of(journal, EventType.CALL_SIGNAL_REQUESTED), "aún no va nadie al molino"
     assert "task_rescue_poi_molino" in core._plan.unassigned_tasks
 
-    # La ambulancia llega a Pueblo A: la evacuación cierra y el rescate se asigna.
+    # La ambulancia llega a Pueblo A: su rescate cierra y el del molino se asigna.
     moved = _ev(
         EventType.WORLD_UNIT_POSITION,
         {"unit_id": "unit_ambulance", "x": 100, "z": 0, "heading": 90.0},
@@ -977,23 +1067,52 @@ def test_a_unit_reached_by_the_fire_can_still_be_assigned_out() -> None:
     st = st.model_copy(update={"cells": {**st.cells, cruce_cell: burning}})
     amb = st.units["unit_ambulance"].model_copy(update={"x": 30, "z": 0})
     st = st.model_copy(update={"units": {**st.units, "unit_ambulance": amb}})
+    # Alguien ha pedido la ambulancia: es lo único que la hace salir. Sin esto no hay
+    # tarea que pueda servir y el test no probaría nada.
+    st = belief.apply_fact(
+        st,
+        Fact(
+            key="poi:poi_pueblo_a:immobile",
+            value=2,
+            confidence=0.9,
+            source="call:sess_1",
+            severity="critical",
+            kind="observed",
+            t_sim=10.0,
+        ),
+    )
     st = st.model_copy(update={"tasks": {t.id: t for t in tasks.sync(st, graph)}})
     policy = Policy(rationale="x", hard_constraints=["no_unit_into_burning_cell"])
     plan = solver.solve(st, policy, graph)
     by_unit = {a.unit_id: a.task_id for a in plan.assignments}
-    assert by_unit.get("unit_ambulance") == "task_evac_poi_pueblo_a", by_unit
-    assert "task_evac_poi_pueblo_a" not in plan.unassigned_tasks
+    assert by_unit.get("unit_ambulance") == "task_rescue_poi_pueblo_a", by_unit
+    assert "task_rescue_poi_pueblo_a" not in plan.unassigned_tasks
 
 
 # --- unidad libre vuelve a base, órdenes que no se repiten -----------------------
 
 
 async def test_free_ambulance_returns_to_its_base_once(journal, fixed_planner) -> None:
-    """La ambulancia evacúa Pueblo A y se queda libre allí: vuelve a su waypoint de
-    origen (`wp_base`) con un `goto`, y solo uno. Así el siguiente rescate la hace
-    salir de la base y se la ve llegar, en vez de «ya va» con ETA 0."""
+    """La ambulancia hace un rescate en Pueblo A y se queda libre allí: vuelve a su
+    waypoint de origen (`wp_base`) con un `goto`, y solo uno. Así el siguiente rescate
+    la hace salir de la base y se la ve llegar, en vez de «ya va» con ETA 0."""
     core = loop.Core(bus, _scenario())
     await _ignite(core)
+    pedida = _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_pueblo_a:immobile",
+            "value": 2,
+            "confidence": 0.9,
+            "source": "human",
+            "severity": "critical",
+            "kind": "observed",
+        },
+        source="human",
+        t_sim=30.0,
+    )
+    await bus.publish(pedida)
+    await core.on_event(pedida)
     for ev in (
         _ev(
             EventType.WORLD_UNIT_POSITION,
@@ -1008,12 +1127,14 @@ async def test_free_ambulance_returns_to_its_base_once(journal, fixed_planner) -
     ):
         await bus.publish(ev)
         await core.on_event(ev)
-    assert core.state().tasks["task_evac_poi_pueblo_a"].done is True
+    assert core.state().tasks["task_rescue_poi_pueblo_a"].done is True
     gotos = [
         ActionRequested.model_validate(e.payload).args
         for e in _of(journal, EventType.ACTION_REQUESTED)
     ]
-    home = [g["route"] for g in gotos if g["unit_id"] == "unit_ambulance"]
+    # `.get`: al cerrarse el rescate sale también un `rescue`, que lleva `civ_ids` y
+    # `shelter_id` en vez de `unit_id`.
+    home = [g["route"] for g in gotos if g.get("unit_id") == "unit_ambulance"]
     assert home[-1][0] == "wp_pueblo_a" and home[-1][-1] == "wp_base"
     assert core._last_actions["unit_ambulance"] == (loop.RETURN_TASK, tuple(home[-1]))
 
@@ -1029,7 +1150,7 @@ async def test_free_ambulance_returns_to_its_base_once(journal, fixed_planner) -
         [
             e
             for e in _of(journal, EventType.ACTION_REQUESTED)
-            if ActionRequested.model_validate(e.payload).args["unit_id"]
+            if ActionRequested.model_validate(e.payload).args.get("unit_id")
             == "unit_ambulance"
         ]
     )
@@ -1071,8 +1192,26 @@ async def test_units_out_of_the_plan_keep_their_last_order(
 ) -> None:
     core = loop.Core(bus, _scenario())
     await _ignite(core)
+    # Al encenderse solo se mueve el camión: la ambulancia espera a que alguien la
+    # pida. La sacamos con un rescate, que es lo único que la mueve.
+    assert set(core._last_actions) == {"unit_truck2"}
+    pedida = _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_pueblo_a:immobile",
+            "value": 2,
+            "confidence": 0.9,
+            "source": "human",
+            "severity": "critical",
+            "kind": "observed",
+        },
+        source="human",
+        t_sim=30.0,
+    )
+    await bus.publish(pedida)
+    await core.on_event(pedida)
     assert set(core._last_actions) == {"unit_truck2", "unit_ambulance"}
-    # La evacuación cierra: la ambulancia sale del plan pero su última orden (ahora
+    # El rescate cierra: la ambulancia sale del plan pero su última orden (ahora
     # la vuelta a base) sigue registrada, y la del camión no se toca.
     truck_order = core._last_actions["unit_truck2"]
     ev = _ev(
@@ -1244,9 +1383,9 @@ async def test_ambulance_is_called_only_when_asked_for_and_free(
     journal, fixed_planner, monkeypatch
 ) -> None:
     """La ambulancia no se llama porque haya fuego, sino porque alguien la ha pedido:
-    un rescate nace de un `poi:<id>:immobile` que ha entrado por una llamada. Con dos
-    ambulancias, la primera sigue evacuando y a la segunda, que está libre, se la
-    llama para el rescate."""
+    un rescate nace de un `poi:<id>:immobile` que ha entrado por una llamada. Arder un
+    pueblo no basta —la evacuación se hace a pie—, así que con dos ambulancias las dos
+    siguen libres y se llama a la primera."""
     monkeypatch.setattr(settings, "ambulance_phone", "+34900000002")
     sc = _scenario()
     sc = sc.model_copy(
@@ -1296,7 +1435,7 @@ async def test_ambulance_is_called_only_when_asked_for_and_free(
     r = amb[0]
     assert r.to == "+34900000002"
     assert r.facts["role"] == "ambulance"
-    assert r.facts["unit_id"] == "unit_ambulance2"  # la que está libre, no la que evacúa
+    assert r.facts["unit_id"] == "unit_ambulance"  # libre: ninguna estaba evacuando
     assert r.facts["immobile"] == "2"
     assert "no pueden moverse" in r.facts["situation_brief"]
 
@@ -1309,10 +1448,42 @@ async def test_all_ambulances_busy_calls_to_ask_when(
     esperando al teléfono (`waiting_call_id`). Con un caso crítico, además, no se le
     pregunta si quiere: se le dice que va en cuanto termine."""
     monkeypatch.setattr(settings, "ambulance_phone", "+34900000002")
-    core = loop.Core(bus, _scenario())
+    sc = _scenario()
+    sc = sc.model_copy(
+        update={
+            "pois": sc.pois
+            + [
+                POI(
+                    id="poi_molino",
+                    name="Molino",
+                    kind="landmark",
+                    x=60,
+                    z=40,
+                    waypoint_id="wp_sur_01",
+                )
+            ],
+        }
+    )
+    core = loop.Core(bus, sc)
     await _ignite(core)
-    # La única ambulancia ya está evacuando Pueblo A.
-    assert core.state().units["unit_ambulance"].task_id == "task_evac_poi_pueblo_a"
+    # Lo que ocupa a la única ambulancia es otro rescate: desde que las evacuaciones
+    # se hacen a pie, es lo único que puede tenerla cogida.
+    otro = _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_molino:immobile",
+            "value": 1,
+            "confidence": 0.9,
+            "source": "human",
+            "severity": "critical",
+            "kind": "observed",
+        },
+        source="human",
+        t_sim=30.0,
+    )
+    await bus.publish(otro)
+    await core.on_event(otro)
+    assert core.state().units["unit_ambulance"].task_id == "task_rescue_poi_molino"
 
     fact = _ev(
         EventType.WORLD_FACT_ASSERTED,
@@ -1336,8 +1507,9 @@ async def test_all_ambulances_busy_calls_to_ask_when(
         for e in _of(journal, EventType.CALL_REQUESTED)
         if e.payload["intent"] == "ambulance_dispatch"
     ]
-    assert len(amb) == 1
-    r = amb[0]
+    # Dos: la del molino, que sí tenía unidad libre, y la de Pueblo A, que ya no.
+    assert [r.facts["role"] for r in amb] == ["ambulance", "ambulance_queued"]
+    r = amb[-1]
     assert r.facts["role"] == "ambulance_queued"
     assert r.facts["must_go_next"] == "sí"  # el rescate es crítico
     assert r.facts["waiting_call_id"] == "sess_amb"  # a quién hay que contestarle

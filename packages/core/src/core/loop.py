@@ -181,7 +181,7 @@ class Core:
         # task_id → (poi_id, asignación) de la orden de evacuación que espera a que
         # los medios confirmen. Se construye al soltar, no al diferir: así la orden
         # lleva los medios que van de verdad y no los que se pensaban mandar.
-        self._deferred_calls: dict[str, tuple[str, Assignment]] = {}
+        self._deferred_calls: dict[str, tuple[str, Assignment | None]] = {}
 
     async def run(self) -> None:
         """Consume el bus indefinidamente."""
@@ -552,6 +552,7 @@ class Core:
         segundo y le cortaba el sofocado. Tampoco se ordena ir a donde ya está (ruta
         de un waypoint, unidad parada en él). Las unidades que quedan fuera del plan
         conservan su última orden: es lo que siguen haciendo."""
+        self._inherit_holds(plan)
         self._drop_stale_holds(plan)
         for a in plan.assignments:
             route = tuple(a.route)
@@ -632,10 +633,20 @@ class Core:
         `tasks.py` de cerrar una evacuación "cuando todos sus grupos están `safe`"
         no podía cumplirse jamás, porque solo ese verbo pone un grupo a `safe`.
 
-        Se emite con la llegada, no con el plan: es la consecuencia de que una
-        unidad esté ya en el sitio, no una asignación nueva.
+        Se emite con el CIERRE de la tarea, no con el plan: es la consecuencia de que
+        la evacuación esté resuelta, no una asignación nueva. Dos cosas la cierran, y
+        por eso hay dos causas válidas:
+
+        - un `rescue`, cuando la ambulancia **llega** (`WORLD_UNIT_ARRIVED`);
+        - una `evacuate`, cuando el pueblo **acepta la orden** por teléfono
+          (`WORLD_FACT_ASSERTED` con `poi:<id>:confirmed`). Sin esta segunda causa,
+          quitarle el vehículo a la evacuación dejaba a los vecinos plantados en el
+          pueblo: el `/tp` al refugio solo lo hace este verbo.
         """
-        if cause.type != EventType.WORLD_UNIT_ARRIVED:
+        if cause.type not in (
+            EventType.WORLD_UNIT_ARRIVED,
+            EventType.WORLD_FACT_ASSERTED,
+        ):
             return
         shelter = next(
             (p.id for p in self._state.pois.values() if p.kind == "shelter"), None
@@ -715,6 +726,41 @@ class Core:
         self._held.pop(unit_id, None)
         self._held_since.pop(unit_id, None)
         self._pending_goto.pop(unit_id, None)
+
+    def _inherit_holds(self, plan: Plan) -> None:
+        """Si el solver releva a la unidad de una tarea que está al teléfono, la que
+        entra hereda la retención.
+
+        La retención es de la TAREA, no de la unidad: quien la sirva, espera. Medido en
+        `runs/run_bc8247ef1ed1.jsonl`, la llamada salió pidiendo `unit_ambulance2`
+        (seq 519) y seis eventos después un replan puso a `unit_ambulance` en el mismo
+        rescate (seq 524): salió con `dispatch_confirmed=null` mientras la dotación
+        todavía estaba descolgando, que es justo lo que el despacho existe para evitar.
+
+        No se toca `_talking` ni se reinicia el reloj: es la misma llamada, y un relevo
+        no le puede regalar otros 45 segundos a quien ya está sonando."""
+        en_llamada = set(self._held.values())
+        if not en_llamada:
+            return
+        for a in plan.assignments:
+            if a.task_id not in en_llamada or a.unit_id in self._held:
+                continue
+            desde = min(
+                (
+                    t0
+                    for u, t0 in self._held_since.items()
+                    if self._held.get(u) == a.task_id
+                ),
+                default=self._state.t_sim,
+            )
+            self._held[a.unit_id] = a.task_id
+            self._held_since[a.unit_id] = desde
+            self._dispatch_called.add(a.unit_id)
+            log.info(
+                "%s releva en %s mientras se telefonea: hereda la espera",
+                a.unit_id,
+                a.task_id,
+            )
 
     def _drop_stale_holds(self, plan: Plan) -> None:
         """Una unidad retenida que ya no está en el plan deja de estarlo: no hay nada
@@ -814,7 +860,7 @@ class Core:
             await self._emit_evacuation(task, poi, vigente or guardada, cause)
 
     async def _emit_evacuation(
-        self, task: Task, poi: POI, a: Assignment, cause: Event
+        self, task: Task, poi: POI, a: Assignment | None, cause: Event
     ) -> None:
         """La orden al pueblo, y detrás el aviso a sus vecinos."""
         to = settings.judge_phone or poi.contact_phone
@@ -836,8 +882,8 @@ class Core:
         await self._emit_neighbor_calls(task, poi, cause)
 
     async def _emit_calls(self, plan: Plan, cause: Event) -> None:
-        """Una orden de evacuación (`call.requested`) por tarea `evacuate` recién
-        asignada, y solo al pueblo que la necesita: el que tiene el fuego más cerca o
+        """Una orden de evacuación (`call.requested`) por tarea `evacuate` abierta,
+        y solo al pueblo que la necesita: el que tiene el fuego más cerca o
         el que ya lo tiene en la puerta. Al resto se les llama aparte, con el aviso de
         que pueden recibir gente (`_emit_neighbor_calls`).
 
@@ -850,13 +896,20 @@ class Core:
         camión que no ha confirmado es justo la clase de promesa que no se puede
         cumplir. La orden se difiere y sale con `committed_resources` de verdad."""
         amenazado = self._most_threatened_village()
-        for a in plan.assignments:
-            task = self._state.tasks.get(a.task_id)
-            if task is None or task.kind != "evacuate" or task.id in self._called:
-                continue
+        # Se itera la TAREA, no la asignación: una evacuación ya no lleva vehículo
+        # (los vecinos que pueden andar se van solos), y colgar la llamada de
+        # `plan.assignments` dejaba al pueblo sin orden justo cuando se le quitó la
+        # ambulancia. La asignación, si la hay, sigue viajando para el `unit_eta`.
+        abiertas = [
+            t
+            for t in sorted(self._state.tasks.values(), key=lambda t: t.id)
+            if t.kind == "evacuate" and not t.done and t.id not in self._called
+        ]
+        for task in abiertas:
             poi = self._state.pois.get(task.target_poi or "")
             if poi is None:
                 continue
+            a = self._assignment_for_poi(plan, poi.id)
             # Todavía no es su emergencia: a ese le toca el aviso, no la orden.
             if (
                 poi.kind == "village"
@@ -874,8 +927,8 @@ class Core:
                 continue
             # `_called` se marca al DECIDIR llamar, no al emitir: si no, el siguiente
             # tick volvería a decidir lo mismo y la orden se duplicaría. La que se
-            # difiere sale igual, por `_flush_deferred_calls`, y el plazo de
-            # `DISPATCH_HOLD_S` garantiza que ese momento llega.
+            # difiere sale igual, por `_flush_deferred_calls`, y los plazos de
+            # `DISPATCH_RING_S`/`DISPATCH_TALK_S` garantizan que ese momento llega.
             self._called.add(task.id)
             if self._held:
                 self._deferred_calls[task.id] = (poi.id, a)
@@ -1054,10 +1107,9 @@ class Core:
                 log.info("rescate %s sin ninguna ambulancia en servicio", rescue.id)
                 return
         base = next((p for p in self._state.pois.values() if p.kind == "hospital"), poi)
-        immobile = max(
-            (g.immobile for g in self._state.civilians.values() if g.poi_id == poi.id),
-            default=1,
-        )
+        grupos = [g for g in self._state.civilians.values() if g.poi_id == poi.id]
+        immobile = max((g.immobile for g in grupos), default=1)
+        injuries = max((g.injuries for g in grupos), default=0)
         self._ambulance_called.add(rescue.id)
         req = calls.ambulance_call(
             rescue,
@@ -1068,6 +1120,7 @@ class Core:
             unit.id,
             immobile,
             state=self._state,
+            injuries=injuries,
             graph=self.graph,
             aliases=self.scenario.road_aliases,
             queued=queued,
@@ -1080,7 +1133,13 @@ class Core:
         # Una ambulancia en cola está ocupada en otra cosa y la llamada solo pregunta
         # cuándo quedará libre: no se le retiene nada.
         if req.facts.get("role") in DISPATCH_ROLES:
-            self._hold_unit(req.facts.get("unit_id", ""), rescue.id)
+            # Y se retienen TODAS las que el plan manda a ese rescate, no solo la que
+            # cogió `_free_unit`: dejar salir a la segunda mientras se pregunta por la
+            # primera es la incoherencia que el retén ya tenía resuelta (`_emit_crew_call`).
+            pedidas = {a.unit_id for a in plan.assignments if a.task_id == rescue.id}
+            pedidas.add(req.facts.get("unit_id", ""))
+            for unit_id in sorted(pedidas):
+                self._hold_unit(unit_id, rescue.id)
 
     def _busiest_unit(self, capability: str) -> Unit | None:
         """La unidad de ese tipo que está en servicio, aunque ocupada: a la que se
