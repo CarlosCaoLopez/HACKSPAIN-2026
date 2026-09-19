@@ -193,3 +193,43 @@ async def test_snapshot_sirve_para_depurar(sim):
     assert snap["t_sim"] == 1.0
     assert "unit_truck1" in snap["moving"]
     assert snap["run_id"].startswith("run_")
+
+
+# --- la costura con el core: `core.loop` manda la ruta ya resuelta ---
+
+async def test_goto_acepta_la_ruta_que_manda_el_core(sim):
+    """`core.loop` emite args={"unit_id", "route"}; `Assignment.route` está
+    documentado como "ya resuelta". Sin esto, cada goto del core moría con
+    KeyError y en la integración no se movía una sola unidad."""
+    await sim.execute("act_go", "goto", {
+        "unit_id": "unit_truck1",
+        "route": ["wp_base", "wp_cruce", "wp_nor_01", "wp_nor_02", "wp_pueblo_a"],
+    })
+    assert sim.units["unit_truck1"].status == "moving"
+    assert sim._moving["unit_truck1"][0].route[-1] == "wp_pueblo_a"
+    assert "wp_nor_01" in sim._moving["unit_truck1"][0].route, "respeta la del core"
+
+
+async def test_la_ruta_del_core_se_engancha_donde_esté_la_unidad(sim):
+    """El plan puede venir calculado desde otro punto: se antepone el trecho que
+    falta en vez de teletransportar la unidad al inicio de la ruta."""
+    await sim.execute("a1", "goto", {"unit_id": "unit_truck1",
+                                     "waypoint_id": "wp_hospital"})
+    for _ in range(30):
+        await sim.tick(1.0)
+    await sim.execute("a2", "goto", {"unit_id": "unit_truck1",
+                                     "route": ["wp_sur_02", "wp_pueblo_a"]})
+    ruta = sim._moving["unit_truck1"][0].route
+    assert ruta[-1] == "wp_pueblo_a"
+    assert ruta[0] != "wp_sur_02", "tiene que llegar primero hasta la ruta del plan"
+
+
+async def test_un_waypoint_inventado_en_la_ruta_falla_claro(sim):
+    await sim.execute("a1", "goto", {"unit_id": "unit_truck1",
+                                     "route": ["wp_base", "wp_narnia"]})
+    assert eventos(EventType.ACTION_FAILED)[-1]["error"] == "unknown_waypoint:wp_narnia"
+
+
+async def test_goto_sin_destino_ni_ruta_falla(sim):
+    await sim.execute("a1", "goto", {"unit_id": "unit_truck1"})
+    assert eventos(EventType.ACTION_FAILED)[-1]["error"] == "goto_sin_destino"
