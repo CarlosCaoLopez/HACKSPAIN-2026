@@ -330,3 +330,49 @@ Ojo con el cuerpo del nodo Webhook del tool: se edita con
 `configuration` entera (no acepta un parche parcial), y los `{{$var:…}}` del `raw` se
 escriben a mano. Es fácil olvidarse de un campo y que el backend no se entere de nada:
 la v13 salió sin `unit_id` y el camino de medios quedaba muerto.
+
+## Anexo · por qué colgaba antes de tiempo (v16)
+
+En el ensayo del 19/09 a las 20:28 el agente colgó a Pueblo A **antes de que el
+vecino hablara**: saludo hasta 13994 ms, silencio, y el turno de despedida arrancó en
+18655 ms — 4,7 s. Y en la orden a Pueblo B cortó con «la comunicación no es
+suficientemente clara, llame al 112» justo después de que le dijeran que había tres
+personas que no podían andar. Ninguna de esas dos frases estaba en el prompt ni en
+nuestro `checklist`: las improvisó el modelo.
+
+El permiso se lo daba el propio prompt. Su `## Cierre` decía:
+
+> No cuelgues sin haber usado la herramienta al menos una vez, **salvo que la persona
+> cuelgue o no conteste**.
+
+Con 4,7 s de pausa, `gpt-5.6-luna` decidió que no contestaba. La salida se ha cerrado
+en **v16**: lo único que termina la llamada antes de usar `reportar_situacion` es que
+cuelgue la otra persona, hay que repreguntar dos veces antes de darse por vencido, una
+mala línea no es motivo para cortar, y nunca se manda a nadie a llamar al 112 —el 112
+es él—. El resto del prompt está byte a byte igual.
+
+La misma regla viaja además por `advice_rules` desde `core/calls.py`, que es donde se
+puede probar con `pytest` (`test_el_guion_le_prohibe_colgar_antes_de_tiempo`): si
+alguien republica una versión vieja del workflow, la contra sigue llegando en el cuerpo
+del hook.
+
+**Cómo se hizo, por si hay que repetirlo.** El spec de la API está en
+`GET /api/v2/docs/json` (Swagger en `/api/v2/docs`), sin el código de acceso de los
+docs públicos:
+
+1. `POST /versions/{live}/fork` → nueva versión.
+2. `PUT /versions/{fork}/nodes/{prompt_node}` con `{"type":"prompt","prompt_md":…}`.
+   Solo `type` es obligatorio: no hay que reenviar la `configuration` entera.
+3. `POST /versions/{fork}/publish` con `unpublish_version_id` **y**
+   `environment: "development"` — el saliente vive en `development`, y sin ese campo
+   responde «unpublish_version_id must be live in the target environment» porque el
+   default es `production`.
+
+Dos cosas que este anexo corrige de la v12: el fork **ya no pierde** el esquema del
+Tool Call Result (`inspect` sobre el fork daba `state: valid` y `message` expuesto sin
+tocar nada), así que no hizo falta repetir `generate` + `visibility`. Y `inspect`
+devuelve 400 sobre una versión viva: hay que mirarlo **antes** de publicar.
+
+**Volver atrás**: `POST /versions/01a0ba2b-5b21-7e91-bccc-94378c3062a9/publish` con
+`{"unpublish_version_id": "<la viva>", "environment": "development"}` deja la v14 como
+estaba.

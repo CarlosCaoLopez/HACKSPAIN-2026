@@ -1516,3 +1516,27 @@ async def test_all_ambulances_busy_calls_to_ask_when(
     assert "todas las ambulancias ocupadas" in r.facts["situation_brief"]
     assert "van directos allí" in r.facts["situation_brief"]
     assert "available_after_min" in r.expect
+
+
+async def test_el_guion_le_prohibe_colgar_antes_de_tiempo(
+    journal, fixed_planner
+) -> None:
+    """El prompt de la plataforma se reserva colgar «salvo que la persona cuelgue o no
+    conteste», y en el ensayo de las 20:28 el modelo usó esa salida con 4,7 s de
+    silencio: se despidió de Pueblo A justo antes de que el vecino empezara a hablar.
+    En otra llamada improvisó «llame al 112» y cortó justo después de que le dijeran
+    que había tres personas que no podían andar.
+
+    La contra vive aquí y no en la plataforma, que es lo que deja probarla."""
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    reglas = CallRequest.model_validate(
+        _of(journal, EventType.CALL_REQUESTED)[0].payload
+    ).facts["advice_rules"]
+
+    assert "No cuelgues porque tarden en contestar" in reglas
+    assert "repite la pregunta al menos dos veces" in reglas
+    assert "no son motivo para terminar la llamada" in reglas
+    # El 112 es él: mandar a alguien a llamar al número desde el que le llaman es el
+    # bucle que cerró la tercera llamada del ensayo.
+    assert "el 112 eres tú" in reglas

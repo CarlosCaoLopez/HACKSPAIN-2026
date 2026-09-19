@@ -590,9 +590,23 @@ ADVICE_RULES = (
     "tengo aquí, lo consulto y le llamamos»). Si te preguntan qué hacer, recomienda "
     "con lo que tienes: por qué ruta salir (nunca una carretera cortada), a qué "
     "hora, y qué unidad va de camino. Los datos son del momento de la llamada: si "
-    "algo cambia, se lo diremos por otra vía."
+    "algo cambia, se lo diremos por otra vía. "
+    "No cuelgues porque tarden en contestar: al otro lado hay alguien mirando un "
+    "incendio. Espera en silencio, y si no te responden repite la pregunta al menos "
+    "dos veces antes de dar por hecho que no hay nadie. Si no entiendes algo, pide "
+    "que te lo repitan: una mala línea o un ruido no son motivo para terminar la "
+    "llamada, y menos a mitad de un dato. Y nunca le digas a nadie que llame al 112: "
+    "el 112 eres tú."
 )
-"""Las reglas que impiden que un LLM con buena voluntad prometa un helicóptero."""
+"""Las reglas que impiden que un LLM con buena voluntad prometa un helicóptero.
+
+Y que cuelgue antes de tiempo, que es lo que pasó en el ensayo de las 20:28. El
+prompt de la plataforma se reserva colgar «salvo que la persona cuelgue o no
+conteste», y con 4,7 s de silencio el modelo decidió que el vecino de Pueblo A no
+contestaba: se despidió justo antes de que empezara a hablar. En otra llamada se
+inventó un «la comunicación no es suficientemente clara, llame al 112» y cortó
+justo después de que le dijeran que había tres personas que no podían andar. Ninguna
+de esas dos frases sale de aquí: las improvisa el modelo porque nada se lo impedía."""
 
 
 def evacuation_call(
