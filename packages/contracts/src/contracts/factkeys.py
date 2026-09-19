@@ -16,6 +16,10 @@ FACT_KEYS: dict[str, type] = {
     "poi:<poi_id>:injuries": int,
     "poi:<poi_id>:headcount": int,
     "poi:<poi_id>:confirmed": bool,
+    # El punto exacto que ha mandado un vecino por GPS, "x,z" del mundo. Un pin se
+    # ancla al POI más cercano, pero un perdido no está EN el pueblo: está donde
+    # dice el pin, y ahí es donde tiene que ir la ambulancia.
+    "poi:<poi_id>:rescue_point": str,
     "poi:<poi_id>:evacuated": bool,
     "poi:<poi_id>:shelter_ready": bool,  # el pueblo vecino dice si puede acoger gente
     # celdas de peligro

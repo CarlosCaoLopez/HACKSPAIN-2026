@@ -470,6 +470,16 @@ def draft_for(key: str, payload: dict) -> str:
             payload.get("message")
             or "Sigo con ello; la ambulancia está ocupada y le aviso en cuanto se libere."
         )
+    if key == "location_received":
+        # Confirmar la recepción es media conversación: el vecino ha hecho algo en
+        # otra app y necesita saber que ha servido. Si además reconocemos el sitio,
+        # se le nombra: es la prueba de que la ubicación ha entrado de verdad.
+        poi = payload.get("poi_name")
+        sitio = f", junto a {poi}" if poi else ""
+        return (
+            f"Ya tengo su ubicación{sitio}. La estoy pasando a los equipos. "
+            "No se mueva de donde está."
+        )
     if key == "coach":
         return str(payload.get("say") or NEUTRAL_DRAFT)
     return str(payload.get("message") or payload.get("say") or NEUTRAL_DRAFT)

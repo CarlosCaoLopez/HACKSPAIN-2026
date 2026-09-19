@@ -568,11 +568,14 @@ def _rescue(state: WorldState) -> list[Task]:
         seen.add(poi_id)
         if poi_id not in state.pois:
             log.warning("rescate sobre un POI que no está en el estado: %s", poi_id)
+        x, z = _rescue_point(state, poi_id)
         out.append(
             Task(
                 id=tid,
                 kind="rescue",
                 target_poi=poi_id,
+                target_x=x,
+                target_z=z,
                 required_capability="transport",
                 severity="critical",
                 created_t=state.t_sim,
@@ -595,6 +598,27 @@ def _order_confirmed(state: WorldState, poi_id: str) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in ("true", "1", "sí", "si", "yes")
     return bool(value)
+
+
+def _rescue_point(state: WorldState, poi_id: str) -> tuple[float | None, float | None]:
+    """El punto exacto que ha mandado un vecino por GPS para este POI, si lo hay.
+
+    Un pin se ancla al POI más cercano dentro de `snap_m`, pero un perdido no está
+    EN el pueblo: está donde dice el pin. Sin esto el rescate hereda el waypoint del
+    POI y la ambulancia se planta en la plaza mientras el vecino sigue en el monte.
+
+    Solo `observed`: la regla 4 vale también aquí. Un punto deducido no manda a nadie
+    a ninguna parte; el del GPS lo ha mandado el propio vecino.
+    """
+    fact = _latest_facts(state).get(f"poi:{poi_id}:rescue_point")
+    if fact is None or fact.kind != "observed":
+        return None, None
+    try:
+        x, z = str(fact.value).split(",")
+        return float(x), float(z)
+    except (ValueError, AttributeError):
+        log.warning("punto de rescate ilegible en %s: %r", poi_id, fact.value)
+        return None, None
 
 
 def _latest_facts(state: WorldState) -> dict[str, Fact]:

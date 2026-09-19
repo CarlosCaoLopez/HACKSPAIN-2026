@@ -293,9 +293,22 @@ def _unit_waypoint(unit: Unit, graph: RoadGraph) -> str | None:
 
 
 def _task_waypoint(state: WorldState, task: Task, graph: RoadGraph) -> str | None:
-    """Waypoint objetivo: el del POI si la tarea apunta a un POI; si apunta a una
-    celda, desde donde se ataca esa celda (`attack_waypoint`): a tiro si se puede, y
-    si no donde el fuego va a llegar antes."""
+    """Waypoint objetivo: el más cercano al punto exacto si la tarea lo trae; si no
+    el del POI; y si apunta a una celda, desde donde se ataca esa celda
+    (`attack_waypoint`): a tiro si se puede, y si no donde el fuego va a llegar antes.
+
+    El punto exacto va primero porque es más preciso que el POI que lo contiene. Lo
+    pone un pin de GPS que el vecino manda por Telegram: un perdido se ancla al pueblo
+    más cercano, pero no está en la plaza, y la ambulancia tiene que salir hacia donde
+    está él.
+
+    La condición pide `kind == "rescue"` a propósito, no solo que los campos vengan
+    llenos: así ninguna otra clase de tarea puede desviarse por aquí aunque alguien
+    los rellene más adelante. Hoy los pone solo `_rescue`, leyendo un hecho que solo
+    publica el pin de Telegram.
+    """
+    if task.kind == "rescue" and task.target_x is not None and task.target_z is not None:
+        return graph.nearest_waypoint(task.target_x, task.target_z)
     if task.target_poi is not None:
         poi: POI | None = state.pois.get(task.target_poi)
         return poi.waypoint_id if poi is not None else None
