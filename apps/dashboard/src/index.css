@@ -404,6 +404,28 @@ body {
   opacity: 0.7;
 }
 
+/* El pin del vecino por Telegram (beat 4:25): cae con un pequeño rebote para que se vea
+   llegar, y si el vecino comparte ubicación en vivo el pin late. */
+.vela-geo-citizen > .vela-badge {
+  animation: vela-geo-drop 500ms ease-out;
+}
+.vela-geo-citizen.vela-geo-live > .vela-badge {
+  animation: vela-geo-pulse 1.4s ease-in-out infinite;
+}
+@keyframes vela-geo-drop {
+  from {
+    transform: translateY(-14px);
+    opacity: 0;
+  }
+  60% {
+    transform: translateY(2px);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
 /* Sin animación de zoom ni de fundido con "reducir movimiento" (REQ-297, REQ-307). */
 @media (prefers-reduced-motion: reduce) {
   .vela-badge,
@@ -414,6 +436,7 @@ body {
   .vela-geo-route-out,
   .vela-geo-ring,
   .vela-geo-flame > .vela-badge > svg,
+  .vela-geo-citizen > .vela-badge,
   .vela-geo-voice > .vela-badge > svg {
     animation: none !important;
     transition: none !important;

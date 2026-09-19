@@ -166,6 +166,22 @@ export const CALLER_ICON: IconDef = {
   body: '<circle cx="9" cy="7.5" r="3"/><path d="M3 21v-4a6 6 0 0 1 12 0v4"/><path d="M17.5 8a4 4 0 0 1 0 6M20.5 5.5a7.5 7.5 0 0 1 0 11"/>',
 }
 
+/** El vecino que mandó su ubicación por Telegram (beat 4:25). Es un pin, no una persona
+ *  llamando: el dato viene del GPS del teléfono, no de la conversación. */
+export const CITIZEN_ICON: IconDef = {
+  label: 'vecino por Telegram',
+  tone: 'call',
+  body: '<path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2.2"/>',
+}
+
+/** Una celda que apagó un camión (`cause: extinguished`). No es `burnt`: ahí hubo fuego y
+ *  lo paramos nosotros, y por eso va en «mojado» y no en ceniza. */
+export const WET_CELL_ICON: IconDef = {
+  label: 'zona apagada por camión',
+  tone: 'water',
+  body: '<path d="M12 3c2 4 5 6.5 5 10.5a5 5 0 0 1-10 0C7 9.5 10 7 12 3z"/><path d="M4 20h16"/>',
+}
+
 export const WIND_ICON: IconDef = {
   label: 'viento',
   tone: 'dim',

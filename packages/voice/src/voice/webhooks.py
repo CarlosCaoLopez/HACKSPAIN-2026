@@ -131,6 +131,10 @@ async def happyrobot_fact(
     cb = params.pop("callback_number", None) or body.get("caller_number")
     if cb and str(cb).strip() and str(cb) != "web":
         mon.state.callback_number = str(cb).strip()
+    if mon.state.started_seq is None:
+        # El tool ha llegado antes que (o sin) el webhook de inicio: la llamada existe
+        # desde ahora en el journal. Un pin de Telegram posterior apunta a este seq.
+        await _publish_started(mon, task_id=None, direction="inbound")
     h = mon.tool_hash(params)
     cached = mon.state.seen_tool_hashes.get(h)
     if cached is not None:
@@ -209,6 +213,11 @@ async def _fact_without_jev(
     for f in facts:
         await publish(_fact_event(f, session_id))
         mon.state.tool_facts_keys.add(f.key)
+    if cf.resolved_poi_id is None:
+        # «Dos que no pueden andar» sin saber dónde: no entra al estado (hecho sin
+        # ubicar), pero no se pierde. El pin de Telegram lo coloca (`voice.telegram`).
+        mon.state.pending_facts = pending_counts(cf)
+        mon.state.pending_severity = cf.urgency
     if not mon.state.transcript:
         mon.add_turn("user", _pseudo_turn(cf))
     edge = pois.resolve_edge_local(cf.road_blocked)
@@ -227,6 +236,39 @@ async def _fact_without_jev(
         "telegram_hint": bool(hint and bot),
         "telegram_bot": bot,
     }
+
+
+def pending_counts(cf: CallFacts) -> dict[str, int]:
+    """Los recuentos del tool que se quedan sin POI: sufijo de `poi:<id>:<sufijo>` →
+    valor. Los publica el pin de Telegram con el POI al que se ancla."""
+    out: dict[str, int] = {}
+    if cf.people_immobile:
+        out["immobile"] = int(cf.people_immobile)
+    if cf.injuries:
+        out["injuries"] = int(cf.injuries)
+    if cf.headcount:
+        out["headcount"] = int(cf.headcount)
+    return out
+
+
+async def _publish_started(
+    mon: humanlike.ConversationMonitor, task_id: str | None, direction: str, to: str = ""
+) -> int:
+    """`call.started` de una llamada de voz, una vez: el seq se guarda en el estado
+    para que un `citizen.location` posterior pueda declararlo en `causes`."""
+    ev = make_event(
+        EventType.CALL_STARTED,
+        {
+            "call_id": mon.state.call_id,
+            "task_id": task_id,
+            "to": to or mon.state.callback_number or "",
+            "direction": direction,
+        },
+        source="voice",
+    )
+    await publish(ev)
+    mon.state.started_seq = ev.seq
+    return ev.seq
 
 
 def _fact_event(f: Fact, session_id: str) -> Event:
@@ -309,17 +351,13 @@ async def _on_start(body: dict) -> dict:
     if not session_id:
         raise HTTPException(status_code=422, detail="session_id")
     mon = humanlike.get_or_start(session_id, run_id)
-    await publish(
-        make_event(
-            EventType.CALL_STARTED,
-            {
-                "call_id": mon.state.call_id,
-                "task_id": body.get("task_id"),
-                "to": str(body.get("to") or body.get("caller_number") or ""),
-                "direction": body.get("direction") or "inbound",
-            },
-            source="voice",
-        )
+    if mon.state.started_seq is not None:
+        return {"ok": True, "dup": True}  # el tool ya la dio por empezada
+    await _publish_started(
+        mon,
+        task_id=body.get("task_id"),
+        direction=str(body.get("direction") or "inbound"),
+        to=str(body.get("to") or body.get("caller_number") or ""),
     )
     return {"ok": True}
 

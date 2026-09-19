@@ -173,3 +173,25 @@ def test_fact_event_carries_kind_and_call_id_into_the_state():
     assert last.kind == "assumed_default" and last.call_id == "s1"
     del payload["kind"], payload["call_id"]  # journals viejos: siguen siendo observados
     assert apply(s, ev(EventType.WORLD_FACT_ASSERTED, payload)).facts[-1].kind == "observed"
+
+
+def test_plan_moves_a_unit_only_if_it_has_a_way_to_go():
+    """`plan.emitted` pone `moving` a la unidad asignada con ruta por recorrer; con
+    una ruta de un solo waypoint (ya está allí) el estado lo dice el sim."""
+    s = initial_state("r", scenario())
+    plan = {
+        "id": "plan_r_1", "run_id": "r", "created_t": 5.0,
+        "policy": {"rationale": "t"},
+        "assignments": [
+            {"unit_id": "unit_truck1", "task_id": "task_a", "route": ["wp_sur_03"],
+             "eta_s": 0.0, "cost": 1.0}
+        ],
+        "context": {"assumptions": [], "world_seq": 1},
+    }
+    parked = apply(s, ev(EventType.PLAN_EMITTED, plan))
+    assert parked.units["unit_truck1"].status == "idle"
+    assert parked.units["unit_truck1"].task_id == "task_a"
+    plan["assignments"][0]["route"] = ["wp_sur_03", "wp_sur_04"]
+    plan["assignments"][0]["eta_s"] = 25.0
+    moving = apply(s, ev(EventType.PLAN_EMITTED, plan))
+    assert moving.units["unit_truck1"].status == "moving"

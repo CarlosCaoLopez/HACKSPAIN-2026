@@ -10,7 +10,7 @@
 import L from 'leaflet'
 
 import type { ScenarioLayer } from '../hooks/useScenario'
-import type { WorldView } from '../hooks/useWorldView'
+import type { CellCause, WorldView } from '../hooks/useWorldView'
 import { poiThreat } from './problems'
 import type { Geo } from './grid'
 import type { CellState, Plan, Task, UnitKind, UnitStatus, Waypoint } from '../types'
@@ -23,6 +23,7 @@ import {
   BADGE_PX,
   CALLER_ICON,
   CELL_ICON,
+  CITIZEN_ICON,
   CIV_TONE,
   FIRMS_ICON,
   POI_ICON,
@@ -164,6 +165,9 @@ export class Scene {
   private readonly zoneMarks = new Map<string, L.Marker>()
   private readonly foci = new Map<string, { rect: L.Rectangle; mark: L.Marker }>()
   private readonly callers = new Map<string, { marker: L.Marker; sig: string }>()
+  /** Pins de vecinos por Telegram, por `call_id` (`tg_<chat>`): un pin nuevo del mismo
+   *  chat MUEVE el marcador, no crea otro (REQ del beat 4:25: `live` actualiza el pin). */
+  private readonly citizens = new Map<string, { marker: L.Marker; sig: string }>()
 
   // Lo que se vio en la sincronización anterior, para saber qué ha ocurrido de nuevo y
   // lanzarle un anillo (REQ-309). La primera vez no se lanza ninguno: cargar el mapa a
@@ -174,6 +178,7 @@ export class Scene {
     unavailable: Set<string>
     foci: Set<string>
     callers: Set<string>
+    citizens: Set<string>
   } | null = null
   private rings = 0
   // Movimiento continuo (REQ-304): el reloj de la simulación y el bucle de animación que
@@ -192,7 +197,7 @@ export class Scene {
     this.geo = { origin: opts.layer.origin, cellSize: opts.layer.hazard.cell_size }
     this.waypoints = new Map(opts.layer.waypoints.map((wp) => [wp.id, wp]))
     this.palette = Object.fromEntries(
-      ['cell-burning', 'cell-at-risk', 'cell-burnt', 'cell-flooded', 'cell-dark', 'fire', 'warn', 'accent', 'dim', 'ink'].map(
+      ['cell-burning', 'cell-at-risk', 'cell-burnt', 'cell-wet', 'cell-flooded', 'cell-dark', 'fire', 'warn', 'accent', 'dim', 'ink', 'water'].map(
         (name) => [name, token(name)],
       ),
     )
@@ -371,11 +376,12 @@ export class Scene {
     this.syncFront(input)
     this.syncFoci(input)
     this.syncCallers(input)
+    this.syncCitizens(input)
     this.layoutUnits()
     this.emitRings(input, first)
   }
 
-  private cellStyle(state: CellState): L.PathOptions {
+  private cellStyle(state: CellState, cause: CellCause | undefined): L.PathOptions {
     const p = this.palette
     switch (state) {
       case 'burning':
@@ -385,6 +391,12 @@ export class Scene {
         // la forma además del color (REQ-220).
         return { fillColor: p['cell-at-risk'], fillOpacity: 1, color: p.warn, weight: 1.5, dashArray: '4 3' }
       case 'burnt':
+        // «Mojada»: la apagó un camión. Es el efecto de nuestra orden y se lee distinto
+        // de la ceniza. La causa solo viene por evento: tras un snapshot vuelve a negro
+        // (`useWorldView.seed` lo explica) y aquí no se inventa.
+        if (cause === 'extinguished') {
+          return { fillColor: p['cell-wet'], fillOpacity: 1, color: p.water, weight: 1 }
+        }
         return { fillColor: p['cell-burnt'], fillOpacity: 1, color: p['cell-burnt'], weight: 0.5 }
       case 'flooded':
         return { fillColor: p['cell-flooded'], fillOpacity: 1, color: p['cell-flooded'], weight: 0.5 }
@@ -405,14 +417,15 @@ export class Scene {
         }
         continue
       }
+      const cause = view.cellCauses.get(id)
       if (existing) {
-        existing.setStyle(this.cellStyle(state))
+        existing.setStyle(this.cellStyle(state, cause))
         pathClass(existing)?.classList.remove('vela-geo-cell-grow')
         continue
       }
       const bounds = cellBounds(this.opts.anchor, id, this.geo)
       if (!bounds) continue
-      const rect = L.rectangle(bounds, { ...this.cellStyle(state), interactive: false, className: 'vela-geo-cell' })
+      const rect = L.rectangle(bounds, { ...this.cellStyle(state, cause), interactive: false, className: 'vela-geo-cell' })
       rect.addTo(this.cellLayer)
       if (state === 'burning') this.growFrom(rect, id, view.cells)
       this.cells.set(id, rect)
@@ -889,6 +902,41 @@ export class Scene {
     }
   }
 
+  /** El pin del vecino por Telegram, en el (x, z) que el core proyectó y con la misma
+   *  ancla que todo lo demás (REQ-285): queda sobre Pueblo B en León aunque el pin real
+   *  saliera de Madrid, porque la maqueta vive en León. Varios chats → varios pins; un
+   *  pin nuevo del mismo chat mueve el suyo. Clic: la tarjeta del chat. */
+  private syncCitizens({ view }: SceneInput): void {
+    for (const c of view.citizens.values()) {
+      const at = this.ll(c.x, c.z)
+      const sig = `${c.x},${c.z}|${c.poiName ?? ''}|${c.live}`
+      const existing = this.citizens.get(c.callId)
+      if (existing?.sig === sig) continue
+      if (existing) {
+        // Mismo chat, sitio nuevo (`live`): se mueve, no se duplica.
+        existing.marker.setLatLng(at)
+        existing.sig = sig
+        continue
+      }
+      const icon = badgeIcon(CITIZEN_ICON, 'poi', `vela-geo-citizen${c.live ? ' vela-geo-live' : ''}`, {
+        text: c.poiName ? `vecino · ${c.poiName}` : 'vecino',
+      })
+      const m = marker(at, icon, { zIndexOffset: 800 })
+      m.bindTooltip(c.poiName ? `vecino por Telegram · junto a ${c.poiName}` : 'vecino por Telegram · pin sin anclar', {
+        direction: 'top',
+        className: 'vela-call-tip',
+      })
+      m.on('click', () => this.opts.onOpenCall(c.callId))
+      m.addTo(this.markerLayer)
+      this.citizens.set(c.callId, { marker: m, sig })
+    }
+    for (const [id, entry] of this.citizens) {
+      if (view.citizens.has(id)) continue
+      this.markerLayer.removeLayer(entry.marker)
+      this.citizens.delete(id)
+    }
+  }
+
   // --- anillos de evento ---------------------------------------------------------------
 
   /** Lo que acaba de pasar se marca un momento (REQ-309). A 80 eventos/s se descartan los
@@ -901,6 +949,7 @@ export class Scene {
       unavailable: new Set([...view.units.values()].filter((u) => u.status === 'unavailable').map((u) => u.id)),
       foci: new Set(foci.map((f) => f.key)),
       callers: new Set(callers.placed.filter((c) => !c.ended).map((c) => c.callId)),
+      citizens: new Set(view.citizens.keys()),
     }
     const before = this.seen
     this.seen = now
@@ -926,6 +975,12 @@ export class Scene {
       const poiId = callers.placed.find((c) => c.callId === id)?.poiId
       const poi = this.opts.layer.pois.find((p) => p.id === poiId)
       if (poi) this.ring(this.ll(poi.x, poi.z))
+    }
+    // Un pin nuevo es el momento del beat 4:25: se marca donde cayó.
+    for (const id of now.citizens) {
+      if (before.citizens.has(id)) continue
+      const c = view.citizens.get(id)
+      if (c) this.ring(this.ll(c.x, c.z))
     }
   }
 

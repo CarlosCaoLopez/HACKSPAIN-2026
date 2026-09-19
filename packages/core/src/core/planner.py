@@ -13,12 +13,16 @@ como esquema (`Policy.model_json_schema()`): el mismo contrato es el esquema.
 """
 
 import asyncio
+import copy
 import json
 import logging
 from pathlib import Path
+from typing import get_args
 
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 
+from contracts.calls import Audience, Urgency
 from contracts.plan import Policy, Violation
 from contracts.settings import settings
 from contracts.world import WorldState
@@ -35,6 +39,40 @@ MAX_TOKENS = 1024
 
 _PROMPTS = Path(__file__).parent / "prompts"
 
+URGENCIES: tuple[str, ...] = get_args(Urgency)
+AUDIENCES: tuple[str, ...] = get_args(Audience)
+URGENCY_FALLBACK: dict[str, str] = {"high": "medium", "urgent": "critical"}
+"""Lo que el modelo escribe cuando se sale del contrato («high» no existe en
+`Urgency`) y a qué valor del contrato se lleva. Con el error de validación entero se
+caía a la política neutra y se perdían los pesos buenos por un aviso mal escrito."""
+
+
+def _policy_schema() -> dict:
+    """El esquema de `Policy` con los `$defs` en línea y cada campo `Literal` con su
+    `enum` explícito a la vista del modelo. Pydantic ya emite el `enum`, pero dentro
+    de `$defs/NotifyIntent` tras un `$ref`, y el modelo devolvió `urgency="high"`."""
+    schema = copy.deepcopy(Policy.model_json_schema())
+    defs = schema.pop("$defs", {})
+
+    def inline(node):
+        if isinstance(node, dict):
+            if "$ref" in node:
+                name = node["$ref"].rsplit("/", 1)[-1]
+                return inline(copy.deepcopy(defs[name]))
+            return {k: inline(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [inline(v) for v in node]
+        return node
+
+    schema = inline(schema)
+    notify = schema["properties"]["notify"]["items"]["properties"]
+    notify["urgency"]["enum"] = list(URGENCIES)
+    notify["urgency"]["description"] = "Exactamente uno de: " + ", ".join(URGENCIES)
+    notify["audience"]["enum"] = list(AUDIENCES)
+    notify["audience"]["description"] = "Exactamente uno de: " + ", ".join(AUDIENCES)
+    return schema
+
+
 # El function-calling forzado garantiza salida estructurada; el esquema es el
 # propio modelo Pydantic, así lo que valida el solver y lo que pide el prompt no
 # pueden divergir.
@@ -46,9 +84,41 @@ _POLICY_TOOL = {
             "Emite la Policy para esta situación: pesos de objetivo y "
             "restricciones duras del catálogo. Nunca acciones ni asignaciones."
         ),
-        "parameters": Policy.model_json_schema(),
+        "parameters": _policy_schema(),
     },
 }
+
+
+def parse_policy(args: str | dict) -> Policy:
+    """`Policy` desde lo que devolvió el modelo. Un `notify` con `urgency` o
+    `audience` fuera del contrato se corrige (`URGENCY_FALLBACK`) o se descarta, con
+    aviso, antes de validar: el resto de la política (pesos, restricciones) vale y no
+    se tira por un campo de un aviso. Lanza `ValidationError` si aun así no valida."""
+    data = json.loads(args) if isinstance(args, str) else dict(args)
+    kept: list[dict] = []
+    for item in data.get("notify") or []:
+        if not isinstance(item, dict):
+            log.warning("planner: notify no es un objeto, se descarta: %r", item)
+            continue
+        urgency = item.get("urgency")
+        if urgency not in URGENCIES:
+            fixed = URGENCY_FALLBACK.get(str(urgency).lower(), "medium")
+            log.warning("planner: urgency %r fuera del contrato → %s", urgency, fixed)
+            item = {**item, "urgency": fixed}
+        if item.get("audience") not in AUDIENCES:
+            log.warning(
+                "planner: audience %r fuera del contrato → resident", item.get("audience")
+            )
+            item = {**item, "audience": "resident"}
+        kept.append(item)
+    if "notify" in data:
+        data["notify"] = kept
+    try:
+        return Policy.model_validate(data)
+    except ValidationError:
+        log.warning("planner: la Policy no valida: %s", json.dumps(data)[:300])
+        raise
+
 
 _TOOL_CHOICE = {"type": "function", "function": {"name": "emit_policy"}}
 
@@ -154,7 +224,7 @@ async def _call(prompt: str) -> Policy:
             timeout=TIMEOUT_S,
         )
         args = resp.choices[0].message.tool_calls[0].function.arguments
-        return Policy.model_validate(json.loads(args))
+        return parse_policy(args)
     except Exception as exc:  # noqa: BLE001 — degradar a pesos neutros es el diseño
         log.error("planner %s falló; se cae a la política neutra: %r", MODEL, exc)
         return neutral_policy()

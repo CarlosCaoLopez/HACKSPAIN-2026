@@ -35,11 +35,16 @@ from contracts.events import (
 from contracts.plan import MAX_REPLAN_ROUNDS, Assignment, Plan, Policy, Violation
 from contracts.scenario import Scenario
 from contracts.settings import settings
-from contracts.world import Task, WorldState
+from contracts.world import Task, Unit, WorldState
 from core import belief, calls, memory, planner, tasks
 from core.divergence import _angular_gap, divergence, should_replan
 from core.planner import neutral_policy
-from core.solver import RoadGraph, solve_with_violations
+from core.solver import (
+    RoadGraph,
+    attack_waypoint,
+    intercept_waypoint,
+    solve_with_violations,
+)
 from core.verifiers import verify
 
 log = logging.getLogger("core.loop")
@@ -52,9 +57,27 @@ CALL_SOURCE_PREFIX = "call:"
 
 SIGNAL_UNIT_DISPATCHED = "unit_dispatched"
 PEOPLE_TASKS = frozenset({"evacuate", "rescue"})
+"""Tareas que van hacia personas: las únicas que se cuentan como "ya va" por teléfono."""
 RESOLVE_GAP_S = 5.0
 """Cadencia mínima (segundos de sim) entre re-solves por altas de extinción."""
-"""Tareas que van hacia personas: las únicas que se cuentan como "ya va" por teléfono."""
+
+DWELL_S = 25.0
+"""Permanencia mínima: una unidad en marcha hacia un destino, o parada en él, no cambia
+de destino hasta que pasen estos segundos de sim desde su último `goto`, salvo que su
+tarea cierre, que aparezca una tarea crítica sin unidad que ella pueda servir, o que
+su frente ya no se ataque desde ahí. Se aplica como coste de cambio en el solver
+(`solver.HOLD_PENALTY_M`), así el plan y lo que hacen las unidades no divergen."""
+
+AT_WAYPOINT_M = 3.0
+"""A menos de esto de un waypoint, la unidad está en él (el sim la deja clavada en
+sus coordenadas al llegar)."""
+
+RETURN_TASK = "return_to_base"
+"""Marcador en `_last_actions` de un `goto` de vuelta a base: no es una tarea."""
+
+HOME_CAPABILITIES = frozenset({"transport", "medical"})
+"""Unidades que vuelven a su base cuando se quedan libres: la ambulancia al hospital.
+Un camión libre se queda donde está (el fuego vuelve)."""
 
 
 RESCUES: frozenset[str] = frozenset({"evacuate", "rescue"})
@@ -79,6 +102,15 @@ class Core:
         self._last_actions: dict[
             str, tuple[str, tuple[str, ...]]
         ] = {}  # unit_id -> (task_id, ruta) ya ordenados
+        self._goto_t: dict[str, float] = {}  # unit_id -> t_sim del último goto
+        # unit_id -> waypoint de origen (el más cercano a su posición del escenario):
+        # a donde vuelve una unidad de transporte cuando se queda libre.
+        self._home: dict[str, str] = {
+            u.id: wp
+            for u in scenario.units
+            if (wp := self.graph.nearest_waypoint(u.x, u.z)) is not None
+        }
+        self._last_divergence: tuple[float, tuple[str, ...]] | None = None
         self._vetoes: dict[tuple[str, str], float] = {}  # (unit, task) -> expiry t_sim
         self._action_seq = 0
         self._called: set[str] = set()  # task_ids con `call.requested` ya emitido
@@ -130,9 +162,15 @@ class Core:
             return
 
         value, broken = divergence(self._state, self._plan.context)
-        await self._emit(
-            EventType.PLAN_DIVERGENCE, DivergenceReport(value=value, broken=broken), ev
-        )
+        # Solo cuando cambia: publicarlo por cada evento era el 46 % del journal
+        # (1831 informes con 0.0 seguidos).
+        if self._last_divergence != (value, tuple(broken)):
+            self._last_divergence = (value, tuple(broken))
+            await self._emit(
+                EventType.PLAN_DIVERGENCE,
+                DivergenceReport(value=value, broken=broken),
+                ev,
+            )
 
         hard = [
             v
@@ -284,7 +322,95 @@ class Core:
     def _solve(
         self, policy: Policy, vetoes: set[tuple[str, str]]
     ) -> tuple[Plan, list[Violation]]:
-        return solve_with_violations(self._state, policy, self.graph, vetoes=vetoes)
+        return solve_with_violations(
+            self._state, policy, self.graph, vetoes=vetoes, holds=self._holds()
+        )
+
+    def _holds(self) -> dict[str, str]:
+        """Unidad → waypoint que no debe abandonar todavía (`DWELL_S` desde su último
+        `goto`, en marcha hacia él o parada en él). Se levanta si su tarea cerró, si
+        hay una tarea crítica sin unidad que ella pueda servir (con el plan vigente)
+        o si su frente ya no se ataca desde ese waypoint."""
+        holds: dict[str, str] = {}
+        served = (
+            {a.task_id for a in self._plan.assignments}
+            if self._plan is not None
+            else set()
+        )
+        orphans = [
+            t
+            for t in self._state.tasks.values()
+            if not t.done and t.severity == "critical" and t.id not in served
+        ]
+        for unit_id, (task_id, route) in self._last_actions.items():
+            t_goto = self._goto_t.get(unit_id)
+            if t_goto is None or self._state.t_sim - t_goto >= DWELL_S:
+                continue
+            unit = self._state.units.get(unit_id)
+            if unit is None or not route:
+                continue
+            dest = route[-1]
+            en_route = unit.status == "moving"
+            parked = unit.status in ("idle", "working") and self._at_waypoint(unit, dest)
+            if not (en_route or parked):
+                continue
+            if task_id == RETURN_TASK:
+                continue  # una vuelta a base cede ante cualquier tarea
+            task = self._state.tasks.get(task_id)
+            if task is None or task.done:
+                continue
+            if any(o.required_capability in unit.capabilities for o in orphans):
+                continue
+            if not self._useful_at(task, dest):
+                continue
+            holds[unit_id] = dest
+        return holds
+
+    def _useful_at(self, task: Task, wp_id: str) -> bool:
+        """¿Sigue teniendo sentido que la unidad esté (o vaya) a ese waypoint por
+        esa tarea? Para una tarea sobre un POI, si es su waypoint. Para un frente,
+        si es desde donde se ataca su celda objetivo, si es donde el fuego va a
+        tocar carretera (cortafuegos) o si desde allí sofoca alguna celda que arde:
+        el segundo camión trabaja el mismo frente desde otro sitio, y no hay que
+        moverlo porque la cabeza del frente se haya corrido una celda."""
+        if task.target_cell is None:
+            return self._task_waypoint(task) == wp_id
+        cell = self._state.cells.get(task.target_cell)
+        live = self.graph.with_cuts(self._state)
+        if cell is not None:
+            x, z = self.graph.cell_center(cell)
+            if wp_id in (
+                attack_waypoint(x, z, self._state.wind, live),
+                intercept_waypoint(x, z, self._state.wind, live),
+            ):
+                return True
+        if wp_id not in self.graph.coords:
+            return False
+        return any(
+            self.graph.waypoint_distance(wp_id, *self.graph.cell_center(c))
+            <= self.graph.reach_m
+            for c in self._state.cells.values()
+            if c.state == "burning"
+        )
+
+    def _task_waypoint(self, task: Task) -> str | None:
+        if task.target_poi is not None:
+            poi = self._state.pois.get(task.target_poi)
+            return poi.waypoint_id if poi is not None else None
+        if task.target_cell is not None:
+            cell = self._state.cells.get(task.target_cell)
+            if cell is None:
+                return None
+            x, z = self.graph.cell_center(cell)
+            return attack_waypoint(
+                x, z, self._state.wind, self.graph.with_cuts(self._state)
+            )
+        return None
+
+    def _at_waypoint(self, unit: Unit, wp_id: str) -> bool:
+        if wp_id not in self.graph.coords:
+            return False
+        return self.graph.waypoint_distance(wp_id, unit.x, unit.z) <= AT_WAYPOINT_M
 
     async def _sync_tasks(self, cause: Event) -> list[Task]:
         """Publica un `task.changed` por cada alta, cambio o cierre y lo pliega en el
@@ -337,6 +463,7 @@ class Core:
         """Lo que sale de un plan nuevo, en este orden: órdenes al sim, llamadas
         salientes y la señal a la llamada en curso que lo provocó."""
         await self._emit_actions(plan, cause)
+        await self._return_home(plan, cause)
         await self._emit_calls(plan, cause)
         await self._emit_signal(plan, cause)
         await self._emit_awaited_signals(plan)
@@ -348,23 +475,66 @@ class Core:
         pista cortada (visto en la integración 1). Una ruta que es un sufijo de la ya
         ordenada (la unidad avanza por ella, o dos frentes se atacan desde el mismo
         waypoint) no se reenvía: cada `goto` repetido ponía al camión `moving` un
-        segundo y le cortaba el sofocado."""
-        current = {a.unit_id: (a.task_id, tuple(a.route)) for a in plan.assignments}
+        segundo y le cortaba el sofocado. Tampoco se ordena ir a donde ya está (ruta
+        de un waypoint, unidad parada en él). Las unidades que quedan fuera del plan
+        conservan su última orden: es lo que siguen haciendo."""
         for a in plan.assignments:
+            route = tuple(a.route)
             last = self._last_actions.get(a.unit_id)
-            if last is not None and _same_way(last[1], current[a.unit_id][1]):
+            if last is not None and _same_way(last[1], route):
+                self._last_actions[a.unit_id] = (a.task_id, last[1])
                 continue
-            self._action_seq += 1
-            await self._emit(
-                EventType.ACTION_REQUESTED,
-                ActionRequested(
-                    action_id=f"act_{self.run_id}_{self._action_seq}",
-                    verb="goto",
-                    args={"unit_id": a.unit_id, "route": a.route},
-                ),
-                cause,
-            )
-        self._last_actions = current
+            unit = self._state.units.get(a.unit_id)
+            if (
+                len(route) == 1
+                and unit is not None
+                and unit.status != "moving"
+                and self._at_waypoint(unit, route[0])
+            ):
+                self._last_actions[a.unit_id] = (a.task_id, route)
+                continue
+            await self._goto(a.unit_id, a.task_id, list(route), cause)
+
+    async def _goto(
+        self, unit_id: str, task_id: str, route: list[str], cause: Event
+    ) -> None:
+        self._action_seq += 1
+        await self._emit(
+            EventType.ACTION_REQUESTED,
+            ActionRequested(
+                action_id=f"act_{self.run_id}_{self._action_seq}",
+                verb="goto",
+                args={"unit_id": unit_id, "route": route},
+            ),
+            cause,
+        )
+        self._last_actions[unit_id] = (task_id, tuple(route))
+        self._goto_t[unit_id] = self._state.t_sim
+
+    async def _return_home(self, plan: Plan, cause: Event) -> None:
+        """Una unidad de transporte libre (sin asignación, parada) que no está en su
+        waypoint de origen vuelve a él, una vez. La ambulancia evacuaba Pueblo B y se
+        quedaba allí: cuando llegaba el pin del vecino en Pueblo B «se le mandaba» una
+        unidad con ETA 0 y nadie la veía llegar. Ahora sale del hospital."""
+        assigned = {a.unit_id for a in plan.assignments}
+        live = self.graph.with_cuts(self._state)
+        for unit in sorted(self._state.units.values(), key=lambda u: u.id):
+            if unit.id in assigned or unit.status != "idle":
+                continue
+            if not HOME_CAPABILITIES & set(unit.capabilities):
+                continue
+            home = self._home.get(unit.id)
+            if home is None or self._at_waypoint(unit, home):
+                continue
+            last = self._last_actions.get(unit.id)
+            if last is not None and last[0] == RETURN_TASK and last[1][-1] == home:
+                continue  # ya se le ordenó una vez
+            here = live.nearest_waypoint(unit.x, unit.z)
+            route = live.shortest_path(here, home) if here else None
+            if not route:
+                log.info("%s libre sin ruta viva de vuelta a %s", unit.id, home)
+                continue
+            await self._goto(unit.id, RETURN_TASK, route, cause)
 
     async def _emit_rescue(self, changed: list[Task], cause: Event) -> None:
         """Llegar a un POI cierra su evacuación; mover a la gente es otra cosa.
@@ -429,7 +599,13 @@ class Core:
                     self._warned_no_phone = True
                 continue
             req = calls.evacuation_call(
-                task, poi, a, to, self.scenario.hazard.kind, self._state.roads
+                task,
+                poi,
+                a,
+                to,
+                self.scenario.hazard.kind,
+                self._state.roads,
+                self.scenario.road_aliases,
             )
             self._called.add(task.id)
             await self._emit(EventType.CALL_REQUESTED, req, cause)
@@ -471,7 +647,7 @@ class Core:
         unit = self._state.units.get(a.unit_id)
         if unit is None:
             return
-        route = calls.route_name(a.route, self._state.roads)
+        route = calls.route_name(a.route, self._state.roads, self.scenario.road_aliases)
         novelty = (a.unit_id, a.task_id, route)
         if self._signalled.get(call_id) == novelty:
             return  # ya se le dijo: otro hecho de la misma llamada no lo repite

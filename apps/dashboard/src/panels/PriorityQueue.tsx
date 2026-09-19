@@ -13,13 +13,14 @@
 //
 // Lo que sí es de este panel desde el H3: que se lea la frase del planner.
 // `Policy.rationale` es medio pitch y va arriba, en grande.
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
-import type { OverrideKind, Plan, WorldState } from '../types'
+import type { Event, OverrideKind, Plan, WorldState } from '../types'
 import { Empty, Panel, Row, Rows, Section, Skeleton, toneClass, type DataTone } from '../components/Panel'
 import { useControl, type OverrideRequest } from '../hooks/useControl'
 import { SEVERITY } from '../story/labels'
 import { seconds, shortId } from '../story/format'
+import { knownTasks, taskName } from '../story/tasks'
 
 /** Los tres de la fila. `set_priority` existe en el contrato pero no tiene botón:
  *  no hay nada que pulsar sin un campo de prioridad, y un botón de más en directo es
@@ -42,10 +43,14 @@ type Mark = { text: string; tone?: DataTone }
 export function PriorityQueue({
   plan,
   state,
+  events,
   awaitingSnapshot,
 }: {
   plan: Plan | null
   state: WorldState | null
+  /** Para los `task.changed` posteriores al snapshot: sin ellos, un frente nuevo no
+   *  tiene ni nombre ni gravedad. */
+  events: Event[]
   awaitingSnapshot: boolean
 }) {
   const { override, pending, sent, failed } = useControl()
@@ -70,10 +75,12 @@ export function PriorityQueue({
     if (plan && planAtSend.current.get(key) !== plan.id) return null
     return { text: 'enviado · pendiente de aplicar' }
   }
-  const tasks = state?.tasks ?? null
-  // Sin `WorldState.tasks` no hay severidad, así que se ordena por coste y SE DICE.
+  const known = useMemo(() => knownTasks(state, events), [state, events])
+  // Sin ninguna tarea del core no hay severidad, así que se ordena por coste y SE DICE.
   // Fingir una severidad que no tenemos sería inventarse la prioridad del sistema,
   // que es justo lo que este panel presume de explicar.
+  const tasks = Object.keys(known).length > 0 ? known : null
+  const pois = state?.pois ?? null
   const criterion = tasks ? 'por severidad' : 'por coste (sin tareas del core)'
 
   const assignments = [...(plan?.assignments ?? [])].sort((a, b) => {
@@ -122,16 +129,19 @@ export function PriorityQueue({
             const task = tasks?.[assignment.task_id]
             const from = assignment.route[0]
             const to = assignment.route[assignment.route.length - 1]
+            // El core puede mandar DOS unidades al mismo frente (dos asignaciones con el
+            // mismo `task_id`): la clave de la fila es la pareja, nunca la tarea sola.
             const target = `${assignment.unit_id}:${assignment.task_id}`
             return (
               <Row
                 key={target}
-                primary={`${shortId(assignment.unit_id)} → ${shortId(assignment.task_id)}`}
+                primary={`${shortId(assignment.unit_id)} → ${taskName(assignment.task_id, tasks, pois)}`}
                 meta={`llega en ${seconds(assignment.eta_s)}`}
                 status={task ? SEVERITY[task.severity] : undefined}
                 tone={task?.severity === 'critical' ? 'urgent' : undefined}
-                // Ruta y coste son del solver, no de quien mira: al `title` (REQ-329).
-                hint={`${from && to ? `${from} → ${to}` : 'sin ruta'} · coste ${assignment.cost.toFixed(1)}`}
+                // Ruta, coste y el id de la tarea son del solver, no de quien mira: al
+                // `title` (REQ-329).
+                hint={`${assignment.task_id} · ${from && to ? `${from} → ${to}` : 'sin ruta'} · coste ${assignment.cost.toFixed(1)}`}
               >
                 {/* La intervención humana, que es requisito del reto y se usa en
                     directo. El `target` sale de la propia fila: en el pitch no se
@@ -172,14 +182,19 @@ export function PriorityQueue({
           con un camión averiado, alguien tiene que ver qué se ha quedado sin nadie. */}
       <Section title="Sin cubrir" n={unassigned.length} empty="Todas las tareas tienen unidad.">
         <Rows>
-          {unassigned.map((taskId) => (
-            <Row
-              key={taskId}
-              primary={shortId(taskId)}
-              status={tasks?.[taskId] ? SEVERITY[tasks[taskId]!.severity] : 'sin cubrir'}
-              tone="urgent"
-            />
-          ))}
+          {unassigned.map((taskId) => {
+            const task = tasks?.[taskId]
+            return (
+              <Row
+                key={taskId}
+                primary={taskName(taskId, tasks, pois)}
+                meta={task ? `gravedad ${SEVERITY[task.severity]}` : 'sin tarea en el estado'}
+                status="sin cubrir"
+                tone="urgent"
+                hint={taskId}
+              />
+            )
+          })}
         </Rows>
       </Section>
 

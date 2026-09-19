@@ -150,7 +150,7 @@ function describeNarrowed(ev: VelaEvent): Described {
         return {
           label: 'CELDA APAGADA',
           tone: 'decision',
-          sentence: `${cell_id} · ${CELL_CAUSE.extinguished}`,
+          sentence: `celda ${CELL_CAUSE.extinguished} · ${cell_id}`,
         }
       }
       return {
@@ -171,23 +171,31 @@ function describeNarrowed(ev: VelaEvent): Described {
     case 'call.started': {
       // El canal se dice: un aviso por Telegram no es una llamada de voz, y en el
       // pitch la diferencia es el beat entero («la voz da el qué, Telegram el dónde»).
-      const canal = ev.payload.channel === 'telegram' ? 'Telegram' : 'teléfono'
+      // Por Telegram no se pinta ni `to` ni `call_id`: los dos SON el `chat_id`, que
+      // no le dice nada a quien mira y es un dato personal del vecino.
+      const label = ev.payload.direction === 'inbound' ? 'AVISO DEL VECINO' : 'ORDEN DEL AGENTE'
+      if (ev.payload.channel === 'telegram') {
+        return { label, tone: 'call', sentence: 'vecino por Telegram · chat abierto' }
+      }
       return {
-        label: ev.payload.direction === 'inbound' ? 'AVISO DEL VECINO' : 'ORDEN DEL AGENTE',
+        label,
         tone: 'call',
-        sentence: `${ev.payload.call_id} · ${canal} ${ev.payload.to}`,
+        sentence: `${ev.payload.call_id} · teléfono ${ev.payload.to}`,
       }
     }
 
     case 'citizen.location': {
       // El pin GPS del vecino, ya anclado (o no) a un POI por el core. `sin anclar` se
       // dice en voz alta: un pin lejos de todo es información, no un fallo que esconder.
-      const { call_id, poi_name, text, live } = ev.payload
-      const donde = poi_name ? `ubicación anclada a ${poi_name}` : 'ubicación sin anclar'
+      // Sin `call_id`: es el `chat_id`, y la frase ya dice quién y por dónde.
+      const { poi_name, text, live } = ev.payload
+      const donde = poi_name
+        ? `el vecino manda su ubicación: junto a ${poi_name}`
+        : 'el vecino manda su ubicación: sin anclar a ningún pueblo'
       return {
         label: 'TELEGRAM',
         tone: 'call',
-        sentence: `${call_id} · ${donde}${live ? ' · en vivo' : ''}${text ? ` · «${text}»` : ''}`,
+        sentence: `${donde}${live ? ' · en vivo' : ''}${text ? ` · «${text}»` : ''}`,
       }
     }
 
@@ -313,18 +321,6 @@ function describeNarrowed(ev: VelaEvent): Described {
           ev.payload.score != null ? ` · ${ev.payload.score.toFixed(2)}` : ''
         }`,
       }
-
-    case 'citizen.location': {
-      // La ubicación que el vecino manda por Telegram tras colgar. Se dice dónde cae —el
-      // POI si se resolvió, si no las coordenadas reales— y de qué llamada viene.
-      const { call_id, poi_id, poi_name, lat, lon, live } = ev.payload
-      const where = poi_name ?? (poi_id ? shortId(poi_id) : `${lat.toFixed(4)}, ${lon.toFixed(4)}`)
-      return {
-        label: 'UBICACIÓN',
-        tone: 'call',
-        sentence: `${call_id} · ${where}${live ? ' · en directo' : ''}`,
-      }
-    }
 
     case 'event.malformed':
       return {

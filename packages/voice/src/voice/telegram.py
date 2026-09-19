@@ -25,6 +25,19 @@ que el bot conteste.
 
 La ruta trae su propio secreto (`X-Telegram-Bot-Api-Secret-Token`, el que se pasa a
 `setWebhook`): Telegram no puede mandar el `X-Vela-Token` del resto de `/webhooks/*`.
+**Sin `TELEGRAM_SECRET_TOKEN` la ruta responde 401**: es la única puerta que ve internet
+sin el token compartido, y no se deja abierta por olvidar una variable.
+
+El pin se cuelga de la llamada de voz que lo motivó (`recent_voice_call`): el
+`citizen.location` declara en `causes` el `call.started` de esa llamada (el dashboard
+cierra con él su hueco de `location_hint`), y los recuentos que el tool dejó sin ubicar
+(«dos que no pueden andar» sin saber dónde) se publican con el POI del pin.
+
+Una ubicación en vivo (`edited_message`) publica `citizen.location` en cada edición
+(el mapa sigue el pin) pero solo confirma el POI y contesta cuando el POI cambia.
+
+El token del bot no sale por el log: `httpx` loguea a INFO la URL de cada petición y la
+URL de la Bot API lo lleva; un `logging.Filter` lo tapa (`bot***`).
 
 CLI: `python -m voice.telegram --set-webhook <url_pública>` | `--info` |
 `--simulate --to http://localhost:8000 --lat 40.4168 --lon -3.7038 --text "..."`.
@@ -46,15 +59,42 @@ import httpx
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from contracts.bus import current_run_id, current_t_sim, make_event, publish, subscribe
-from contracts.calls import CallFacts, Fact
+from contracts.calls import CallFacts, Fact, Severity
 from contracts.events import EventType
 from contracts.scenario import GeoAnchor
 from contracts.settings import settings
 from voice import humanlike, pois
-from voice.budget import FieldState
 from voice.webhooks import _fact_event, _gateway
 
 log = logging.getLogger("voice.telegram")
+
+_TOKEN_RE = re.compile(r"bot\d+:[\w-]+")
+
+
+class RedactBotToken(logging.Filter):
+    """`httpx` loguea a INFO «HTTP Request: POST https://api.telegram.org/bot<TOKEN>/…».
+    Se instala en el logger de `httpx` al importar: el token nunca llega a un handler."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        token = settings.telegram_bot_token
+        hit = bool(_TOKEN_RE.search(msg)) or bool(token and token in msg)
+        if hit:
+            if token:
+                msg = msg.replace(token, "***")
+            record.msg = _TOKEN_RE.sub("bot***", msg)
+            record.args = ()
+        return True
+
+
+def install_log_filter() -> None:
+    for name in ("httpx", "httpcore"):
+        lg = logging.getLogger(name)
+        if not any(isinstance(f, RedactBotToken) for f in lg.filters):
+            lg.addFilter(RedactBotToken())
+
+
+install_log_filter()
 
 router = APIRouter(tags=["voice"])
 """Sin prefijo: el gateway lo monta con `prefix="/webhooks"` (`POST /webhooks/telegram`).
@@ -68,6 +108,13 @@ CALL_PREFIX = humanlike.TELEGRAM_PREFIX  # "tg_"
 PIN_CONFIDENCE = 0.95
 """Un pin GPS de un móvil: observado, pero no infalible (precisión del GPS, un pin
 compartido desde otro sitio). Por encima del umbral duro (0,85) y por debajo de 1."""
+PENDING_CONFIDENCE = 0.7
+"""Un recuento del tool («dos que no pueden andar») colocado por el pin: el dato es de la
+llamada y el sitio del pin, ninguno verificado por Jev. `inferred`, por encima del umbral
+blando (0,55) y por debajo del pin."""
+RECENT_CALL_S = 300.0
+"""Una llamada colgada hace menos de esto sigue siendo «la llamada» de la que viene el
+pin: el vecino cuelga y manda la ubicación."""
 
 M_PER_DEG_LAT = 111_320.0
 """Metros por grado de latitud; la longitud se corrige con el coseno de la latitud."""
@@ -147,6 +194,7 @@ def parse_update(update: dict) -> Incoming | None:
 _seen_updates: set[int] = set()
 _started: dict[str, str] = {}  # chat_id → run_id en el que ya se publicó call.started
 _sessions: dict[str, humanlike.ConversationMonitor] = {}
+_last_poi: dict[str, str | None] = {}  # chat_id → POI del último pin (None = sin anclar)
 _dry = itertools.count(1)
 
 
@@ -155,6 +203,7 @@ def reset() -> None:
     _seen_updates.clear()
     _started.clear()
     _sessions.clear()
+    _last_poi.clear()
 
 
 def session(call_id: str, run_id: str) -> humanlike.ConversationMonitor:
@@ -174,9 +223,16 @@ def session(call_id: str, run_id: str) -> humanlike.ConversationMonitor:
 # --- La ruta ---------------------------------------------------------------------
 
 
+NO_SECRET_DETAIL = "sin TELEGRAM_SECRET_TOKEN"
+
+
 def _check_secret(token: str) -> None:
+    """Sin secreto configurado la ruta está cerrada, no abierta: el gateway exime a
+    `/webhooks/telegram` del `X-Vela-Token` solo si este secreto existe."""
     expected = settings.telegram_secret_token
-    if expected and token != expected:
+    if not expected:
+        raise HTTPException(status_code=401, detail=NO_SECRET_DETAIL)
+    if token != expected:
         raise HTTPException(status_code=401, detail="secret")
 
 
@@ -193,8 +249,15 @@ async def telegram_webhook(
         return {"ok": True, "ignored": True}
     if inc.update_id in _seen_updates:
         return {"dup": True}
-    _seen_updates.add(inc.update_id)
-    return await handle(inc)
+    try:
+        out = await handle(inc)
+    except Exception as exc:  # se anota y Telegram reintenta el update
+        # Se responde 200 para que Telegram no reintente en bucle; el update no se marca
+        # como visto, así que si lo reintenta (o el vecino reenvía) se procesa entero.
+        log.exception("telegram: update %s de %s falló", inc.update_id, inc.chat_id)
+        return {"ok": False, "error": repr(exc)}
+    _seen_updates.add(inc.update_id)  # visto solo cuando se ha procesado de verdad
+    return out
 
 
 async def handle(inc: Incoming) -> dict:
@@ -205,6 +268,7 @@ async def handle(inc: Incoming) -> dict:
         log.warning("telegram: update de %s sin run en curso", inc.chat_id)
     call_id = f"{CALL_PREFIX}{inc.chat_id}"
     mon = session(call_id, run_id)
+    voice = recent_voice_call()
     causes: list[int] = []
 
     if _started.get(inc.chat_id) != run_id:
@@ -235,15 +299,42 @@ async def handle(inc: Incoming) -> dict:
 
     poi_id: str | None = None
     poi_name: str | None = None
+    n_pending = 0
     if inc.lat is not None and inc.lon is not None:
-        poi_id, poi_name, loc_seq = await _publish_location(inc, call_id, causes)
+        # El pin declara la llamada de voz de la que viene: con ese seq en `causes` el
+        # dashboard cierra el hueco `location_hint` de ESA llamada, no solo el del chat.
+        loc_causes = list(causes)
+        if voice is not None and voice.started_seq is not None:
+            loc_causes.append(voice.started_seq)
+        poi_id, poi_name, loc_seq = await _publish_location(inc, call_id, loc_causes)
         causes = [loc_seq]
+        changed = inc.chat_id not in _last_poi or _last_poi[inc.chat_id] != poi_id
+        _last_poi[inc.chat_id] = poi_id
+        if inc.live and not changed:
+            # Ubicación en vivo sin cambio de POI: el mapa sigue el pin y nada más. Ni
+            # acuse (sería uno por segundo) ni hecho (ya está) ni replan.
+            log.info("telegram %s: pin en vivo, mismo POI (%s)", call_id, poi_id)
+            return {
+                "ok": True,
+                "call_id": call_id,
+                "poi_id": poi_id,
+                "poi_name": poi_name,
+                "live": True,
+                "unchanged": True,
+                "facts_from_text": 0,
+                "ack": None,
+                "sent": None,
+            }
         if poi_id:
-            fact = _fact_event(_pin_fact(poi_id, call_id), call_id)
-            fact.causes = [loc_seq]
-            await publish(fact)
-            causes.append(fact.seq)
-            mon.state.tool_facts_keys.add(fact.payload["key"])
+            key = f"poi:{poi_id}:confirmed"
+            if key not in mon.state.tool_facts_keys:
+                fact = _fact_event(_pin_fact(poi_id, call_id), call_id)
+                fact.causes = [loc_seq]
+                await publish(fact)
+                causes.append(fact.seq)
+                mon.state.tool_facts_keys.add(key)
+            if voice is not None:
+                n_pending = await publish_pending(voice, mon, poi_id, loc_seq)
 
     n_text_facts = 0
     if inc.text:
@@ -266,11 +357,13 @@ async def handle(inc: Incoming) -> dict:
         )
     )
     log.info(
-        "telegram %s (%s): pin=%s poi=%s hechos_texto=%d acuse=%s",
+        "telegram %s (%s): pin=%s poi=%s llamada=%s pendientes=%d hechos_texto=%d acuse=%s",
         call_id,
         inc.first_name,
         inc.lat is not None,
         poi_id,
+        voice.call_id if voice else "-",
+        n_pending,
         n_text_facts,
         sent or "no enviado",
     )
@@ -279,10 +372,89 @@ async def handle(inc: Incoming) -> dict:
         "call_id": call_id,
         "poi_id": poi_id,
         "poi_name": poi_name,
+        "voice_call_id": voice.call_id if voice else None,
+        "facts_from_call": n_pending,
         "facts_from_text": n_text_facts,
         "ack": ack,
         "sent": sent,
     }
+
+
+# --- La llamada de voz de la que viene el pin ----------------------------------------
+
+
+def recent_voice_call() -> humanlike.CallState | None:
+    """La llamada de voz a la que se cuelga el pin: la más reciente con el ack del tool
+    aún esperando; si no, la entrante viva más reciente; si no, la última colgada hace
+    menos de `RECENT_CALL_S`. None si no hay ninguna: el pin va solo, como hasta ahora."""
+    alive = [
+        m.state
+        for cid, m in humanlike.MONITORS.items()
+        if not cid.startswith(CALL_PREFIX) and not m.state.ended
+    ]
+    pool = [st for st in alive if st.tool_pending] or alive
+    if pool:
+        return max(pool, key=lambda st: st.started_t)
+    now = time.time()
+    ended = [
+        st
+        for cid, st in humanlike.RECENT_ENDED.items()
+        if not cid.startswith(CALL_PREFIX) and now - st.ended_t < RECENT_CALL_S
+    ]
+    return max(ended, key=lambda st: st.ended_t) if ended else None
+
+
+async def publish_pending(
+    voice: humanlike.CallState,
+    mon: humanlike.ConversationMonitor,
+    poi_id: str,
+    loc_seq: int,
+) -> int:
+    """Los recuentos que la llamada dejó sin ubicar (`pending_facts` del camino sin Jev,
+    o `people_immobile` observado con `location_hint` abierto en el de Jev) entran al
+    estado con el POI del pin: `inferred` (el dato es de la llamada, el sitio del pin),
+    fuente el chat, causa el pin. Devuelve cuántos."""
+    counts = dict(voice.pending_facts)
+    severity: Severity = voice.pending_severity  # type: ignore[assignment]
+    vm = humanlike.MONITORS.get(voice.session_id)
+    if vm is not None and vm.perception.active:
+        from_jev = vm.perception.unlocated_counts()
+        if from_jev:
+            counts.update(from_jev)
+            severity = vm.perception.completeness.severity()
+    n = 0
+    call_id = mon.state.call_id
+    for suffix, value in counts.items():
+        key = f"poi:{poi_id}:{suffix}"
+        if key in mon.state.tool_facts_keys:
+            continue
+        ev = _fact_event(
+            Fact(
+                key=key,
+                value=value,
+                confidence=PENDING_CONFIDENCE,
+                source=f"call:{call_id}",
+                severity=severity,
+                t_sim=current_t_sim(),
+                kind="inferred",
+                call_id=call_id,
+            ),
+            call_id,
+        )
+        ev.causes = [loc_seq]
+        await publish(ev)
+        mon.state.tool_facts_keys.add(key)
+        n += 1
+    if n:
+        log.info(
+            "telegram %s: %d recuento(s) de %s colocados en %s",
+            call_id,
+            n,
+            voice.call_id,
+            poi_id,
+        )
+    voice.pending_facts.clear()
+    return n
 
 
 async def _publish_location(
@@ -351,9 +523,7 @@ async def perceive_text(
     los hechos salen `inferred` y con el POI del pin. Devuelve cuántos hechos nuevos."""
     if mon.perception.active:
         if poi_id:
-            mon.perception.completeness.fields["location_hint"] = FieldState(
-                "observed", poi_id, PIN_CONFIDENCE
-            )
+            mon.perception.pin(poi_id, PIN_CONFIDENCE)  # Jev no lo pregunta ni lo pisa
         before = mon.perception.facts_published
         await mon.perception.tick(mon.jev_turns(), final=True, wait=True)
         return mon.perception.facts_published - before
@@ -425,12 +595,17 @@ def _token_ok() -> bool:
     return bool(settings.telegram_bot_token) and not settings.vela_no_telegram
 
 
+def _client() -> httpx.AsyncClient:
+    """Los tests lo sustituyen por uno con `MockTransport`."""
+    return httpx.AsyncClient(timeout=SEND_TIMEOUT_S)
+
+
 async def api_call(method: str, body: dict) -> dict | None:
     """Un método de la Bot API. Devuelve `result` o None si falla; nunca lanza. El
     token no sale por el log: se dice el método y el motivo."""
     url = f"{TELEGRAM_API}/bot{settings.telegram_bot_token}/{method}"
     try:
-        async with httpx.AsyncClient(timeout=SEND_TIMEOUT_S) as c:
+        async with _client() as c:
             r = await c.post(url, json=body)
     except httpx.HTTPError as exc:
         log.warning("telegram %s: %s", method, type(exc).__name__)

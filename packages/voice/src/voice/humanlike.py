@@ -439,6 +439,14 @@ class CallState:
         None  # con Web Call no hay caller_number: lo da el vecino
     )
     last_jev_len: int = 0  # turnos que ya vio el último tick de Jev
+    started_seq: int | None = (
+        None  # seq del `call.started`: lo que un pin de Telegram declara en `causes`
+    )
+    ended_t: float = 0.0  # cuándo se colgó (0 = sigue viva)
+    pending_facts: dict[str, int] = field(
+        default_factory=dict
+    )  # hechos del tool sin POI (`immobile`, `injuries`…): los publica el pin de Telegram
+    pending_severity: str = "medium"
 
     def __post_init__(self) -> None:
         self.call_id = self.call_id or self.session_id
@@ -565,6 +573,7 @@ class ConversationMonitor:
     async def close(self) -> dict | None:
         """Al colgar: `analyze`. Devuelve el informe o None."""
         self.state.ended = True
+        self.state.ended_t = time.time()
         if self._task and not self._task.done():
             self._task.cancel()
         for t in list(self._bg):
@@ -908,8 +917,18 @@ def get_or_start(session_id: str, run_id: str) -> ConversationMonitor:
     return mon
 
 
+RECENT_ENDED: dict[str, CallState] = {}
+"""Las últimas llamadas colgadas (solo el estado, sin monitor): un pin de Telegram que
+llega justo después de colgar todavía se cuelga de ellas (`voice.telegram`)."""
+RECENT_ENDED_MAX = 20
+
+
 def forget(session_id: str) -> None:
-    MONITORS.pop(session_id, None)
+    mon = MONITORS.pop(session_id, None)
+    if mon is not None:
+        RECENT_ENDED[session_id] = mon.state
+        while len(RECENT_ENDED) > RECENT_ENDED_MAX:
+            RECENT_ENDED.pop(next(iter(RECENT_ENDED)))
 
 
 async def signal_dispatcher() -> None:

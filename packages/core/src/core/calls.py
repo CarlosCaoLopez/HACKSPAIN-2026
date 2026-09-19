@@ -51,13 +51,19 @@ def unit_name(unit: Unit) -> str:
     return f"{base} {m.group(1)}" if m else base
 
 
-def route_name(route: list[str], roads: dict[str, RoadEdge] | None = None) -> str:
+def route_name(
+    route: list[str],
+    roads: dict[str, RoadEdge] | None = None,
+    aliases: dict[str, str] | None = None,
+) -> str:
     """El nombre que se dice por teléfono. Si la ruta pasa por el desvío norte o sur
     (waypoints con `nor`/`sur`), "pista norte"/"pista sur": la pista por la que se
     recorren más waypoints, sin contar el de salida (la unidad puede estar parada en
     una pista cortada y salir por la otra; al molino se llega por la norte y Pueblo A
     aunque su waypoint sea `wp_sur_02`). Empate: el tramo más cercano al destino. Si
-    no, los ids de las aristas de la ruta, unidos."""
+    no, cada arista de la ruta por su nombre de calle (`Scenario.road_aliases`,
+    alias → id; se usa el primero que apunte a la arista: «pista de pueblo b») y, sin
+    alias, su id."""
     hops = route[1:] if len(route) > 1 else route
     sur = sum("sur" in wp.lower() for wp in hops)
     nor = sum("nor" in wp.lower() for wp in hops)
@@ -72,14 +78,28 @@ def route_name(route: list[str], roads: dict[str, RoadEdge] | None = None) -> st
                 return "pista norte"
     if len(route) < 2:
         return route[0] if route else ""
-    return ", ".join(_edge_id(a, b, roads) for a, b in pairwise(route))
+    names = _alias_by_edge(aliases)
+    return ", ".join(_edge_name(a, b, roads, names) for a, b in pairwise(route))
 
 
-def _edge_id(a: str, b: str, roads: dict[str, RoadEdge] | None) -> str:
+def _alias_by_edge(aliases: dict[str, str] | None) -> dict[str, str]:
+    """Mapa inverso arista → PRIMER alias del escenario (el YAML lista primero el
+    nombre más natural)."""
+    out: dict[str, str] = {}
+    for alias, edge_id in (aliases or {}).items():
+        out.setdefault(edge_id, alias)
+        out.setdefault(road_bare(edge_id), alias)
+    return out
+
+
+def _edge_name(
+    a: str, b: str, roads: dict[str, RoadEdge] | None, names: dict[str, str]
+) -> str:
     for e in (roads or {}).values():
         if {e.a, e.b} == {a, b}:
-            return road_bare(e.id)
-    return f"{a}-{b}"
+            return names.get(e.id) or names.get(road_bare(e.id)) or road_bare(e.id)
+    bare = f"{a}-{b}"
+    return names.get(bare) or names.get(f"{b}-{a}") or bare
 
 
 def urgency_of(task: Task) -> Urgency:
@@ -93,6 +113,7 @@ def evacuation_call(
     to: str,
     hazard_kind: str,
     roads: dict[str, RoadEdge] | None = None,
+    aliases: dict[str, str] | None = None,
 ) -> CallRequest:
     """La orden de evacuación para el POI de una tarea `evacuate` ya asignada."""
     deadline = math.ceil(assignment.eta_s / 60.0) + DEADLINE_MARGIN_MIN
@@ -105,7 +126,7 @@ def evacuation_call(
         urgency=urgency_of(task),
         facts={
             "poi_name": poi.name,
-            "route_name": route_name(assignment.route, roads),
+            "route_name": route_name(assignment.route, roads, aliases),
             "deadline_min": str(deadline),
             "hazard_kind": hazard_name(hazard_kind),
         },

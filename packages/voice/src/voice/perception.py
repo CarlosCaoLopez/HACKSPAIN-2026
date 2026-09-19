@@ -25,7 +25,7 @@ from contracts.calls import CallFacts, Fact
 from contracts.events import EventType
 from contracts.questions import NOT_STATED
 from voice import gapfill, jev, pois
-from voice.budget import TRACKED, Completeness, safe_default
+from voice.budget import TRACKED, Completeness, FieldState, safe_default
 
 log = logging.getLogger("voice.perception")
 
@@ -49,10 +49,46 @@ class CallPerception:
         self._fill_tried = False
         self._lock = asyncio.Lock()
         self.confirmed_order: bool | None = None
+        self.pinned_poi: str | None = None
+        """Un pin GPS (Telegram) anclado a un POI: `location_hint` queda fijado como
+        observado y Jev ni pregunta por él ni puede sustituirlo por lo que diga el texto
+        («estamos al molino» no gana a un pin que cae en Pueblo B)."""
 
     @property
     def facts_published(self) -> int:
         return len(self._emitted)
+
+    def pin(self, poi_id: str, confidence: float) -> None:
+        """Fija `location_hint` al POI del pin. Manda sobre cualquier tick posterior."""
+        self.pinned_poi = poi_id
+        self.completeness.fields["location_hint"] = FieldState(
+            "observed", poi_id, confidence
+        )
+
+    def _hold_pin(self) -> None:
+        if (
+            self.pinned_poi
+            and self.completeness.fields["location_hint"].value != self.pinned_poi
+        ):
+            self.completeness.fields["location_hint"] = FieldState(
+                "observed",
+                self.pinned_poi,
+                self.completeness.fields["location_hint"].confidence,
+            )
+
+    def unlocated_counts(self) -> dict[str, int]:
+        """Lo que la llamada contó pero no supo ubicar (`people_immobile` con
+        `location_hint` sin resolver): lo que un pin de Telegram puede colocar. Sufijo de
+        la clave `poi:<id>:<sufijo>` → valor."""
+        f = self.completeness.fields
+        loc, imm = f["location_hint"], f["people_immobile"]
+        if loc.value and loc.value != NOT_STATED and loc.status == "observed":
+            return {}
+        if imm.value and imm.value != NOT_STATED and imm.status == "observed":
+            count = _count(imm.value)
+            if count:
+                return {"immobile": count}
+        return {}
 
     @property
     def active(self) -> bool:
@@ -75,7 +111,10 @@ class CallPerception:
             answers: dict[str, tuple[str, float]] = {}
             if new_text and turns:
                 answers = await self._ask_jev(turns)
+            if self.pinned_poi:
+                answers.pop("location_hint", None)  # el pin manda sobre el texto
             dec = self.completeness.update(answers, self._clock())
+            self._hold_pin()
             if dec.fill and not final and not self._fill_tried:
                 await self._fill(dec.fill, turns)
             await self._publish()
@@ -86,6 +125,8 @@ class CallPerception:
         # `contradicts_known` compara contra los hechos vigentes del sistema, que voice
         # no ve (invariante 4): sin ese contexto la pregunta no significa nada.
         questions.pop("contradicts_known", None)
+        if self.pinned_poi:
+            questions.pop("location_hint", None)  # ya lo dio el pin: no se pregunta
         perc = await jev.get_jev().tick(jev.build_state(turns), questions)
         if perc is None:
             return {}

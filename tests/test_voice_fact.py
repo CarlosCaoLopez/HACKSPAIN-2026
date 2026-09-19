@@ -106,6 +106,46 @@ async def test_tool_publishes_facts_then_ack(client, journal, fakes):
     assert affect.payload["emotions"][0]["type"] == "fear"
 
 
+async def test_tool_without_start_webhook_starts_the_call_once(client, journal, fakes):
+    """El tool puede llegar antes que (o sin) el webhook de inicio: la llamada existe
+    desde el primer tool y el `seq` de su `call.started` queda en el estado, que es lo
+    que un pin de Telegram declara en `causes`. El inicio que llegue después no la
+    duplica."""
+    await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
+    started = [e for e in journal if e.type == EventType.CALL_STARTED]
+    assert len(started) == 1 and started[0].payload["call_id"] == "sess_1"
+    assert started[0].payload["direction"] == "inbound"
+    assert started[0].seq < next(
+        e.seq for e in journal if e.type == EventType.WORLD_FACT_ASSERTED
+    )
+    assert humanlike.MONITORS["sess_1"].state.started_seq == started[0].seq
+    start = {"type": "start", "session_id": "sess_1", "run_id": "run_test", "to": "+34"}
+    r = await client.post("/webhooks/happyrobot/call", json=start, headers=HEADERS)
+    assert r.json() == {"ok": True, "dup": True}
+    assert len([e for e in journal if e.type == EventType.CALL_STARTED]) == 1
+
+
+async def test_start_webhook_then_tool_starts_once(client, journal, fakes):
+    start = {"type": "start", "session_id": "sess_1", "run_id": "run_test", "to": "+34"}
+    await client.post("/webhooks/happyrobot/call", json=start, headers=HEADERS)
+    await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)
+    started = [e for e in journal if e.type == EventType.CALL_STARTED]
+    assert len(started) == 1 and started[0].payload["to"] == "+34"
+
+
+async def test_unlocated_counts_wait_for_the_pin(client, journal, fakes):
+    """Sin POI, `people_immobile` no entra al estado (hecho sin ubicar) pero queda
+    pendiente en el monitor para que el pin de Telegram lo coloque."""
+    body = {
+        "session_id": "sess_far",
+        "run_id": "run_test",
+        "params": {"location_hint": "no sé, unas casas", "people_immobile": "2"},
+    }
+    r = await client.post("/webhooks/happyrobot/fact", json=body, headers=HEADERS)
+    assert r.json()["resolved_poi_name"] is None and r.json()["facts_published"] == 0
+    assert humanlike.MONITORS["sess_far"].state.pending_facts == {"immobile": 2}
+
+
 async def test_duplicate_tool_post_is_idempotent(client, journal, fakes):
     a = (
         await client.post("/webhooks/happyrobot/fact", json=BODY, headers=HEADERS)

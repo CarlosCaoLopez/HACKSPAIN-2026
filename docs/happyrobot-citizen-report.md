@@ -122,6 +122,8 @@ Los nombres exactos de `session_status` y `agent.transcript` salen del selector 
 
 *Workflow settings > Signals > Outbound webhooks* → *Add Webhook*: URL `@VELA_URL/webhooks/happyrobot/call`, header `X-Vela-Token`. Si los eventos que manda no llevan `type: start`, no pasa nada: el monitor arranca en el primer tool y la transcripción se recupera del webhook de fin.
 
+**No** pongas un nodo Webhook entre el trigger y el agente para mandar el `start`: ni el trigger *Web Call* ni el *Inbound to number* exponen `session_id` (solo lo tiene el agente, y el backend lo exige y lo usa de clave del monitor), así que el cuerpo iría vacío (`422`) o con otro id (tarjeta fantasma); y además retrasaría el descolgar lo que tarde el túnel. Detalle en el anexo del paso 8.
+
 ## 7. Publicar y probar
 
 1. *Publish*. Abre el enlace de la web call (Chrome, permiso de micrófono) en el portátil o el móvil y pulsa para hablar. Di: «Hola, estoy en el molino viejo, la pista del sur está cortada por un árbol y hay tres personas en la casa de al lado que no pueden andar».
@@ -177,20 +179,30 @@ Montado por API: `POST /workflows/{slug}/duplicate` (solo copia; el trigger se s
 
 ## Anexo · paso 8 de la demo: ubicación por Telegram (montado por API el sábado ~13:45)
 
-Estado: `citizen_report` (`ikdg6o9mjj9h`) **v2 viva en development** y `citizen_report_phone` (`wyoxcfeop329`) **v2 viva en production**; las v1 quedan publicadas-no-vivas por si hay que volver. Los dos llevan el mismo prompt nuevo, el tool `report_fact` expone `message`, `resolved_poi_name`, `telegram_hint` y `telegram_bot`, y hay una variable de workflow nueva `TELEGRAM_BOT` (dev/staging/prod = `vela_112_bot`, **provisional**: cambiarla al usuario real del bot, sin `@`, en *Workflow settings > Variables* o con `PATCH /workflows/{slug}/variables/{id}`). `VELA_URL` y `VELA_TOKEN` no se han tocado (VELA_URL apunta al túnel `https://75ec-79-117-104-222.ngrok-free.app` en los tres entornos de los dos workflows). Webhooks comprobados: `POST fact` → `{{VELA_URL}}/webhooks/happyrobot/fact` y `POST call end` → `{{VELA_URL}}/webhooks/happyrobot/call`, los dos con `X-Vela-Token`. Agent Signals ON en ambos.
+Estado (sábado ~14:20): `citizen_report` (`ikdg6o9mjj9h`) **v3 viva en development** y `citizen_report_phone` (`wyoxcfeop329`) **v3 viva en production**; v1 y v2 quedan publicadas-no-vivas por si hay que volver. Los dos llevan el mismo prompt (bloque final abajo), el tool `report_fact` expone `message`, `resolved_poi_name`, `telegram_hint` y `telegram_bot`, y hay una variable de workflow `TELEGRAM_BOT` (dev/staging/prod = `vela_112_bot`, **provisional y ya no referenciada desde el prompt**: el nombre del bot lo pone el backend dentro de `message` a partir de `TELEGRAM_BOT_USERNAME` del `.env`; la variable queda por si hace falta en otro nodo). `VELA_URL` y `VELA_TOKEN` no se han tocado (VELA_URL apunta al túnel `https://75ec-79-117-104-222.ngrok-free.app` en los tres entornos de los dos workflows, releído por API tras publicar). Webhooks comprobados en la v3: `POST fact` → `{{VELA_URL}}/webhooks/happyrobot/fact` y `POST call end` → `{{VELA_URL}}/webhooks/happyrobot/call`, los dos con `X-Vela-Token` e *Ignore 5XX*. Agent Signals ON y *Start agent response on signal* ON en ambos.
 
 **Hallazgo importante**: en `citizen_report_phone` (el de la demo, **0 runs hasta hoy**) el *Tool Call Result* de `report_fact` se había generado contra un 422 del backend y el esquema era `{"error": "{\"detail\":\"session_id\"}"}` con solo `error` expuesto: el agente **no habría recibido `message`** al llamar. Arreglado regenerando el esquema (abajo).
 
-### Bloque añadido al final del prompt (idéntico en los dos workflows)
+### Bloque final del prompt (v3, idéntico en los dos workflows)
 
 ```
 Si el vecino no sabe decir dónde está exactamente:
-- Llame a report_fact igualmente en cuanto tenga cualquier dato: un lugar aproximado («cerca de unas casas al final de la pista»), una carretera o pista cortada, personas que no pueden moverse o heridos. No espere a tener la ubicación exacta.
-- Lea el resultado de la herramienta: diga exactamente el campo "message". Si "telegram_hint" es true, o si tras una repregunta el vecino sigue sin saber ubicarse, dígale de usted: «Si tiene Telegram, mande su ubicación al bot <telegram_bot> y seguimos en línea». Use el campo "telegram_bot" del resultado; si no viene, use {{use_case_variables.TELEGRAM_BOT}}. Dígalo una sola vez y no cuelgue: siga en línea.
-- Las señales unit_dispatched y coach se atienden igual que siempre, también después de pedir la ubicación por Telegram.
+- Llama a report_fact igualmente en cuanto tengas cualquier dato: un lugar aproximado («cerca de unas casas al final de la pista»), una carretera o pista cortada, personas que no pueden moverse o heridos. No esperes a tener la ubicación exacta.
+- Di exactamente el campo "message" del resultado de la herramienta, sin añadir nada: si hay que pedir la ubicación por Telegram, la petición ya viene dentro de "message". No la repitas con otras palabras.
+- Si "telegram_hint" es true, no cuelgues: quédate en línea, pregunta al vecino si ha podido enviar la ubicación y sigue atendiendo las señales unit_dispatched y coach como siempre.
 ```
 
-La plataforma reescribe `{{use_case_variables.TELEGRAM_BOT}}` a `{{ index . "use_case_variables.TELEGRAM_BOT" }}` al guardar (su plantilla interna): es la señal de que reconoce la referencia a la variable de workflow (`group_id` = `use_case_variables`, `variable_id` = la clave). Pendiente de oír en una llamada real que se resuelve; si el agente lee el nombre de la variable en voz alta, quitar ese inciso del prompt (el backend ya manda `telegram_bot` en el ack, así que el respaldo casi nunca hace falta).
+Por qué cambió respecto a la v2: el `message` del ack **ya** lleva la frase «Si tiene Telegram, mande su ubicación al bot @… y sabremos exactamente dónde está» (`voice/webhooks.py`, `with_telegram_hint` + `ensure_bot_mentioned`; el backend es el dueño de la frase), y el bloque v2 mandaba decir `message` y además pedir la ubicación, así que el agente lo decía dos veces. También se ha quitado el inciso `{{use_case_variables.TELEGRAM_BOT}}`: la plataforma lo reescribía a `{{ index . "use_case_variables.TELEGRAM_BOT" }}` al guardar (reconoce la referencia), pero no se había oído resolverse en una llamada real y el riesgo de que el agente leyese el nombre de la variable en voz alta no compensaba. El resto del prompt (operador 112, señales `unit_dispatched`/`coach`) no cambia. El bloque va en segunda persona (tú), como el resto del prompt; el vecino sigue tratado de usted.
+
+### Webhook de inicio de llamada: por qué no se ha añadido por API
+
+Se quería un nodo Webhook antes del agente con `{"type":"start","session_id":…,"run_id":…,"direction":"inbound"}` para que la tarjeta de voz naciese al descolgar. No es viable tal cual:
+
+- `available-vars` de los dos workflows: el trigger *Web Call* no expone **ninguna** variable y el *Inbound to number* expone solo `from_number`, `to_number`, `room_name`, `raw_headers`, `user_to_user`. `session_id` existe únicamente en el grupo del agente (`{{$var:<persistent_id del agente>.session_id}}`), y un nodo anterior al agente no lo tiene todavía.
+- El backend (`_on_start` en `voice/webhooks.py`) exige `session_id` (422 sin él) y lo usa como clave del monitor; con otro id (p. ej. `room_name` o `run_id`) crearía un monitor y una `call.started` fantasma que nunca casarían con el `session_id` del tool y del webhook de fin.
+- Un nodo bloqueante entre trigger y agente retrasa el descolgar lo que tarde el túnel (y si el túnel está caído, hasta el timeout).
+
+Alternativas: (a) *Workflow settings > Signals > Outbound webhooks* en la UI (sección 6), que manda eventos de sesión con el id real; (b) cambiar el backend para aceptar `run_id` como clave provisional y reconciliar con `session_id` en el primer tool. Hoy se queda como está: la tarjeta nace en el primer `report_fact`.
 
 ### Endpoints usados (base `https://platform.eu.happyrobot.ai/api/v2`, `Authorization: Bearer <HAPPYROBOT_API_KEY>`)
 
@@ -201,7 +213,7 @@ La plataforma reescribe `{{use_case_variables.TELEGRAM_BOT}}` a `{{ index . "use
 | Variables disponibles en un nodo (y su sintaxis) | `GET /versions/{version_id}/nodes/{node_id}/available-vars` (grupo `use_case_variables` = variables de workflow; el agente expone `session_id`, `status`, `transcript`) |
 | Editar una versión viva | **no se puede** (`400 Cannot change a published or live version`): `POST /versions/{live_id}/fork` → nueva versión sin publicar con ids de nodo **nuevos** (los `persistent_id` se conservan, por eso los `{{$var:<persistent_id>.campo}}` de los cuerpos siguen valiendo) |
 | Prompt | `PUT /versions/{fork_id}/nodes/{prompt_node_id}` con `{"type":"prompt","prompt_md":…,"initial_message":…,"initial_message_uninterruptible":…,"model":…}` |
-| Tool Call Result | `POST …/tools/{tool_id}/tool-call-result/inspect` (cuerpo `{}`; es POST, con GET da 404) · `POST …/tool-call-result/generate` con `{"environment":"staging"}` (**ejecuta el webhook de verdad** con valores de ejemplo: `session_id` real del agente y `params` vacíos) · `PUT …/tool-call-result/visibility` con `{"node_id":<POST fact>,"exposed_fields":[…]}` (lista completa; solo admite campos que existan en el esquema generado: `400 Unknown generated field path(s)`) |
+| Tool Call Result | `POST /versions/{version_id}/tools/{tool_id}/tool-call-result/inspect` (cuerpo `{}`; es POST, con GET da 404; bajo `/nodes/{tool_id}/…` da 404; sobre una versión **viva** responde `400 Cannot change a published or live version`, así que se inspecciona en el fork antes de publicar) · `POST …/tool-call-result/generate` con `{"environment":"staging"}` (**ejecuta el webhook de verdad** con valores de ejemplo: `session_id` real del agente y `params` vacíos) · `PUT …/tool-call-result/visibility` con `{"node_id":<POST fact>,"exposed_fields":[…]}` (lista completa; solo admite campos que existan en el esquema generado: `400 Unknown generated field path(s)`) |
 | Variables de workflow | `GET/POST /workflows/{slug}/variables` (`key`, `value_development`, `value_staging`, `value_production`, obligatorios los tres) · `PATCH /workflows/{slug}/variables/{variable_id}` con solo los campos que cambian |
 | Publicar | `POST /versions/{fork_id}/publish` con `{"environment":"development"|"production","force":true}` (`force` retira la versión viva anterior; sin él pide `unpublish_version_id`) |
 
@@ -211,8 +223,10 @@ La plataforma reescribe `{{use_case_variables.TELEGRAM_BOT}}` a `{{ index . "use
 
 El `generate` dispara `POST {{VELA_URL}}/webhooks/happyrobot/fact` con `params` vacíos, así que contra el gateway de verdad publica hechos falsos (o devuelve 422). Truco usado: un mock local que responde el JSON del ack completo (`ack, message, resolved_poi_name, facts_published, plan_included, telegram_hint, telegram_bot`), un segundo túnel sobre el **mismo agente ngrok** vía su API local (`POST localhost:4040/api/tunnels {"name":"vela_mock","addr":"8791","proto":"http"}`; se borra con `DELETE localhost:4040/api/tunnels/vela_mock`), `VELA_URL` de **staging** apuntando al mock (`PATCH …/variables/{id} {"value_staging": …}`), `generate` con `environment: staging`, luego `visibility` y `VELA_URL` de staging de vuelta al túnel real. Los valores dev/prod no se tocan y la versión viva no se entera. Si el backend añade campos nuevos al ack hay que repetirlo: los campos nuevos nacen ocultos.
 
+**Ojo (aprendido en la v3)**: el `fork` **no copia el esquema regenerado** del Tool Call Result: la bifurcación de la v2 (que exponía `telegram_hint`/`telegram_bot`) nació con el esquema base de la v1 (`ack, message, plan_included, facts_published, resolved_poi_name`) y solo `message` y `resolved_poi_name` expuestos. Es decir, **cada vez que se bifurca para tocar el prompt hay que repetir `generate` + `visibility`** antes de publicar, o el agente se queda sin `telegram_hint`. El `generate` manda el `session_id` de ejemplo del agente (`764a5f01-…` en el web, `0a024f80-…` en el phone) y `params` vacíos; el mock de la v3 respondió el ack completo con `telegram_hint: true` y el bot dentro de `message`. Mock y túnel auxiliar se retiran al terminar (`DELETE localhost:4040/api/tunnels/vela_mock`); comprobado que solo queda el túnel `command_line` a `:8000`.
+
 ### Para probar (Hugo)
 
 1. Poner el usuario real del bot en `TELEGRAM_BOT` (los tres entornos) en los dos workflows.
-2. Llamar al `+1 484 558 1911` y decir «estoy cerca de unas casas al final de la pista, la pista del sur está cortada, no sé el nombre del sitio». El agente tiene que llamar al tool con el lugar aproximado, decir el `message` del ack y, con `telegram_hint: true`, pedir la ubicación por Telegram al bot y **no colgar**.
+2. Llamar al `+1 484 558 1911` y decir «estoy cerca de unas casas al final de la pista, la pista del sur está cortada, no sé el nombre del sitio». El agente tiene que llamar al tool con el lugar aproximado y decir el `message` del ack **una sola vez** (la petición de Telegram va dentro), y con `telegram_hint: true` **no colgar**: preguntar si ha podido mandar la ubicación y seguir en línea.
 3. Mandar el pin por Telegram: en el journal `citizen.location`, `call.started` con `channel: telegram` y la unidad hacia el POI anclado.

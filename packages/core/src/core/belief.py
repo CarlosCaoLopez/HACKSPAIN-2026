@@ -141,13 +141,17 @@ def apply(state: WorldState, ev: Event) -> WorldState:
             task = Task.model_validate(p["task"])
             update["tasks"] = {**state.tasks, task.id: task}
         case EventType.PLAN_EMITTED:
+            # La unidad pasa a `moving` solo si tiene camino que hacer: con una ruta
+            # de un solo waypoint ya está donde se la quiere (el camión sofoca parado)
+            # y su estado lo dice el sim, no el plan.
             plan = Plan.model_validate(p)
             units = dict(state.units)
             for a in plan.assignments:
                 u = units.get(a.unit_id)
                 if u is not None:
+                    status = "moving" if len(a.route) > 1 else u.status
                     units[u.id] = u.model_copy(
-                        update={"task_id": a.task_id, "status": "moving"}
+                        update={"task_id": a.task_id, "status": status}
                     )
             update["units"] = units
         case EventType.ACTION_COMPLETED | EventType.ACTION_FAILED:

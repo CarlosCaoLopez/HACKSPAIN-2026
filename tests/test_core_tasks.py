@@ -809,3 +809,184 @@ def test_a_unit_reached_by_the_fire_can_still_be_assigned_out() -> None:
     by_unit = {a.unit_id: a.task_id for a in plan.assignments}
     assert by_unit.get("unit_ambulance") == "task_evac_poi_pueblo_a", by_unit
     assert "task_evac_poi_pueblo_a" not in plan.unassigned_tasks
+
+
+# --- unidad libre vuelve a base, órdenes que no se repiten -----------------------
+
+
+async def test_free_ambulance_returns_to_its_base_once(journal, fixed_planner) -> None:
+    """La ambulancia evacúa Pueblo A y se queda libre allí: vuelve a su waypoint de
+    origen (`wp_base`) con un `goto`, y solo uno. Así el siguiente rescate la hace
+    salir de la base y se la ve llegar, en vez de «ya va» con ETA 0."""
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    for ev in (
+        _ev(
+            EventType.WORLD_UNIT_POSITION,
+            {"unit_id": "unit_ambulance", "x": 100, "z": 0, "heading": 90.0},
+            t_sim=60.0,
+        ),
+        _ev(
+            EventType.WORLD_UNIT_ARRIVED,
+            {"unit_id": "unit_ambulance", "waypoint_id": "wp_pueblo_a"},
+            t_sim=60.0,
+        ),
+    ):
+        await bus.publish(ev)
+        await core.on_event(ev)
+    assert core.state().tasks["task_evac_poi_pueblo_a"].done is True
+    gotos = [
+        ActionRequested.model_validate(e.payload).args
+        for e in _of(journal, EventType.ACTION_REQUESTED)
+    ]
+    home = [g["route"] for g in gotos if g["unit_id"] == "unit_ambulance"]
+    assert home[-1][0] == "wp_pueblo_a" and home[-1][-1] == "wp_base"
+    assert core._last_actions["unit_ambulance"] == (loop.RETURN_TASK, tuple(home[-1]))
+
+    # Otro tick, aún parada en Pueblo A: no se le repite la orden.
+    tick = _ev(
+        EventType.WORLD_TICK,
+        {"t_sim": 61.0, "wind": {"bearing_deg": 270, "speed": 1.0}},
+        t_sim=61.0,
+    )
+    await bus.publish(tick)
+    await core.on_event(tick)
+    n_after = len(
+        [
+            e
+            for e in _of(journal, EventType.ACTION_REQUESTED)
+            if ActionRequested.model_validate(e.payload).args["unit_id"]
+            == "unit_ambulance"
+        ]
+    )
+    assert n_after == len(home)
+
+
+async def test_no_goto_for_a_unit_already_parked_at_its_waypoint(
+    journal, fixed_planner
+) -> None:
+    """El camión ya está en el waypoint desde el que se ataca la celda: ruta de un
+    solo waypoint, ninguna orden (cada `goto` repetido lo ponía `moving` un segundo
+    y le cortaba el sofocado). Y sigue `idle` en el estado: el plan no lo mueve."""
+    sc = _scenario()
+    truck = next(u for u in sc.units if u.id == "unit_truck2")
+    sc = sc.model_copy(
+        update={
+            "units": [
+                truck.model_copy(update={"x": 30.0, "z": 0.0}),  # en wp_cruce
+                *(u for u in sc.units if u.id != "unit_truck2"),
+            ]
+        }
+    )
+    core = loop.Core(bus, sc)
+    await _ignite(core)
+    plan = core.current_plan()
+    a = next(a for a in plan.assignments if a.unit_id == "unit_truck2")
+    assert a.route == ["wp_cruce"]
+    gotos = [
+        ActionRequested.model_validate(e.payload).args["unit_id"]
+        for e in _of(journal, EventType.ACTION_REQUESTED)
+    ]
+    assert "unit_truck2" not in gotos
+    assert core.state().units["unit_truck2"].status == "idle"
+    assert core._last_actions["unit_truck2"] == ("task_front_5_0", ("wp_cruce",))
+
+
+async def test_units_out_of_the_plan_keep_their_last_order(
+    journal, fixed_planner
+) -> None:
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    assert set(core._last_actions) == {"unit_truck2", "unit_ambulance"}
+    # La evacuación cierra: la ambulancia sale del plan pero su última orden (ahora
+    # la vuelta a base) sigue registrada, y la del camión no se toca.
+    truck_order = core._last_actions["unit_truck2"]
+    ev = _ev(
+        EventType.WORLD_UNIT_ARRIVED,
+        {"unit_id": "unit_ambulance", "waypoint_id": "wp_pueblo_a"},
+        t_sim=60.0,
+    )
+    await bus.publish(ev)
+    await core.on_event(ev)
+    assert core._last_actions["unit_truck2"] == truck_order
+    assert "unit_ambulance" in core._last_actions
+
+
+async def test_two_trucks_one_front_is_a_valid_plan(journal, fixed_planner) -> None:
+    sc = _scenario()
+    sc = sc.model_copy(
+        update={
+            "units": sc.units
+            + [
+                Unit(
+                    id="unit_truck1",
+                    kind="fire_truck",
+                    x=0,
+                    z=0,
+                    capabilities=["extinguish"],
+                )
+            ]
+        }
+    )
+    core = loop.Core(bus, sc)
+    await _ignite(core)
+    plan = core.current_plan()
+    trucks = sorted(a.unit_id for a in plan.assignments if a.task_id == "task_front_5_0")
+    assert trucks == ["unit_truck1", "unit_truck2"]
+    assert not _of(journal, EventType.PLAN_VIOLATION)
+    assert "task_front_5_0" not in plan.unassigned_tasks
+
+
+# --- nombres de calle y esquema del planner ----------------------------------------
+
+
+def test_route_name_uses_the_scenario_aliases() -> None:
+    roads = {
+        "road:wp_sur_02-wp_pueblo_b": RoadEdge(
+            id="road:wp_sur_02-wp_pueblo_b", a="wp_sur_02", b="wp_pueblo_b", length_m=84
+        )
+    }
+    aliases = {
+        "pista de pueblo b": "road:wp_sur_02-wp_pueblo_b",
+        "camino de pueblo b": "road:wp_sur_02-wp_pueblo_b",  # el primero manda
+    }
+    route = ["wp_sur_02", "wp_pueblo_b"]
+    assert calls.route_name(route, roads) == "wp_sur_02-wp_pueblo_b"
+    assert calls.route_name(route, roads, aliases) == "pista de pueblo b"
+    assert calls.route_name(route, None, aliases) == "pista de pueblo b"
+    # Los desvíos siguen siendo "pista sur"/"pista norte" con o sin alias.
+    assert calls.route_name(["wp_cruce", "wp_sur_01", "wp_sur_02"], roads, aliases) == (
+        "pista sur"
+    )
+
+
+def test_policy_tool_schema_has_the_contract_enums_inline() -> None:
+    import json
+
+    schema = planner._POLICY_TOOL["function"]["parameters"]
+    text = json.dumps(schema)
+    assert "$ref" not in text and "$defs" not in schema
+    urgency = schema["properties"]["notify"]["items"]["properties"]["urgency"]
+    assert urgency["enum"] == ["low", "medium", "critical"]
+    audience = schema["properties"]["notify"]["items"]["properties"]["audience"]
+    assert audience["enum"] == ["resident", "responder", "official"]
+
+
+def test_parse_policy_repairs_an_out_of_contract_urgency(caplog) -> None:
+    raw = {
+        "rationale": "Pueblo A primero",
+        "weights": {"life_safety": 0.9},
+        "notify": [
+            {
+                "poi_id": "poi_pueblo_a",
+                "audience": "resident",
+                "message_intent": "evacuar",
+                "urgency": "high",
+            }
+        ],
+    }
+    with caplog.at_level(logging.WARNING, logger="core.planner"):
+        policy = planner.parse_policy(raw)
+    assert policy.weights == {"life_safety": 0.9}  # no se pierde por un aviso
+    assert policy.notify[0].urgency == "medium"
+    assert "fuera del contrato" in caplog.text

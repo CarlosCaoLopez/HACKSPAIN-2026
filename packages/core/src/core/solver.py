@@ -63,6 +63,18 @@ DEFAULT_BASE_SPREAD = 0.1
 """Defaults de `HazardSpec.suppress_reach_m` y `base_spread`, para un grafo construido
 a mano (tests) sin escenario detrás."""
 
+HOLD_PENALTY_M = 10_000.0
+"""Coste de cambio: lo que le cuesta a una unidad retenida (`holds`, la permanencia
+mínima que calcula `loop`) abandonar el waypoint al que va o en el que está. Finito
+para que, si en su waypoint no queda nada que hacer, aún se la pueda mandar a otro
+sitio; grande para que ningún ahorro de ruta lo compense. Sin esto un camión
+recibía tres `goto` en diez segundos (sur_02 → sur_01 → sur_02) cada vez que una
+celda nueva prendía y el emparejamiento óptimo cambiaba de lado."""
+
+ALT_RADIUS = 2
+"""Al buscar otra celda del mismo frente para el segundo camión se recorre el frente
+con el mismo vecindario dilatado con el que `tasks` lo forma."""
+
 
 class RoadGraph:
     """Copia de solo lectura del grafo de carreteras, propiedad de core.
@@ -279,13 +291,15 @@ def _task_waypoint(state: WorldState, task: Task, graph: RoadGraph) -> str | Non
     return None
 
 
-def _offroad_m(state: WorldState, task: Task, wp_id: str, graph: RoadGraph) -> float:
+def _offroad_m(
+    state: WorldState, cell_id: str | None, wp_id: str, graph: RoadGraph
+) -> float:
     """Metros a pie del waypoint de ataque al centro de la celda objetivo. Un frente
     a 20 m de la carretera cuesta poco más que su ruta; uno a 100 m, mucho más: el
     camión no puede hacer nada con él salvo esperarlo."""
-    if task.target_cell is None:
+    if cell_id is None:
         return 0.0
-    cell = state.cells.get(task.target_cell)
+    cell = state.cells.get(cell_id)
     if cell is None or wp_id not in graph.coords:
         return 0.0
     cx, cz = graph.cell_center(cell)
@@ -338,37 +352,122 @@ def _weighted_cost(base: float, state: WorldState, task: Task, policy: Policy) -
     return cost
 
 
+def _columns(state: WorldState, units: list[Unit], tasks: list[Task]) -> list[Task]:
+    """Las columnas de la matriz: las tareas abiertas y, si hay más unidades con
+    `extinguish` activas que tareas de extinción, las tareas de extinción repetidas
+    (de mayor a menor gravedad) hasta cubrirlas. El emparejamiento es 1:1 y con un
+    solo frente conexo el segundo camión se quedaba sin asignación toda la demo."""
+    ext_units = sum("extinguish" in u.capabilities for u in units)
+    ext_tasks = sorted(
+        (t for t in tasks if t.kind == "extinguish"),
+        key=lambda t: (-_severity_rank(t.severity), t.created_t, t.id),
+    )
+    columns = list(tasks)
+    if not ext_tasks:
+        return columns
+    i = 0
+    while len(ext_tasks) + (i) < ext_units:
+        columns.append(ext_tasks[i % len(ext_tasks)])
+        i += 1
+    return columns
+
+
+_SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+def _severity_rank(severity: str) -> int:
+    return _SEVERITY_RANK.get(severity, 0)
+
+
+def _alt_target(
+    state: WorldState, task: Task, primary_wp: str | None, graph: RoadGraph
+) -> tuple[str | None, str | None]:
+    """(waypoint, celda) desde donde el SEGUNDO camión trabaja el mismo frente: la
+    celda a tiro de otro waypoint más lejana de la celda objetivo del primero. Si
+    todo el frente se ataca desde el mismo sitio, el waypoint donde el fuego va a
+    tocar carretera (`intercept_waypoint`: el segundo camión hace de cortafuegos
+    mientras el primero remata la cabeza), y si es el mismo, (primary_wp, None):
+    los dos camiones juntos también sofocan el doble."""
+    if task.target_cell is None or primary_wp is None:
+        return primary_wp, None
+    origin = state.cells.get(task.target_cell)
+    if origin is None:
+        return primary_wp, None
+    burning = {(c.cx, c.cz): c for c in state.cells.values() if c.state == "burning"}
+    seen = {(origin.cx, origin.cz)}
+    stack = [(origin.cx, origin.cz)]
+    ox, oz = graph.cell_center(origin)
+    best: tuple[float, str, str] | None = None
+    while stack:
+        cx, cz = stack.pop()
+        for dx in range(-ALT_RADIUS, ALT_RADIUS + 1):
+            for dz in range(-ALT_RADIUS, ALT_RADIUS + 1):
+                nb = (cx + dx, cz + dz)
+                if nb in seen or nb not in burning:
+                    continue
+                seen.add(nb)
+                stack.append(nb)
+                cell = burning[nb]
+                x, z = graph.cell_center(cell)
+                wp = attackable_from(x, z, graph)
+                if wp is None or wp == primary_wp:
+                    continue
+                key = (-math.hypot(x - ox, z - oz), wp, cell.id)
+                if best is None or key < best:
+                    best = key
+    if best is None:
+        contact = intercept_waypoint(ox, oz, state.wind, graph)
+        if contact is not None and contact != primary_wp:
+            return contact, None
+        return primary_wp, None
+    return best[1], best[2]
+
+
 def cost_matrix(
     state: WorldState,
     policy: Policy,
     graph: RoadGraph,
     vetoes: set[tuple[str, str]] | None = None,
+    holds: dict[str, str] | None = None,
 ) -> tuple[list[list[float]], list[Unit], list[Task], list[list[list[str]]]]:
-    """Filas = unidades activas, columnas = tareas abiertas. Puro, inspeccionable.
+    """Filas = unidades activas, columnas = tareas abiertas (una tarea de extinción
+    puede aparecer en dos columnas: `_columns`). Puro, inspeccionable.
 
     Devuelve además las rutas resueltas por par (para no recalcular en `solve` ni en
     `apply_hard_constraints`). Ruta vacía = par ya infactible.
 
     `vetoes` son pares (unit_id, task_id) que un `veto_assignment` humano ha puesto a
-    coste infinito: el mismo tratamiento que una capacidad que no cuadra."""
+    coste infinito: el mismo tratamiento que una capacidad que no cuadra. `holds` es
+    unidad → waypoint que no debe abandonar todavía (permanencia mínima): cualquier
+    columna que se trabaje desde otro waypoint le cuesta `HOLD_PENALTY_M` más."""
     units = _active_units(state)
-    tasks = _open_tasks(state)
+    tasks = _columns(state, units, _open_tasks(state))
     vetoes = vetoes or set()
+    holds = holds or {}
     matrix: list[list[float]] = []
     routes: list[list[list[str]]] = []
 
-    # Waypoint de ataque y metros a pie por tarea, una vez y no por par.
-    task_wp = {t.id: _task_waypoint(state, t, graph) for t in tasks}
-    offroad = {
-        t.id: _offroad_m(state, t, task_wp[t.id], graph) if task_wp[t.id] else 0.0
-        for t in tasks
-    }
+    # Waypoint de ataque y metros a pie por columna, una vez y no por par. La
+    # segunda columna de un frente se trabaja desde otro waypoint si lo hay.
+    col_wp: list[str | None] = []
+    offroad: list[float] = []
+    seen_tasks: set[str] = set()
+    for task in tasks:
+        wp = _task_waypoint(state, task, graph)
+        cell_id = task.target_cell
+        if task.id in seen_tasks:
+            wp, alt_cell = _alt_target(state, task, wp, graph)
+            cell_id = alt_cell or cell_id
+        seen_tasks.add(task.id)
+        col_wp.append(wp)
+        offroad.append(_offroad_m(state, cell_id, wp, graph) if wp else 0.0)
 
     for unit in units:
         row: list[float] = []
         row_routes: list[list[str]] = []
         u_wp = _unit_waypoint(unit, graph)
-        for task in tasks:
+        held_at = holds.get(unit.id)
+        for j, task in enumerate(tasks):
             if (unit.id, task.id) in vetoes:
                 row.append(INFEASIBLE)
                 row_routes.append([])
@@ -377,18 +476,20 @@ def cost_matrix(
                 row.append(INFEASIBLE)
                 row_routes.append([])
                 continue
-            t_wp = task_wp[task.id]
+            t_wp = col_wp[j]
             route = graph.shortest_path(u_wp, t_wp) if (u_wp and t_wp) else None
             if not route:
                 row.append(INFEASIBLE)
                 row_routes.append([])
                 continue
             base = graph.route_length_m(route)
-            row.append(
-                _weighted_cost(base + offroad[task.id], state, task, policy)
-                if base != INFEASIBLE
-                else INFEASIBLE
-            )
+            if base == INFEASIBLE:
+                row.append(INFEASIBLE)
+            else:
+                cost = _weighted_cost(base + offroad[j], state, task, policy)
+                if held_at is not None and t_wp != held_at:
+                    cost += HOLD_PENALTY_M
+                row.append(cost)
             row_routes.append(route)
         matrix.append(row)
         routes.append(row_routes)
@@ -518,6 +619,7 @@ def solve(
     policy: Policy,
     graph: RoadGraph | None = None,
     vetoes: set[tuple[str, str]] | None = None,
+    holds: dict[str, str] | None = None,
 ) -> Plan:
     """El plan óptimo bajo esos pesos. Lo que no se pudo cubrir sale en
     `unassigned_tasks`, y se muestra: un hueco visible es información.
@@ -526,7 +628,7 @@ def solve(
     restricción desconocida las devuelve `solve_with_violations`, que es lo que usa
     `loop.py` para publicarlas: aquí se descartan solo porque la firma no tiene
     dónde ponerlas."""
-    plan, _violations = solve_with_violations(state, policy, graph, vetoes)
+    plan, _violations = solve_with_violations(state, policy, graph, vetoes, holds)
     return plan
 
 
@@ -535,6 +637,7 @@ def solve_with_violations(
     policy: Policy,
     graph: RoadGraph | None = None,
     vetoes: set[tuple[str, str]] | None = None,
+    holds: dict[str, str] | None = None,
 ) -> tuple[Plan, list[Violation]]:
     """`solve` más las `Violation(verifier=UNKNOWN_CONSTRAINT, severity="soft")` que
     levantó `apply_hard_constraints`. Una restricción desconocida no se ignora: sale
@@ -542,10 +645,14 @@ def solve_with_violations(
 
     `graph` lo inyecta `loop.py` desde el escenario; si falta, se cae a un grafo vacío
     y la asignación degrada a lo que permita el estado (la demo nunca se queda sin
-    plan). `vetoes` son los pares vetados por un humano (coste infinito)."""
+    plan). `vetoes` son los pares vetados por un humano (coste infinito); `holds`,
+    las unidades con permanencia mínima en su waypoint (`HOLD_PENALTY_M`).
+
+    Dos asignaciones pueden llevar el mismo `task_id` (dos camiones en un frente):
+    `verifiers.no_double_booking` solo mira unidades repetidas."""
     live_graph = (graph or RoadGraph({}, {})).with_cuts(state)
 
-    matrix, units, tasks, routes = cost_matrix(state, policy, live_graph, vetoes)
+    matrix, units, tasks, routes = cost_matrix(state, policy, live_graph, vetoes, holds)
     violations = apply_hard_constraints(
         matrix, state, policy, live_graph, units, tasks, routes
     )
@@ -565,7 +672,7 @@ def solve_with_violations(
             )
         )
     assigned_tasks = {a.task_id for a in assignments}
-    unassigned = [t.id for t in tasks if t.id not in assigned_tasks]
+    unassigned = list(dict.fromkeys(t.id for t in tasks if t.id not in assigned_tasks))
 
     context = build_context(state, assignments, live_graph)
     plan = Plan(

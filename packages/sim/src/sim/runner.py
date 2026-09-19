@@ -288,12 +288,12 @@ class Sim:
         y el mundo responde. Sin esto un camión de bomberos llegaba al fuego, se
         paraba al lado y no pasaba nada — el jurado lo nota.
         """
-        posiciones = [
-            (u.x, u.z)
+        bomberos = [
+            u
             for u in self.units.values()
             if "extinguish" in u.capabilities and u.status != "unavailable"
         ]
-        for change in self.hazard.suppress(posiciones, dt):
+        for change in self.hazard.suppress([(u.x, u.z) for u in bomberos], dt):
             await self._emit(
                 EventType.WORLD_CELL_CHANGED,
                 {"cell_id": change.cell_id, "state": change.state,
@@ -301,11 +301,48 @@ class Sim:
             )
             for cmd in self.hazard.render_commands(change):
                 await self.rcon.send(cmd, LOW)
+        for unit in bomberos:
+            await self._update_working(unit.id)
+
+    async def _update_working(self, unit_id: str) -> None:
+        """`working` mientras una unidad parada tiene fuego a tiro; `idle` cuando
+        deja de tenerlo. Solo en transiciones: nada de un evento por tick.
+
+        El autómata sofoca sin cambiar el estado de nadie (es física, no una
+        orden), así que sin esto el dashboard y el prompt del planner veían un
+        camión `idle` al lado de un incendio que estaba apagando. Una unidad en
+        marcha también sofoca al pasar, pero sigue `moving`: el estado cuenta lo
+        que hace, y lo que hace es ir a algún sitio.
+        """
+        unit = self.units[unit_id]
+        if unit.status not in ("idle", "working"):
+            return
+        a_tiro = self._cells_in_reach(unit.x, unit.z)
+        if a_tiro and unit.status == "idle":
+            await self._status(unit_id, "working", f"sofocando {a_tiro[0]}")
+        elif not a_tiro and unit.status == "working":
+            await self._status(unit_id, "idle", "sin fuego a tiro")
+
+    def _cells_in_reach(self, x: float, z: float) -> list[str]:
+        """Celdas activas a menos de `suppress_reach_m` de ese punto, la más cercana
+        primero. Es la misma geometría que aplica `hazard.suppress`, reconstruida
+        desde su interfaz pública (`active`, `center_of`, `spec`) para no tocar
+        el autómata."""
+        reach = self.hazard.spec.suppress_reach_m
+        distancias = {
+            cid: math.dist((x, z), self.hazard.center_of(cid))
+            for cid in self.hazard.active
+        }
+        return sorted(
+            (cid for cid, d in distancias.items() if d <= reach),
+            key=lambda cid: (distancias[cid], cid),
+        )
 
     async def _advance_units(self, dt: float) -> None:
         """Interpola a 5 Hz y publica posición a 1 Hz, no a 5."""
         steps = max(int(TICK_HZ * dt), 1)
         for unit_id, (movement, _) in list(self._moving.items()):
+            teletransportada = False
             for _ in range(steps):
                 if movement.done:
                     break
@@ -313,7 +350,18 @@ class Sim:
                 await self.rcon.send(
                     tp_command(unit_id, x, z, GROUND_Y + 1, yaw), HIGH
                 )
+                teletransportada = True
             x, z, yaw = movement.position()
+            if movement.done and not teletransportada:
+                # Un `Movement` que nace `done` —ruta de un solo waypoint, porque
+                # el más cercano a la unidad ya es el destino— no pasa por el
+                # bucle y no manda ningún `/tp`: el marcador se quedaba en su
+                # última posición interpolada mientras el journal decía que había
+                # llegado. Se vio con Paper: una ambulancia reasignada a mitad de
+                # arista quedó 55 bloques corta. El `/tp` final cierra el hueco.
+                await self.rcon.send(
+                    tp_command(unit_id, x, z, GROUND_Y + 1, yaw), HIGH
+                )
             unit = self.units[unit_id]
             self.units[unit_id] = unit.model_copy(update={"x": x, "z": z})
             await self._emit(

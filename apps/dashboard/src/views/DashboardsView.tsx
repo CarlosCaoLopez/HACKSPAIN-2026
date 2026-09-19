@@ -60,7 +60,7 @@ export function DashboardsView({
             <WhatChangedPanel events={events} awaitingSnapshot={awaitingSnapshot} />
           </div>
           <div style={{ height: ROW_HEIGHT }} className="min-h-0">
-            <PriorityQueue plan={plan} state={state} awaitingSnapshot={awaitingSnapshot} />
+            <PriorityQueue plan={plan} state={state} events={events} awaitingSnapshot={awaitingSnapshot} />
           </div>
           <div style={{ height: ROW_HEIGHT }} className="min-h-0">
             <ActionLog events={events} awaitingSnapshot={awaitingSnapshot} />
