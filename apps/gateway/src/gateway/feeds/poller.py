@@ -138,6 +138,7 @@ class Feeds:
     firms_key: str = ""
     aemet_key: str = ""
     strict: bool = False  # en desarrollo un registro roto lanza; en la demo solo se cuenta
+    save_captures: bool = True  # `--probe` no guarda nada; `--capture` sí (REQ-259)
     client: httpx.AsyncClient | None = None  # inyectable: los tests no salen a la red
 
     states: dict[str, FeedState] = field(init=False)
@@ -301,7 +302,7 @@ class Feeds:
         malformed = 0
         errors: list[Exception] = []
         for raw in parts:
-            if self.mode == "live":
+            if self.mode == "live" and self.save_captures:
                 capture.save_raw(
                     self.feeds_dir, self.anchor.id, spec.name, _ext(spec.name, raw), raw,
                     datetime.now(UTC),
@@ -323,25 +324,36 @@ class Feeds:
         if (malformed or errors) and self.strict:
             raise ValueError(f"{spec.name}: {malformed} registros rotos y {len(errors)} partes ilegibles")
 
+    async def cycle(self, spec: SourceSpec) -> float | None:
+        """Un ciclo de una fuente: traer, traducir y encolar. Devuelve cuánto esperar hasta
+        el siguiente, o `None` si no hay siguiente (una fuente de «una vez» que fue bien).
+
+        Es un método suelto, y no el cuerpo del bucle, porque `--probe` necesita **un** ciclo
+        sin publicar ni esperar. Una fuente que falla nunca devuelve `None`: reintenta.
+        """
+        st = self.states[spec.name]
+        try:
+            parts = await spec.fetch()
+            if parts:
+                self._ingest(spec, parts)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — degradar es el objetivo (REQ-256)
+            st.status = "degraded"
+            st.last_error = self._censor(repr(exc))
+            st.backoff_s = min(BACKOFF_MAX_S, st.backoff_s * 2 or BACKOFF_FIRST_S)
+            log.warning(
+                "fuente %s degradada, reintento en %.0f s: %s", spec.name, st.backoff_s, st.last_error
+            )
+            return st.backoff_s
+        st.status, st.last_error, st.backoff_s = "ok", None, 0.0
+        st.last_ok_t_wall = datetime.now(UTC).isoformat(timespec="seconds")
+        return spec.interval_s
+
     async def _run_source(self, spec: SourceSpec) -> None:
         st = self.states[spec.name]
         while True:
-            wait: float | None
-            try:
-                parts = await spec.fetch()
-                if parts:
-                    self._ingest(spec, parts)
-                st.status, st.last_error, st.backoff_s = "ok", None, 0.0
-                st.last_ok_t_wall = datetime.now(UTC).isoformat(timespec="seconds")
-                wait = spec.interval_s
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 — degradar es el objetivo (REQ-256)
-                st.status = "degraded"
-                st.last_error = self._censor(repr(exc))
-                st.backoff_s = min(BACKOFF_MAX_S, st.backoff_s * 2 or BACKOFF_FIRST_S)
-                wait = st.backoff_s
-                log.warning("fuente %s degradada, reintento en %.0f s: %s", spec.name, wait, st.last_error)
+            wait = await self.cycle(spec)
             if wait is None:
                 st.next_poll_at = None
                 return

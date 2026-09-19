@@ -1,4 +1,4 @@
-.PHONY: help install server cam dev-core dev-sim dev-voice dev-dash demo world replay check types clean
+.PHONY: help install server cam dev-core dev-sim dev-voice dev-dash demo world replay feeds-probe check types clean
 .DEFAULT_GOAL := help
 
 RUN ?=
@@ -62,6 +62,9 @@ world: ## regenera el mundo por RCON (idempotente: /kill @e[tag=vela] y otra vez
 replay: ## reproduce un journal a velocidad real · make replay RUN=<id>
 	@test -n "$(RUN)" || { echo "falta RUN=<id>"; exit 1; }
 	uv run python -m journal.replay runs/$(RUN).jsonl
+
+feeds-probe: ## prueba las fuentes reales del ancla sin publicar · make feeds-probe SCENARIO=wildfire_ridge
+	uv run python -m gateway.feeds --probe $(SCENARIO)
 
 # --- Contratos verificados, no acordados. Verde en cada merge a main. ---
 
