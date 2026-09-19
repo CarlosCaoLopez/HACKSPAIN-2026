@@ -193,3 +193,15 @@ road_aliases:
   carretera del hospital: road:wp_cruce-wp_hospital
   carretera del refugio: road:wp_base-wp_refugio
   carretera de la base: road:wp_base-wp_cruce
+
+# Telegram: dónde cae un pin GPS en este valle. Un pin en Madrid (Puerta del Sol) cae en
+# Pueblo B; con `scale` 0.01 un kilómetro real son 10 m de mundo, así que cualquier pin de
+# la ciudad queda a menos de `snap_m` de Pueblo B y se ancla a él. Cambiad lat/lon al
+# sitio desde el que se vaya a mandar el pin en la demo si no es Madrid.
+geo:
+  lat: 40.4168
+  lon: -3.7038
+  x: 187
+  z: 94
+  scale: 0.01
+  snap_m: 80
