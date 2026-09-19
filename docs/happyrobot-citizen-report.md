@@ -149,20 +149,3 @@ curl -s -X POST localhost:8000/dev/signal -H 'content-type: application/json' \
 | La señal no llega | *Agent Signals* apagado, o `call_id` del curl no es el `session_id` de HappyRobot (mira `/dev/calls`) |
 | No hay `call.affect` | `HUMALIKE_API_KEY` vacío o sin créditos (`402` en el log, una vez) |
 | Sin `call.transcript.partial` en vivo | `HAPPYROBOT_API_KEY` vacío o el SSE devolvió 4xx; la transcripción llega igual al colgar |
-
-## Anexo · workflow saliente `test` → `evacuation_order` (montado por API el sábado)
-
-Estado: **borrador listo, sin publicar**, en la versión 2 (`9wsaydvqsgke`) del workflow `test` (`301cfio7aosi`). La versión 1, vacía, sigue viva en *development*. Lo único que bloquea la publicación es *Missing from number*: la organización no tiene ningún número (`GET /phone-numbers` → `[]`). En cuanto haya un número US *Synced*, se pone en *From number* del agente y se publica a *development* con `force`.
-
-Nodos (ids de la versión 2):
-
-| Nodo | Tipo | Detalle |
-| --- | --- | --- |
-| Receive external update | trigger Webhook | Variables bajo `data.*` (`data.to`, `data.poi_name`, `data.route_name`, `data.deadline_min`, `data.hazard_kind`, `data.severity`, `data.run_id`, `data.task_id`). Payload de ejemplo enviado a `hooks/301cfio7aosi/9wsaydvqsgke` |
-| Coordinador 112 | Outbound Voice Agent | `to` = `{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.to}}` (la forma cruda es la única que pasa la comprobación de publicación); voz Daniel HR, `es`, disclaimer UE, 180 s, buzón → colgar, `gracefully_handle_invalid_phone`, signals ON. **Falta `from_number`** |
-| Prompt | prompt | Orden de evacuación con las variables del trigger; modelo `gpt-5.6-luna`. Sale "incompleto" en el listado igual que el del entrante; no bloquea |
-| POST call end | Webhook POST | `@VELA_URL/webhooks/happyrobot/call` con `X-Vela-Token`, cuerpo `{type: end, session_id, run_id, task_id, direction: outbound, status, transcript}` |
-
-Cosas aprendidas de la API que no están en la documentación: las variables de un nodo se direccionan por su `persistent_id` (el de la versión original, no el de la bifurcación); los campos de un trigger Webhook cuelgan de `data.`; la API es la de la región de la organización (`platform.eu.happyrobot.ai`), la US rechaza la key; el hook responde `run_id`, no `call_id`; `update-a-node` es `PUT` y el `type` del cuerpo tiene que coincidir con el del nodo (el trigger creado en la UI es `action`).
-
-El entrante `citizen_report` (`ikdg6o9mjj9h`) está **publicado y vivo en development** desde la API: enlace de la web call `https://platform.eu.happyrobot.ai/deployments/development/ikdg6o9mjj9h`, sin login.

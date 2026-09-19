@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 from pydantic import ValidationError
 
+from contracts.factkeys import road_bare
 from contracts.scenario import Scenario
 from sim.hazard import HAZARDS, parse_cell
 
@@ -12,17 +13,20 @@ PREFIXES = {
     "pois": "poi_",
     "units": "unit_",
     "waypoints": "wp_",
-    "roads": "road:",
     "civilians": "civ_",
 }
 """Ids con prefijo, que es convención del proyecto y aquí se comprueba de verdad.
 
-Las aristas llevan `road:` y no `rd_` porque su id **es también su dirección**:
-`interfaces.md` nombra las carreteras como `road:wp_a-wp_b` en las claves de hecho
-(`"road:wp_sur_03-wp_sur_04:cut"`) y en el `target` de `human.override`. Una
-llamada de teléfono o un humano en el dashboard no conocen los ids de este
-fichero, así que nombran la carretera por sus extremos; usando esa misma forma
-como id, no hay dos espacios de nombres que traducir."""
+Las aristas no están aquí porque su id no es un prefijo más un nombre: **es su
+propia dirección**, `road:wp_a-wp_b`, la misma forma con la que una llamada o un
+`human.override` nombran una carretera. Que el id coincida con los extremos lo
+comprueba `_check` aparte.
+
+Ese `road:` se pone una sola vez: `factkeys.road_cut_key` normaliza con
+`road_bare` antes de componer `road:<edge_id>:cut`, porque `core.divergence` parte
+esa clave por `:` esperando tres segmentos. Con el prefijo dos veces la suposición
+queda no evaluable y la divergencia no detecta el corte, que es el disparo del
+replan de la demo."""
 
 
 class ScenarioError(ValueError):
@@ -69,6 +73,11 @@ def _check(s: Scenario, name: str) -> None:
 
     waypoints = {w.id for w in s.waypoints}
     for road in s.roads:
+        if road_bare(road.id) != f"{road.a}-{road.b}":
+            errors.append(
+                f"carretera {road.id!r} debería llamarse road:{road.a}-{road.b}: el id "
+                "de una arista es su propia dirección"
+            )
         for end in (road.a, road.b):
             if end not in waypoints:
                 errors.append(f"carretera {road.id!r} apunta a {end!r}, que no existe")

@@ -36,8 +36,7 @@ from voice.perception import CallPerception
 log = logging.getLogger("voice.humanlike")
 
 HUMALIKE_BASE = "https://api.humalike.com"
-HAPPYROBOT_BASE = settings.happyrobot_api_base or "https://platform.eu.happyrobot.ai/api/v2"
-"""La organización está en la región EU: el host US rechaza la key."""
+HAPPYROBOT_BASE = "https://platform.happyrobot.ai/api/v2"
 
 FORESEE_HOT_S = 3.0
 PLAN_WAIT_S = 3.5

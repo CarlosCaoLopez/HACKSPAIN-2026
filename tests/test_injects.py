@@ -5,7 +5,7 @@ from sim.injects import ROAD_CUT, UNIT_FAILURE, WIND_SHIFT, InjectScheduler
 
 GUION = [
     InjectSpec(at=150, type=WIND_SHIFT, payload={"bearing": 300, "speed": 1.8}),
-    InjectSpec(at=210, type=ROAD_CUT, payload={"edge": "road:wp_sur_01-wp_sur_02"}),
+    InjectSpec(at=210, type=ROAD_CUT, payload={"edge": "wp_sur_01-wp_sur_02"}),
     InjectSpec(at=240, type=UNIT_FAILURE, payload={"unit": "unit_truck2"}),
 ]
 
@@ -44,7 +44,7 @@ def test_el_orden_es_estable_con_el_mismo_at():
 def test_arm_mete_uno_a_mano():
     """El botón de emergencia del pitch, y el inject que dispara la llamada."""
     s = InjectScheduler([])
-    s.arm(InjectSpec(at=0, type=ROAD_CUT, payload={"edge": "road:wp_sur_01-wp_sur_02"}))
+    s.arm(InjectSpec(at=0, type=ROAD_CUT, payload={"edge": "wp_sur_01-wp_sur_02"}))
     assert [i.type for i in s.due(0)] == [ROAD_CUT]
 
 

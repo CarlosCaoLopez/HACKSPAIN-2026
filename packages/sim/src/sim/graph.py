@@ -136,7 +136,9 @@ class RoadGraph:
         return min(candidates, key=lambda e: e.length_m) if candidates else None
 
     def is_cut(self, edge_id: str) -> bool:
-        return self._edge(edge_id).cut
+        """Acepta las mismas formas que `cut` y `restore`: quien pregunta por una
+        carretera no tiene por qué nombrarla distinto que quien la corta."""
+        return self._edge(self.resolve_edge(edge_id) or edge_id).cut
 
     @property
     def waypoint_ids(self) -> list[str]:

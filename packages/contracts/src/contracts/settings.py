@@ -27,7 +27,6 @@ class Settings(BaseSettings):
 
     # P3 · telefonía
     happyrobot_api_key: str = ""
-    happyrobot_api_base: str = "https://platform.eu.happyrobot.ai/api/v2"  # P3: región EU
     happyrobot_hook_evacuation: str = ""  # la URL del incoming hook
     humalike_api_key: str = ""
     typesafe_api_key: str = ""  # P3 · percepción en llamada (Jev). Sin ella: --no-jev
