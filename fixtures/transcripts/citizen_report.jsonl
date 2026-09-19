@@ -1,0 +1,9 @@
+# Guion de la llamada entrante para --mock-calls. Una línea por turno.
+{"role": "assistant", "text": "Emergencias, dígame. ¿Dónde está usted?", "delay_s": 1.0}
+{"role": "user", "text": "Hola, hola, estoy en el molino viejo, hay mucho humo, no sé qué hacer", "delay_s": 2.0}
+{"role": "assistant", "text": "Le escucho. ¿Está usted bien? ¿Hay alguien más con usted?", "delay_s": 1.5}
+{"role": "user", "text": "Yo sí, pero la pista del sur está cortada por un árbol y en la casa de al lado hay tres personas que no pueden andar", "delay_s": 2.5, "tool": {"location_hint": "el molino viejo", "road_blocked": "pista del sur", "people_immobile": 3, "urgency": "critical", "confidence": 0.9}}
+{"role": "assistant", "text": "Anotado, molino viejo, pista sur cortada, tres personas sin movilidad. Estoy avisando a los equipos, no cuelgue.", "delay_s": 3.0}
+{"role": "user", "text": "Vale, vale... ¿pero van a venir?", "delay_s": 2.0}
+{"role": "assistant", "text": "Ya va el camión 2 por la pista norte, llega en 40 segundos. No se mueva de donde está.", "delay_s": 2.5}
+{"role": "user", "text": "Gracias, gracias, me quedo aquí", "delay_s": 1.5}

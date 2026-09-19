@@ -54,6 +54,11 @@ async def _publish(ev: Event) -> None:
     from contracts import bus
 
     try:
+        if not bus.current_run_id():
+            # Bus implementado pero sin run arrancado (tests, `dev-sim` suelto):
+            # los eventos se quedan en la reserva, igual que cuando no existía.
+            _FALLBACK.append(ev)
+            return
         await bus.publish(ev)
     except NotImplementedError:
         _FALLBACK.append(ev)
@@ -67,7 +72,7 @@ def _run_id() -> str:
     from contracts import bus
 
     try:
-        return bus.current_run_id()
+        return bus.current_run_id() or f"run_{uuid.uuid4().hex[:8]}"
     except NotImplementedError:
         return f"run_{uuid.uuid4().hex[:8]}"
 

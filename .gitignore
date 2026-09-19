@@ -46,3 +46,8 @@ infra/server/world_the_end/
 
 # Notas de planificación personales de Carlos
 docs/carlos/
+
+# fenic deja bases locales al crear sesión
+*.duckdb
+*.duckdb.wal
+.DS_Store

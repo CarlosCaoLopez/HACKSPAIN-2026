@@ -18,11 +18,11 @@
 | Razonamiento | Modelo frontera de razonamiento vía API | Genera política y prioridades, nunca la asignación final |
 | Asignación | `scipy.optimize.linear_sum_assignment` | Determinista, instantánea, explicable |
 | Mundo | Paper 1.21 + RCON (`mcrcon`) | `/tp`, `/fill`, `/setblock`. Sin pathfinding, sin bots |
-| Telefonía | HappyRobot | Requisito del reto e integración por webhook + humalike por encima para hacerlo mas humano |
+| Telefonía entrante | HappyRobot · trigger **Web Call** + *Inbound Voice Agent* con tool `report_fact` (indicación de HappyRobot: entrante por web call, sin número) | Requisito del reto y eje de la demo: el vecino llama, el tool abre el incidente en nuestro backend a mitad de conversación y devuelve las recomendaciones del Core; las *signals* le cuentan al vecino qué unidad va |
+| Telefonía saliente (opcional) | HappyRobot · trigger Webhook + SMS o *Outbound Voice Agent* | Aviso de vuelta al número que llamó cuando cambia su ruta. Nunca al jurado: el jurado mira, no interviene |
+| Comportamiento conversacional | Humalike (`api.humalike.com`) encima de HappyRobot | No toca la telefonía: `foresee` refina lo que el agente dice y lee la emoción del vecino, `analyze` audita cada llamada, `personas` genera los vecinos sintéticos |
 | Dashboard | Vite + React + TypeScript + Tailwind | Único sitio donde hay TS |
 | Gestión de deps | `uv` (Python) + `pnpm` (dashboard) | Instalación en segundos, lockfile reproducible |
-HappyRobot es la infraestructura de voz y ejecución agéntica:
-Es el motor de telefonía y acciones. Se encarga de levantar llamadas telefónicas reales a redes celulares (SIP/PSTN), procesar el audio bidireccional con baja latencia, conectar herramientas (APIs, dispatchers, bases de datos) y ejecutar flujos de trabajo.
 
 ### Las tres reglas que no se rompen
 
@@ -38,7 +38,7 @@ Es el motor de telefonía y acciones. Se encarga de levantar llamadas telefónic
 
 ## El escenario, minuto a minuto
 
-**La demo dura 6 minutos y tiene un solo clímax: una llamada real cuelga y las unidades giran en pantalla en menos de 3 segundos.** Todo lo demás existe para preparar ese momento.
+**La demo dura 6 minutos y tiene un solo clímax: un vecino al teléfono dice que la pista está cortada y, sin colgar, ve girar a los camiones y oye al agente decirle por dónde viene la ayuda.** Todo lo demás existe para preparar ese momento.
 
 ### Cómo se crea el mundo
 
@@ -66,35 +66,38 @@ El incendio es un autómata celular sobre una rejilla de 4×4 bloques. Cada tick
 
 | T | Qué pasa en el mundo | Qué hace el sistema | Qué se ve en pantalla |
 | --- | --- | --- | --- |
-| 00:00 | Ignición en la cresta oeste | `world.fire.detected` entra al Core | Humo en Minecraft, primera fila en el feed |
-| 00:15 | Fuego avanza con viento O→E | Planner emite política: civiles a sotavento antes que estructuras | Cola de prioridades con su justificación |
-| 00:25 | — | Solver asigna: camión 1 al frente, camión 2 a retén, ambulancia al hospital | Tres flechas de asignación en el mapa |
-| 00:30 | Camiones arrancan | RCON interpola por la carretera | Unidades moviéndose |
-| 01:00 | — | Llamamos al agente (HappyRobot); en la misma llamada nos dicta la orden de evacuación del pueblo A | Tarjeta de llamada en curso, con el audio en directo |
-| 01:45 | — | Confirmamos la orden y colgamos | Tarjeta pasa a *completada* |
+| 00:00 | Ignición en la cresta oeste | `world.fire.detected` entra al Core (sensor del dron); todavía no hay plan | Humo en Minecraft, primera fila en el feed |
+| 00:10 | **Llamada 1: un vecino del pueblo A llama al número de vela e informa del incendio** | El agente atiende como operador del 112, pregunta dónde, cuántos y si hay alguien que no pueda andar, e invoca el tool `report_fact` | Tarjeta de llamada en curso, transcripción en vivo (SSE) |
+| 00:20 | — | El backend abre el incidente `INC-001`, aserta los hechos y devuelve al agente el ack con las recomendaciones del Core: no acercarse al frente, reunir a los que no pueden andar, ruta al refugio por la pista norte. El agente se lo dice al vecino | Ticket `INC-001` aparece en el panel de incidentes con la llamada enlazada y los hechos con su procedencia |
+| 00:25 | Fuego avanza con viento O→E | El hecho `urgency: critical` dispara el planner: civiles a sotavento antes que estructuras. Solver asigna camión 1 al pueblo A, camión 2 a retén, ambulancia al hospital | Cola de prioridades con su justificación, tres flechas |
+| 00:30 | Camiones arrancan | El core manda una *signal* a la sesión: «camión 1 va hacia el pueblo A por la pista norte, 60 segundos». El agente se lo dice al vecino, que sigue al teléfono | Unidades moviéndose, la tarjeta muestra la señal |
+| 01:00 | — | El vecino cuelga. El webhook de fin de llamada archiva la transcripción, `analyze` puntúa la llamada y sale un SMS al número que llamó con la ruta (`route_update`, opcional) | Tarjeta *completada*, `INC-001` en estado *abierto · unidades en camino* |
 | 02:30 | **Inject 1: el viento gira 90°** | Detector de divergencia dispara | Banner rojo REPLAN con el motivo |
-| 02:35 | Unidades dan media vuelta | Nueva política, nueva asignación | Flechas cambian de destino |
-| 03:30 | **Inject 2: llamada entrante** | Un vecino (humalike) llama asustado desde el pueblo B | Transcripción en vivo en el panel |
-| 04:10 | La llamada cuelga | `semantic.extract` saca los hechos, se asertan, el verificador falla, replan | REPLAN + las unidades giran |
+| 02:35 | Unidades dan media vuelta | Nueva política, nueva asignación. `INC-001` se actualiza con la ruta recomendada nueva y el vecino A recibe el aviso (`route_update`, opcional) | Flechas cambian de destino, el ticket cambia de ruta |
+| 03:30 | **Llamada 2: un vecino del pueblo B llama asustado** | El agente de HappyRobot atiende | Transcripción en vivo (SSE) y estado emocional del vecino (Humalike `foresee`) en el panel |
+| 03:50 | **El vecino dice que la pista sur está cortada** | El agente invoca el tool `report_fact` → `POST /webhooks/happyrobot/fact` → hecho asertado y adjuntado a `INC-001` → verificador falla → replan, **con el vecino aún al teléfono** | REPLAN + las unidades giran mientras se oye la conversación |
+| 04:00 | — | El core manda una *signal* a la sesión, refinada por `foresee`: «camión 2 desviado por la pista norte, ETA 40 s»; el agente se lo dice al vecino | La tarjeta de llamada muestra la señal enviada |
+| 04:10 | La llamada cuelga | El nodo Webhook del workflow manda la transcripción a `POST /webhooks/happyrobot/call`; `semantic.extract` como red de seguridad, `analyze` de Humalike puntúa la llamada | Tarjeta pasa a *completada* con su `health_score` |
 | 05:00 | Pueblo B evacuado por la ruta sur | Marcador de objetivo cumplido | Métricas finales |
 
 ### El momento de la llamada, en detalle
 
-El vecino llama y dice algo como: *"estoy en el molino viejo, la pista del sur está cortada por un árbol y hay tres personas en la casa de al lado que no pueden andar"*.
+El vecino llama al número del agente y dice algo como: *"estoy en el molino viejo, la pista del sur está cortada por un árbol y hay tres personas en la casa de al lado que no pueden andar"*.
 
-1. **Durante la llamada** no pasa nada en el mundo. humalike conversa; nosotros solo guardamos audio y transcripción parcial. Resistid la tentación de actuar en streaming: añade latencia y modos de fallo, y en escenario no se aprecia.
-2. **Al colgar**, humalike dispara su webhook a `POST /webhooks/humalike/call-ended` con la transcripción completa.
-3. El `voice` package la mete en un DataFrame de `fenic` de una fila y aplica `semantic.extract(CallFacts)`, donde `CallFacts` es un modelo Pydantic con campos `location_hint`, `road_blocked`, `people_immobile`, `confidence`. Esto tarda entre 1 y 2 segundos y devuelve tipos, no texto.
-4. Cada campo no nulo se publica como un evento `world.fact.asserted` con su procedencia (`source: call:hl_8821`). El Core marca la arista `wp_sur_03 → wp_sur_04` como `cut` y crea una tarea `rescue` con 3 personas inmóviles en el molino.
-5. El **detector de divergencia** compara el mundo que el plan vigente daba por supuesto contra el mundo actual. La ruta de evacuación asignada ya no es transitable, así que la divergencia supera el umbral y además el verificador de rutas devuelve infactible. Se interrumpe el plan.
-6. El planner recibe el estado nuevo y el motivo de la interrupción, emite política actualizada, el solver reasigna en 40 ms y el sim recibe nuevos `goto`.
-7. **En pantalla**: banner REPLAN con el texto *"pista sur cortada, confirmado por llamada entrante"*, las flechas cambian, y en Minecraft los dos camiones frenan y toman el desvío norte.
+1. **El agente invoca el tool `report_fact`** con `location_hint`, `road_blocked`, `people_immobile` ya tipados, y dice "un momento, lo compruebo". Su nodo hijo hace `POST /webhooks/happyrobot/fact` a nuestro backend.
+2. `voice` valida como `CallFacts`, resuelve el molino contra los POIs, publica un `world.fact.asserted` por campo con `source: call:<session_id>` y adjunta la llamada al incidente abierto (`incident.updated`). En paralelo, Humalike `foresee` lee la transcripción hasta ahí y devuelve el estado emocional del vecino y el ack refinado, que es lo que el agente le dice.
+3. El core marca la arista `wp_sur_03 → wp_sur_04` como `cut` y crea la tarea `rescue` con 3 inmóviles.
+4. El **detector de divergencia** compara lo que el plan daba por supuesto con el mundo actual: la ruta de evacuación ya no es transitable, la divergencia supera el umbral y el verificador de rutas devuelve infactible. Se interrumpe el plan.
+5. El planner recibe el estado y el motivo, emite política nueva, el solver reasigna en 40 ms y el sim recibe nuevos `goto`.
+6. El core pide una **signal** a la sesión (*"camión 2 desviado por la pista norte, ETA 40 s"*); `voice` la pasa por `foresee` y la publica en HappyRobot. El agente se lo dice al vecino, que sigue al teléfono.
+7. **En pantalla**: banner REPLAN con *"pista sur cortada, confirmado por llamada entrante"*, las flechas cambian, el panel de llamadas muestra "vecino: miedo 0,8 → alivio", y en Minecraft los dos camiones frenan y toman el desvío norte mientras se oye la conversación.
+8. **Al colgar**, el nodo Webhook del workflow manda la transcripción completa, `fenic` la extrae como red de seguridad, y Humalike `analyze` puntúa la llamada. Nada de eso dispara ya un replan.
 
-Presupuesto de latencia de colgado a giro: 1,5 s de extracción + 0,3 s de planner cacheado + 0,04 s de solver + 0,2 s de RCON. Por debajo de 3 segundos, que es lo que aguanta un jurado sin apartar la vista.
+Presupuesto de latencia desde que el vecino termina la frase hasta el giro: 1 s de tool y POST, 0,3 s de planner cacheado, 0,04 s de solver, 0,2 s de RCON. Menos de 2 segundos. La respuesta hablada del agente llega en 3 o 4, con `foresee` en paralelo, que en una conversación es un silencio normal. Detalle en *La capa de telefonía*.
 
 ### Quién hace de quién
 
-**Vosotros hacéis de ciudadano preocupado** cuando llamáis al agente para darle información del terreno, y **hacéis de responsable de intervención** cuando llamáis al agente y él, como coordinador de emergencias, os dicta en esa misma llamada la orden de evacuación que ha decidido el Core. Las dos se ven en la misma demo y son dos productos distintos: recibir el pico de información y ejecutar la respuesta.
+**Vosotros hacéis de vecinos** que llaman al sistema: uno informa del incendio al principio, otro avisa de la pista cortada en el clímax. **El sistema hace de operador del 112**: atiende, pregunta, registra el incidente, decide, mueve las unidades y le dice al vecino qué hacer y quién va en camino. **El jurado mira y no interviene**: no recibe llamadas, no coge ningún teléfono, no toca el dashboard. Todo lo que ocurre en la demo lo provoca una llamada vuestra o un inject del escenario.
 
 ---
 
@@ -106,10 +109,10 @@ Presupuesto de latencia de colgado a giro: 1,5 s de extracción + 0,3 s de plann
 flowchart LR
   MC[Paper server<br/>RCON] <--> SIM[sim<br/>mundo + injects]
   SIM -->|world.*| BUS((bus + journal))
-  VOICE[voice<br/>HappyRobot / humalike] -->|call.*| BUS
+  VOICE[voice<br/>HappyRobot + Humalike] -->|call.*| BUS
   BUS --> CORE[core<br/>belief · planner · solver]
   CORE -->|action.*| SIM
-  CORE -->|action.call| VOICE
+  CORE -->|advice · signal · notify| VOICE
   BUS -->|ws| DASH[dashboard]
   DASH -->|override| BUS
 ```
@@ -155,7 +158,7 @@ La segunda pieza es Typedef. `fenic` se describe como una capa de construcción 
 | --- | --- | --- | --- |
 | 0 · Estado | `WorldState` tipado: unidades, celdas, rutas, tareas, civiles | Pydantic | Sí |
 | 1 · Ingesta | Texto sucio a hechos tipados con procedencia y confianza | `fenic.semantic.extract` / `classify` | No, pero acotado por esquema |
-| 2 · Política | Pesos de objetivo y restricciones duras para esta situación | OpenAI GPT-5.6 Luna (tier rápido, cabe en el presupuesto de 4 s) | No |
+| 2 · Política | Pesos de objetivo y restricciones duras para esta situación | Modelo de razonamiento frontera | No |
 | 3 · Asignación | Recursos a tareas minimizando coste | `linear_sum_assignment` | Sí |
 | 4 · Verificación | Rechaza planes infactibles y los devuelve con la crítica | Código puro | Sí |
 
@@ -201,7 +204,7 @@ El valor de divergencia va en el dashboard como una línea que sube y cruza el u
 
 ### El aprendizaje entre ejecuciones (el bonus)
 
-Al terminar un run, un job batch carga todos los journals anteriores en `fenic` y extrae, con `semantic.extract` sobre un esquema `LearnedRule`, patrones del tipo *"cuando el viento gira más de 60°, evacuar antes de reasignar extinción"*. Las reglas con soporte en al menos dos runs se escriben en `memory/policy_rules.md`, que se inyecta en el prompt del planner del run siguiente.
+Al terminar un run, un job batch carga todos los journals anteriores en `fenic` y extrae, con `semantic.extract` sobre un esquema `LearnedRule`, patrones del tipo *"cuando el viento gira más de 60°, evacuar antes de reasignar extinción"*. Las reglas con soporte en al menos dos runs se escriben en `memory/policy_rules.md`, que se inyecta en el prompt del planner del run siguiente. En el mismo lote entran el `health_score` y los hallazgos de Humalike `analyze` de cada llamada: lo que salga sobre la conversación va al prompt del agente de HappyRobot, no al del planner.
 
 Enseñad **run 1 contra run 12 en pantalla partida con la puntuación de cada uno**. Es un criterio explícito de puntos extra y casi ningún equipo lo va a tener funcionando.
 
@@ -265,32 +268,101 @@ Posiciones de cámara preconfiguradas con `/tp @s x y z yaw pitch` guardadas en 
 
 ## La capa de telefonía
 
+**HappyRobot es la infraestructura de voz y de ejecución; Humalike es la capa de inteligencia conversacional encima.** HappyRobot pone el teléfono (SIP/PSTN), el audio bidireccional de baja latencia, los tools y los workflows: es quien descuelga cuando el vecino llama y, si hace falta, quien le avisa de vuelta. Humalike no toca la telefonía ni la lógica de negocio: lee a la persona (estado mental, emoción, cómo va a aterrizar una frase), refina lo que el agente dice, audita cómo se comportó y genera la población de vecinos. Esta sección está verificada contra `docs.happyrobot.ai` (código de acceso en el canal) y `docs.humalike.com`; los enlaces del final apuntan a las páginas reales, las citadas en la versión anterior ya no existen.
 
-### HappyRobot: el agente dicta la orden
+### HappyRobot: lo que hay que saber
 
-**Nosotros llamamos al agente y él, en esa misma llamada, nos dicta la orden que ha decidido el Core.** No hay llamada saliente a un tercero: la voz saliente es el agente locutando la orden dentro de la llamada que colocamos nosotros.
+- **Un workflow es un trigger más nodos.** Trigger **Webhook**: `POST https://platform.happyrobot.ai/hooks/{slug}` con JSON; cada campo del cuerpo es una variable, `@trigger.campo` en el editor y `{{campo}}` en configuraciones crudas. Mandad un POST de prueba a `hooks/{slug}/draft` para que el editor aprenda el esquema. Trigger **Web Call**: un enlace `https://platform.happyrobot.ai/deployments/{slug}` que abre la llamada en el navegador, sin número; hay que desactivar *Enhanced security* en el trigger o pedirá login. Con web call no hay `caller_number` (vale `web`): si hace falta devolver la llamada, el número lo pide el agente y lo manda el tool como `callback_number`. Para la saliente sí hace falta un número: se compra uno US en Assets > Telephony y lo cubre HappyRobot.
+- **Nodos que usamos:** *Outbound Voice Agent* (`To = @trigger.to`, `From` = número de la organización), *Inbound Voice Agent* (atiende el trigger raíz, sin más configuración), *AI Extract* (transcripción → campos tipados), *Webhook* (POST a nuestra URL con `@agente.transcript` y lo extraído), condicionales. El nodo *Custom Code* es Python **sin red**: para hablar con nosotros siempre es un Webhook.
+- **Tools.** Una función que el agente puede invocar en mitad de la conversación: descripción, parámetros tipados que el agente rellena escuchando, y nodos hijos que se ejecutan al invocarla (un Webhook a nuestro backend). El resultado vuelve al agente y lo relata. Modo *blocking* (espera) o *background*. Trampa: hay que abrir **View Tool Call Result** una vez y exponer los campos que el agente debe ver, o el workflow no publica. Los nodos se ejecutan de verdad al pulsar *Generate*: apuntad al túnel de desarrollo.
+- **Signals.** `POST https://platform.happyrobot.ai/api/v2/signals` con `{"key": "session.<session_id>", "payload": {...}}` llega al agente **durante** la llamada y el prompt dice cómo reaccionar. Se activa en el nodo del agente (*Agent Signals* + *Start agent response on signal*).
+- **Transcripción en vivo.** `GET /api/v2/sessions/{session_id}/stream` es un SSE con cada mensaje. Alimenta `call.transcript.partial`, el panel de llamadas y las llamadas a Humalike.
+- **Idioma.** Idiomas del agente en `es-ES`, end-of-turn *Multilingual v1*, voces con acento de España (HappyRobot, ElevenLabs o Cartesia). En la UE el *recording disclaimer* "AI and recording disclosure" es obligatorio y suena al descolgar: contad con esos 3 segundos en el guion.
+- **API.** `Authorization: Bearer <api key>` desde Settings > API Keys. No hay SDK de Python: todo REST. Estados de sesión saliente: `completed`, `busy`, `missed`, `voicemail`, `failed`, `canceled`.
 
-La plataforma está organizada en workflows: cada workflow empieza por un trigger y sigue con acciones ejecutadas secuencialmente, y el trigger de tipo *incoming hook* permite enviar una petición a una URL propia para arrancar el workflow, sin esquema predefinido, de forma que el cuerpo que enviáis define las variables disponibles para las acciones siguientes ([docs](https://docs.happyrobot.ai/integrations/webhook)). Recomiendan POST y añadir la cabecera `Content-Type: application/json`.
+### Humalike: lo que hay que saber
+
+Un solo host, `https://api.humalike.com`, `Authorization: Bearer <token>`, JSON. Cada API tiene su cadencia y es un error ponerla en la que no le toca:
+
+| API | Endpoint | Cadencia | Para qué la usamos |
+| --- | --- | --- | --- |
+| Persona | `POST /v1/personas/actions/generate` (async, se hace polling) | Una vez, de antemano | Los 20 vecinos de las llamadas sintéticas: una población coherente del valle, no 20 prompts inventados |
+| Theory of Mind | `POST /v1/foresee/actions/foresee` | Por mensaje, en el camino de la respuesta | Antes de devolverle al agente lo que tiene que decir al vecino (ack del tool, signal del replan): `mental_state` con emociones e intensidad, `predicted_reaction` con `risk`, y `refined_reply` en la voz del agente |
+| Social Observability | `POST /v1/social-observability/actions/analyze` | Al terminar cada llamada | `health_score`, cómo recibió el vecino al agente, errores sociales con su arreglo. Va al journal, al panel y al bonus de aprendizaje |
+| Social Memory | `ingest` / `recall` sobre un `scope_id` por run | `ingest` en cada mensaje, `recall` antes de llamar | El agente saliente sabe qué contó ese pueblo en llamadas anteriores del mismo run |
+| Turn-taking | `open_thread` / `submit_messages` / `respond` | Por mensaje, por WebSocket | **No se usa**: es para chat de texto. En voz, HappyRobot lleva el turno con su propio end-of-turn |
+
+Créditos: la primera llamada facturable aprovisiona la cuenta con un saldo inicial; cada llamada se tarifica antes de ejecutarse y un `402` significa que no se ejecutó ni se cobró. `foresee` y `analyze` son facturables; `ingest` no.
+
+### Los workflows
 
 | Workflow | Trigger | Acción | Uso en la demo |
 | --- | --- | --- | --- |
-| `evacuation_order` | incoming hook | El agente locuta la orden de evacuación en la llamada | Minuto 1:00: le llamamos y nos dicta la evacuación |
-| `resource_request` | incoming hook | El agente dicta la petición de medios | Tras el replan, opcional |
-| `status_broadcast` | incoming hook | SMS masivo | Prueba de multicanal |
+| `citizen_report` | Web Call | Llamada entrante del vecino, con el tool `report_fact`: abre o actualiza el incidente y devuelve las recomendaciones | Minuto 0:10 (informa del incendio) y minuto 3:30 (el clímax) |
+| `route_update` | Webhook | SMS, o llamada saliente corta si el número no tiene mensajería, al número que llamó cuando cambia su ruta recomendada | Minutos 1:00 y 2:35, opcional |
+| `resource_request` | Webhook | Llamada al responsable de medios (un móvil del equipo) | Tras el replan, opcional, lo primero que se cae |
 
-El Core publica la orden con los mismos campos —`run_id`, `task_id`, `poi_name`, `route_name`, `deadline_min`, `severity`— vía POST al incoming hook, y el agente los locuta cuando entra la llamada.
+**Nadie llama al jurado.** Las llamadas salientes, si las hay, van al móvil del equipo que hizo de vecino: el sistema devuelve la llamada a quien avisó, que es lo que haría un 112 de verdad.
 
-Para el retorno, el asistente se configura con un webhook que se dispara en los eventos de inicio, fin y fallo de llamada, con una carga cuya estructura incluye `type` (`start` o `end`), `call.id`, y un `call.metadata.custom` de tipo libre ([docs](https://docs.happyrobot.ai/details/phone_calling)). **Meted vuestro `task_id` en `metadata.custom`**: es lo que os permite casar la llamada con la tarea sin mantener estado en la plataforma.
+### Workflow 1 · `citizen_report` — el ciudadano llama, el sistema atiende y registra
 
-### humalike: el ciudadano llama
+Trigger **Web Call** → Inbound Voice Agent → Webhook a nuestro backend. El vecino abre el enlace en un portátil o un móvil y habla; para HappyRobot es una llamada como cualquier otra.
 
-Humalike es la infraestructura de comportamiento e inteligencia social:
-Es una capa middleware de behavioral infrastructure. No se encarga del transporte telefónico ni de la lógica de negocio; se enfoca en cómo se comunica el agente: turn-taking (saber cuándo interrumpir o cuándo callar), detección de tono emocional, ritmo adaptativo y gestión de la conversación en tiempo real.(https://docs.humalike.com/)
+El agente es un operador del 112: escucha, pregunta dónde, cuántos, qué carretera, y no cuelga hasta tener localización. **No inventa consejos**: las recomendaciones que da al vecino son las que le devuelve el tool o le llegan por signal, calculadas por el Core. Lleva:
 
-1. **El vecino del minuto 3:30.** Uno de vosotros llama La conversación es natural, desordenada, con información parcial y contradictoria. Eso es exactamente lo que el enunciado describe cuando dice que llegan cien mensajes y solo tres cambian algo.
-2. **Veinte llamadas simultáneas.** Lanzad un lote de llamadas entrantes sintéticas mientras la demo corre. El dashboard muestra 20 conversaciones y el sistema descarta 17. Ese contraste es la demostración visual de *Qué información importa*.
+- **Tool `report_fact`** (*blocking*, hold music *none*, mensaje IA "un momento, lo compruebo"). Parámetros: `location_hint` (obligatorio), `road_blocked`, `people_immobile`, `injuries`, `urgency`. Nodo hijo: Webhook `POST https://<túnel>/webhooks/happyrobot/fact` con cabecera `X-Vela-Token`. Nuestro backend responde con `{ack, incident_id, resolved_poi_name, advice, message}`: `advice` es el `Advice` tipado (ruta segura, refugio, unidad en camino, consejos) y `message` es la frase que el agente le dice al vecino, ya pasada por `foresee`.
+- **Agent Signals** activado. En el prompt: *"Si recibes una señal `unit_dispatched`, di al vecino qué unidad va, por qué ruta y cuánto tarda, con las palabras del campo `message`."* El core la pide cuando hay plan nuevo o cambia el `Advice` del incidente del vecino; `voice` la refina con `foresee` y la publica.
+- Clasificador en tiempo real `urgency` (low / medium / critical) de HappyRobot, opcional, para el panel.
 
-### De la transcripción al hecho
+Después del agente, Webhook `POST /webhooks/happyrobot/call` con transcripción completa, `session_id` y estado. Ese webhook **ya no dispara ningún replan**: ocurrió durante la llamada. Sirve para archivar el `CallResult`, correr `analyze` de Humalike y cerrar la tarjeta.
+
+### Durante la llamada: del tool al hecho
+
+Vale para las dos llamadas de la demo; el ejemplo es la segunda, la del clímax.
+
+1. El vecino dice *"estoy en el molino viejo, la pista del sur está cortada por un árbol y hay tres personas en la casa de al lado que no pueden andar"*. El agente invoca `report_fact` con los parámetros ya tipados.
+2. `voice/webhooks.py` recibe el POST, valida los parámetros como `CallFacts`, resuelve `location_hint` contra `POI.name` con `semantic.join` de `fenic` y publica un `world.fact.asserted` por campo no nulo con `source: call:<session_id>`, `confidence` y `causes`. Después **registra el incidente**: si no hay ninguno abierto para ese POI o uno vecino, `incident.opened` con id nuevo (`INC-001`); si lo hay, `incident.updated` con la llamada enlazada. El ticket vive en el journal y en el panel de incidentes, con id, POI, hechos con procedencia, llamadas y unidades asignadas.
+3. En paralelo, `core/advice.py` calcula el `Advice` del POI y `voice/humanlike.py` manda a `foresee` la transcripción hasta ese momento (del SSE) y el ack en borrador (*"anotado: molino viejo, pista sur cortada, tres personas sin movilidad; no salgan por la pista sur, la ayuda va por el norte"*). Vuelve `refined_reply` en la voz del operador, y `mental_state` del vecino (por ejemplo `fear: 0.8`), que va al panel como `call.affect`. Si `foresee` tarda más de 1,5 s, se responde el borrador y se sigue. El tool devuelve el `message` al agente, que se lo dice al vecino.
+4. El core marca la arista `wp_sur_03 → wp_sur_04` como `cut`, crea la tarea `rescue` con 3 inmóviles, el verificador de rutas devuelve infactible, salta el replan.
+5. Con el plan nuevo, el core publica `call.signal.requested` con `{unit: "camión 2", route: "pista norte", eta_s: 40}`. `voice` redacta la frase, la pasa por `foresee` y publica la signal a `session.<session_id>`. El agente se lo dice al vecino, que sigue al teléfono.
+6. **En pantalla**: banner REPLAN con *"pista sur cortada, confirmado por llamada entrante"*, las flechas cambian, y en Minecraft los camiones frenan y toman el desvío norte **mientras se sigue oyendo la conversación**.
+7. **Al colgar**, el webhook de fin de llamada archiva la transcripción; `analyze` de Humalike devuelve `health_score` y hallazgos, que se guardan en el journal junto al `CallResult`.
+
+Presupuesto de latencia desde que el vecino termina la frase: 1 s de tool y POST, 0,04 s de solver y 0,3 s de planner cacheado en paralelo con `foresee` (1 a 1,5 s), 0,2 s de RCON, 1 s de signal. El giro se ve en 2 segundos; el agente responde en 3 o 4, que dentro de una conversación es un silencio normal. Ningún acto depende de que la llamada cuelgue.
+
+### Qué responde el agente: las recomendaciones vienen del Core
+
+El agente de voz no decide qué aconsejar. Cuando el tool llega al backend, `core/advice.py` calcula un `Advice` para el POI resuelto, en código puro y en menos de 50 ms:
+
+```python
+Advice(
+  incident_id: str,               # INC-001
+  poi: str,                       # "pueblo A"
+  shelter: str,                   # "refugio del valle"
+  safe_route: list[str],          # waypoints: Dijkstra evitando cut, burning y at_risk
+  unit_en_route: str | None,      # "camión 1"; None si todavía no hay plan
+  eta_s: int | None,
+  guidance: list[str],            # de scenarios/guidance.yaml, por hazard_kind y urgency
+)
+```
+
+`guidance` sale de una tabla fija por tipo de peligro (*"no se acerque al frente"*, *"cierre puertas y ventanas"*, *"reúna a las personas que no pueden andar en la salida norte del pueblo"*), nunca del modelo. `voice` redacta el borrador con esos campos, lo pasa por `foresee` y devuelve el `message` al tool. Si al llegar el tool todavía no hay plan, el `Advice` va sin unidad y la unidad llega después por la signal `unit_dispatched`. Si el plan cambia mientras el vecino sigue al teléfono, llega otra signal con el `Advice` nuevo. Si ya ha colgado, `route_update`.
+
+Lo que una llamada dispara en segundo plano, todo visible en el log de acciones del dashboard:
+
+1. `incident.opened` o `incident.updated`: el ticket con id, POI, hechos con procedencia, llamadas enlazadas y unidades asignadas. Esto es el *registrar en el sistema*.
+2. `world.fact.asserted` por cada campo del tool: es lo que mueve el plan.
+3. Humalike `ingest` en la memoria social del run, para que la siguiente llamada del mismo pueblo tenga contexto.
+4. `action.notify` → `route_update` al número que llamó cuando su ruta recomendada cambia (opcional).
+5. Opcional si el sábado va bien: `goto(dron, poi)` cuando el hecho no está confirmado por sensor; el dron llega y publica `world.fire.confirmed` o `world.fact.refuted`.
+
+### Workflow 2 · `route_update` — el sistema avisa de vuelta (opcional)
+
+Trigger Webhook → nodo SMS si el número de la organización tiene mensajería *Synced*; si no, Outbound Voice Agent de 30 segundos que lee el `Advice` y cuelga. El core lo dispara con `action.notify` cuando cambian `safe_route` o `unit_en_route` de un incidente con llamadas enlazadas. El POST lleva `to` (con web call no hay `caller_number`: es el `callback_number` que el agente le pidió al vecino y el tool mandó, o `JUDGE_PHONE` en la demo), `incident_id`, `run_id` y `message`; el `incident_id` vuelve en el webhook final para cerrar el bucle sin guardar estado en la plataforma. Es la primera pieza de telefonía que se cae si el sábado va justo: la demo se sostiene con la entrante.
+
+### Al colgar: de la transcripción al hecho
+
+Lo que llega por el webhook de fin de llamada se trata como antes, con `fenic`:
 
 ```python
 class CallFacts(BaseModel):
@@ -307,13 +379,21 @@ facts = df.select(
 ).to_pylist()
 ```
 
-La resolución de `location_hint` contra un POI real del escenario se hace con `semantic.join` contra la tabla de POIs. Cada campo no nulo sale como `world.fact.asserted` con `source`, `confidence` y `call_id`: **ningún hecho aparece en pantalla sin decir de qué llamada viene**.
+La resolución de `location_hint` contra un POI real del escenario se hace con `semantic.join` contra la tabla de POIs. Cada campo no nulo que **no** hubiera entrado ya por el tool sale como `world.fact.asserted` con `source`, `confidence` y `call_id`: **ningún hecho aparece en pantalla sin decir de qué llamada viene**. En la llamada de la demo esto no aporta nada nuevo, y esa es la idea: es la red de seguridad para el caso en que el agente no invoque el tool.
+
+### Las veinte llamadas sintéticas
+
+`POST /v1/personas/actions/generate` con *"20 vecinos de dos pueblos de un valle de Castilla, con edades, movilidad y nivel de nervios variados, en un incendio forestal"* devuelve una población coherente con su `blueprint`. Con cada persona, una llamada a Claude genera una transcripción corta y desordenada; tres llevan un hecho que mueve el plan. Van a `fixtures/transcripts/` y `synthetic.burst()` las publica como `call.ended` escalonadas, pasando por el mismo `semantic.extract`. **No pasan por HappyRobot**: son ruido para el panel, no demo de voz.
+
+### Aprendizaje entre runs: `analyze`
+
+Cada `CallResult` lleva el `health_score` y los hallazgos de `analyze` (*"el agente pidió la localización dos veces; el vecino perdió la confianza en m7"*). El job de memoria entre runs los lee junto con el journal: las reglas que salen sobre el planner van a `memory/policy_rules.md` como antes, y los hallazgos sobre la conversación van al prompt del agente de HappyRobot. Es lo que pide literalmente el enunciado: *revisa las llamadas y las decisiones de ejecuciones anteriores, ve qué funcionó y qué no, y ajusta cómo actúa la próxima vez*.
 
 ### Números de teléfono y ensayo
 
-Comprad los números el viernes por la noche. Uno para el agente (al que llamamos), uno para la entrante del vecino, uno de repuesto. Probad la llamada al agente el sábado por la tarde: la cobertura de una sala con 200 personas es el punto de fallo más tonto y más probable de todo el proyecto.
+Indicación de HappyRobot el sábado: **la entrante va por trigger Web Call** (sin número) y **para la saliente se compra un número US en Assets > Telephony, que cubren ellos**; las salientes no deberían costar nada. Comprobad que el número US queda *Synced* para llamar y, si lo tiene, para mensajería (`route_update` por SMS). Un número US llamando a un móvil español funciona, solo se ve raro. API keys de las dos plataformas en `.env`; el enlace de la web call en `HAPPYROBOT_WEBCALL_URL`. Túnel (`cloudflared` o `ngrok`) para los dos webhooks, con la URL en una variable de entorno del workflow para no editar nodos cada vez que cambie. Probad la web call desde el portátil de la demo y desde un móvil el sábado por la tarde y dentro de la sala: ya no depende de la cobertura, pero sí de la wifi y del micrófono del navegador (permiso concedido, Chrome, sin extensiones raras). Tened el hotspot del móvil probado como respaldo. Escribid los dos guiones de vecino (incendio en la cresta, pista sur cortada) y ensayadlos: la conversación debe ser natural, pero las tres o cuatro frases que el tool tiene que oír van fijas.
 
-Plan B: el script de demo tiene un modo `--mock-calls` que reproduce un audio grabado y publica los mismos eventos.
+Plan B: el script de demo tiene un modo `--mock-calls` que reproduce un audio grabado y publica los mismos eventos, incluido el `world.fact.asserted` que habría emitido el tool.
 
 ---
 
@@ -333,6 +413,7 @@ vela/
 │  │     ├─ world.py           # WorldState, Unit, Cell, Road, Task, Civilian, POI
 │  │     ├─ plan.py            # Policy, Plan, Assignment, Violation, PlanContext
 │  │     ├─ calls.py           # CallRequest, CallResult, CallFacts
+│  │     ├─ incidents.py       # Incident, IncidentStatus, Advice
 │  │     ├─ factkeys.py        # claves de hecho y sus tipos
 │  │     └─ bus.py             # publish / subscribe / journal
 │  ├─ sim/                     # Luis
@@ -352,14 +433,15 @@ vela/
 │  │     ├─ planner.py         # WorldState → Policy
 │  │     ├─ solver.py          # Policy → Plan
 │  │     ├─ verifiers.py       # Plan → list[Violation]
+│  │     ├─ advice.py          # WorldState + Plan + POI → Advice determinista para el vecino
 │  │     ├─ divergence.py
 │  │     ├─ memory.py          # reglas aprendidas entre runs
 │  │     ├─ prompts/
 │  │     └─ loop.py
 │  ├─ voice/                   # Hugo entrante · Carlos saliente
 │  │  └─ src/voice/
-│  │     ├─ happyrobot.py      # disparar workflows
-│  │     ├─ humalike.py       # entrantes
+│  │     ├─ happyrobot.py      # signals a la sesión, route_update, API de sesiones
+│  │     ├─ humanlike.py       # Humalike: personas, foresee, analyze, memoria social
 │  │     ├─ webhooks.py        # routers FastAPI
 │  │     ├─ fake.py            # mock para trabajar en paralelo
 │  │     └─ synthetic.py       # generador de ruido de llamadas
@@ -385,10 +467,12 @@ vela/
 │           ├─ PriorityQueue.tsx
 │           ├─ ActionLog.tsx
 │           ├─ CallsPanel.tsx
+│           ├─ IncidentsPanel.tsx
 │           └─ DivergenceChart.tsx
 ├─ scenarios/
 │  ├─ wildfire_ridge.yaml
-│  └─ blackout_grid.yaml
+│  ├─ blackout_grid.yaml
+│  └─ guidance.yaml            # consejos fijos por tipo de peligro y urgencia
 ├─ fixtures/                   # journals de ejemplo para trabajar sin los demás
 │  ├─ run_golden.jsonl
 │  └─ transcripts/
@@ -428,8 +512,8 @@ pareja el trabajo se subdivide por fichero para no romper la regla de *un ficher
 
 | Persona | Ficheros | Cadena | También le toca |
 | --- | --- | --- | --- |
-| **Hugo** · percepción + voz entrante | `voice/humalike.py`, `voice/webhooks.py`, `voice/synthetic.py`, `voice/fake.py`, `core/ingest.py`, `core/belief.py` | Llamada entra → transcripción → `semantic.extract` → hechos → `WorldState` | Hacer de vecino en la llamada (humalike entrante) |
-| **Carlos** · decisión + voz saliente | `core/planner.py`, `core/solver.py`, `core/verifiers.py`, `core/divergence.py`, `core/memory.py`, `core/loop.py`, `core/prompts/`, `journal/**`, `voice/happyrobot.py` | `WorldState` → divergencia → `Policy` → `Plan` → verificación → `action.*` → el agente locuta la orden | Explicar el motor de decisión al jurado |
+| **Hugo** · percepción + voz entrante | `voice/humanlike.py`, `voice/webhooks.py`, `voice/synthetic.py`, `voice/fake.py`, `core/ingest.py`, `core/belief.py` | Tool `report_fact` entra → `CallFacts` → hechos + `incident.opened/updated` → `WorldState` · `foresee` en el camino de vuelta · fin de llamada → `semantic.extract` + `analyze` → journal | Montar el workflow entrante en HappyRobot y hacer de vecino en las llamadas |
+| **Carlos** · decisión + respuesta | `core/planner.py`, `core/solver.py`, `core/verifiers.py`, `core/advice.py`, `core/divergence.py`, `core/memory.py`, `core/loop.py`, `core/prompts/`, `journal/**`, `voice/happyrobot.py` | `WorldState` → divergencia → `Policy` → `Plan` → verificación → `action.*` → `Advice` → signal al vecino y `route_update` | Montar `route_update` en HappyRobot si entra, y explicar el motor de decisión al jurado |
 | **Luis** · mundo | `sim/**` (`rcon`, `worldgen`, `graph`, `movement`, `hazard`, `injects`, `scenario`, `runner`), `infra/**`, `scenarios/*.yaml` | Estado del modelo → RCON → mundo renderizado + injects | Mover la cámara durante la demo |
 | **Nacho** · cara | `apps/gateway/**` (`main`, `ws`, `control`), `apps/dashboard/**`, `scripts/demo.py`, `scripts/gen_ts_types.py` | Bus → WS → paneles del dashboard | Narrar el pitch y montar la landing |
 
@@ -438,21 +522,21 @@ pareja el trabajo se subdivide por fichero para no romper la regla de *un ficher
 callback saliente de HappyRobot: si Carlos necesita tocar una ruta, se la pide.
 
 **Correspondencia con los roles P1–P4 del resto de docs y de `CLAUDE.md`:** P1 Cerebro = Carlos
-(con `belief`/`ingest` de Hugo) · P2 Mundo = Luis · P3 Voz = Hugo (entrante) + Carlos (saliente) ·
+(con `belief`/`ingest` de Hugo) · P2 Mundo = Luis · P3 Voz = Hugo (entrante) + Carlos (respuesta: `Advice`, signals, `route_update`) ·
 P4 Cara = Nacho. La pareja agéntica es P1+P3; la de simulación, P2+P4.
 
 ### Cronograma
 
-| Bloque | Hugo · percepción + voz-in | Carlos · decisión + voz-out | Luis · mundo | Nacho · cara |
+| Bloque | Hugo · percepción + voz-in | Carlos · decisión + respuesta | Luis · mundo | Nacho · cara |
 | --- | --- | --- | --- | --- |
 | Vie 18–20 | **Los cuatro: cerrar `contracts/` y el guion de la demo en una pizarra. Nada de código hasta que esté.** | | | |
-| Vie 20–00 | `belief.py` + `WorldState` sobre eventos falsos · comprar número entrante | Cuentas + número del agente, primera llamada de prueba (HappyRobot) | Paper arriba, RCON respondiendo, mapa a mano | Gateway + WS + esqueleto de paneles |
-| Sáb 00–02 | `ingest.py` (fenic `extract`) sobre una transcripción de ejemplo | `solver.py` con pesos fijos, sin LLM · workflow `evacuation_order` por curl | `goto` moviendo un armor stand | Mapa pintando posiciones del mock |
-| Sáb 09–13 | `humalike.py` + `webhooks` entrante conectados al bus | `planner.py` + prompts + `verifiers.py` · webhook de fin de llamada al bus | Autómata de fuego renderizando | Panel *qué ha cambiado* + cola de prioridad |
+| Vie 20–00 | `belief.py` + `WorldState` sobre eventos falsos · comprar número entrante | Cuenta HappyRobot + API key · `advice.py` sobre el grafo del YAML (ruta segura, refugio) | Paper arriba, RCON respondiendo, mapa a mano | Gateway + WS + esqueleto de paneles |
+| Sáb 00–02 | `ingest.py` (fenic `extract`) sobre una transcripción de ejemplo | `solver.py` con pesos fijos, sin LLM · una signal de prueba a una sesión por curl | `goto` moviendo un armor stand | Mapa pintando posiciones del mock |
+| Sáb 09–13 | `webhooks.py` (tool `report_fact` con `incident.opened`, fin de llamada) + `humanlike.py` (`foresee`, `analyze`) conectados al bus | `planner.py` + prompts + `verifiers.py` · `Advice` → signal `unit_dispatched` en el bucle | Autómata de fuego renderizando | Panel *qué ha cambiado* + cola de prioridad |
 | Sáb 13–14 | **Integración 1: el sistema decide y mueve unidades de punta a punta. Grabar `run_golden.jsonl`.** | | | |
-| Sáb 14–18 | humalike entrante real → `semantic.extract` a hechos → `belief` | `divergence.py` + bucle de replan | Injects: viento, corte, avería | Banner REPLAN, log de acciones, panel de llamadas |
-| Sáb 18–20 | **Integración 2: ensayo completo con llamada real. Cronometrar colgar → giro.** | | | |
-| Sáb 20–00 | `synthetic.py`: llamadas sintéticas en lote | `memory.py`: reglas entre runs | Segundo escenario, `blackout_grid` | Gráfica de divergencia + métricas finales |
+| Sáb 14–18 | Llamada entrante real → tool → hecho + incidente → `belief` → replan, cronometrado · signal de vuelta refinada por `foresee` | `divergence.py` + bucle de replan | Injects: viento, corte, avería | Banner REPLAN, log de acciones, panel de llamadas e incidentes |
+| Sáb 18–20 | **Integración 2: ensayo completo con llamada real. Cronometrar frase del vecino → giro.** | | | |
+| Sáb 20–00 | `synthetic.py`: llamadas sintéticas en lote sobre las personas de Humalike | `memory.py`: reglas entre runs · `route_update` si sobra | Segundo escenario, `blackout_grid` | Gráfica de divergencia + métricas finales |
 | Dom 00–02 | Plan B `--mock-calls` (`fake.py`) probado · ayuda a los 12 runs | Correr 12 runs seguidos para el run 1 vs run 12 | Posiciones de cámara y macros | Landing con los números del pitch |
 | Dom 09–11 | **Congelación de código.** Solo se arreglan cosas rotas. | | | |
 | Dom 11–13 | Ensayo, ensayo, ensayo. Mínimo seis pasadas completas con reloj. | | | |
@@ -461,11 +545,19 @@ P4 Cara = Nacho. La pareja agéntica es P1+P3; la de simulación, P2+P4.
 
 Si a las 13:00 del sábado no tenéis el sistema decidiendo y moviendo unidades de punta a punta, aunque sea con pesos fijos y sin LLM, **recortad**: fuera el segundo escenario, fuera las llamadas sintéticas, fuera la memoria entre runs. El orden de sacrificio es exactamente ese.
 
-Lo que no se sacrifica nunca: una llamada real que cuelga y cambia el plan, y el dashboard donde se entiende por qué.
+Lo que no se sacrifica nunca: una llamada real que cambia el plan mientras el vecino sigue al teléfono, y el dashboard donde se entiende por qué.
 
 ### Coordinación
 
 Un canal, tres mensajes fijos al día: a las 13:00, a las 20:00 y a las 02:00, cada uno dice en una línea qué ha terminado y qué le bloquea. Nada de reuniones. Los merges a `main` van directos, sin PR, pero con `make check` verde.
+
+**Regla de git: commit de lo tuyo, `pull`, y solo entonces tocar nada.** Cuatro personas, dos días y un solo repo: el estado del código cambia cada hora. El orden es siempre el mismo:
+
+1. `git add -A && git commit -m "wip: ..."` de lo que tengas a medias, aunque no esté terminado. Un commit WIP no molesta a nadie y nunca se pierde; un fichero sin commitear sí.
+2. `git pull --rebase origin <rama>` para traer lo último. Si hay conflicto, se resuelve ahí, con tu trabajo ya a salvo en un commit.
+3. Trabajar, y antes de cada push repetir los pasos 1 y 2.
+
+Nunca `git stash` ni `--autostash` como rutina: no borran nada, pero un stash que no reaplica limpio a las dos de la mañana es media hora perdida. Esto vale también para las sesiones de Claude Code: primero commit de lo que haya, luego `pull`, luego cambios.
 
 ---
 
@@ -479,6 +571,7 @@ Un canal, tres mensajes fijos al día: a las 13:00, a las 20:00 y a las 02:00, c
 | La llamada no entra por cobertura | Media | Número probado el sábado + `--mock-calls` con audio grabado |
 | El servidor Paper se arrastra en escenario | Media | Local, `view-distance=8`, máximo 6 entidades móviles, portátil enchufado |
 | El planner tarda o alucina | Media | Salida tipada corta, timeout de 4 s, caída a plan del solver con pesos neutros |
+| El agente no invoca el tool `report_fact` | Media | Prompt con un ejemplo de invocación por guion; los guiones de vecino llevan las frases clave fijas; red de seguridad al colgar con `semantic.extract`; en el ensayo se cuenta cuántas veces falla |
 | `semantic.extract` devuelve nulos | Media | Prompt con dos ejemplos y campo `confidence`; si todo es nulo, la transcripción se muestra sin extraer y se sigue |
 | Alguien rompe `contracts/` el domingo | Baja | Congelación a las 09:00, `make check` en cada merge |
 | Se va la wifi de la sala | Media | Todo local salvo las APIs; hotspot del móvil como respaldo, probado |
@@ -499,10 +592,11 @@ Grabad el nivel 4 aunque estéis convencidos de que no hace falta.
 ### Checklist de ensayo
 
 - [ ] Seis pasadas completas con cronómetro, ninguna por encima de 6:30
-- [ ] Colgar → giro medido y por debajo de 3 s en las seis
+- [ ] Frase del vecino → giro medido y por debajo de 3 s en las seis
+- [ ] Los dos guiones de vecino (incendio en la cresta, pista sur cortada) impresos y ensayados
 - [ ] Cada uno sabe decir la frase del otro por si se queda en blanco
 - [ ] El portátil de demo no tiene nada más abierto
-- [ ] Notificaciones silenciadas en los cuatro móviles menos en el que llama al agente
+- [ ] Notificaciones silenciadas en los cuatro móviles; el que hace de vecino en no molestar salvo para el número de vela
 - [ ] Vídeo de respaldo subido y el QR impreso
 - [ ] La landing abierta en una pestaña y el QR listo para los 5 segundos finales
 
@@ -513,7 +607,9 @@ Grabad el nivel 4 aunque estéis convencidos de que no hace falta.
 - [LLMs Can't Plan, But Can Help Planning in LLM-Modulo Frameworks](https://proceedings.mlr.press/v235/kambhampati24a.html) — Kambhampati et al., ICML 2024
 - [typedef-ai/fenic](https://github.com/typedef-ai/fenic) — capa de construcción de contexto y operadores semánticos
 - [fenic en PyPI](https://pypi.org/project/fenic/) — requisito de Python >=3.10, <3.13
-- [HappyRobot · webhooks](https://docs.happyrobot.ai/integrations/webhook)
-- [HappyRobot · llamadas](https://docs.happyrobot.ai/details/phone_calling)
-- [Human-Like](https://human-like.ai/) — agentes con memoria entre canales
+- [HappyRobot · Triggers: Webhook, Web Call](https://docs.happyrobot.ai/workflows/triggers#web-call)
+- [HappyRobot · Inbound calls](https://docs.happyrobot.ai/voice-agents/inbound-calls) · [Outbound calls](https://docs.happyrobot.ai/voice-agents/outbound-calls) · [Outbound with callback](https://docs.happyrobot.ai/voice-agents/outbound-with-callback)
+- [HappyRobot · Creating tools](https://docs.happyrobot.ai/tools/creating-tools) · [Tool call result](https://docs.happyrobot.ai/tools/tool-call-result) · [Webhook node](https://docs.happyrobot.ai/core-nodes/webhook) · [AI Extract](https://docs.happyrobot.ai/core-nodes/ai-extract)
+- [HappyRobot · Signals](https://docs.happyrobot.ai/workflows/signals) · [Stream session messages (SSE)](https://docs.happyrobot.ai/api-reference/sessions/stream-session-messages-sse) · [STT, TTS y LLM](https://docs.happyrobot.ai/voice-agents/stt-tts-llm-configuration) · [Telephony](https://docs.happyrobot.ai/assets/telephony)
+- [Humalike · API](https://docs.humalike.com/) · [When to call each API](https://docs.humalike.com/calling-patterns) · [Foresee](https://docs.humalike.com/api-reference/foresee) · [Analyze](https://docs.humalike.com/api-reference/analyze) · [Personas](https://docs.humalike.com/api-reference/personas) · [Social Memory](https://docs.humalike.com/api-reference/social-memory/overview)
 - [Enunciado del reto](https://hackspain2026.happyrobot.ai/)
