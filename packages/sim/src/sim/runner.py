@@ -304,7 +304,18 @@ class Sim:
         elif inject_type == UNIT_FAILURE:
             await self._fail_unit(payload["unit"], payload.get("reason", "avería"))
 
-    async def _cut(self, edge_id: str, cause: str) -> None:
+    async def _cut(self, reference: str, cause: str) -> None:
+        # Canonizar antes de emitir: si el que corta nombró la carretera por sus
+        # extremos, el evento tiene que llevar el id de siempre. Si no, el
+        # dashboard ve dos `edge_id` distintos para la misma carretera según
+        # quién la cortó, y el journal deja de poder casarlos.
+        edge_id = self.graph.resolve_edge(reference)
+        if edge_id is None:
+            await self._emit(
+                EventType.WORLD_ROAD_CHANGED,
+                {"edge_id": reference, "cut": False, "cause": f"desconocida: {cause}"},
+            )
+            return
         self.graph.cut(edge_id, cause)
         await self._emit(
             EventType.WORLD_ROAD_CHANGED,

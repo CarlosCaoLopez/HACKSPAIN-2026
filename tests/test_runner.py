@@ -233,3 +233,20 @@ async def test_un_waypoint_inventado_en_la_ruta_falla_claro(sim):
 async def test_goto_sin_destino_ni_ruta_falla(sim):
     await sim.execute("a1", "goto", {"unit_id": "unit_truck1"})
     assert eventos(EventType.ACTION_FAILED)[-1]["error"] == "goto_sin_destino"
+
+
+async def test_el_corte_emite_siempre_el_id_canonico(sim):
+    """Quien corta puede nombrar la carretera por sus extremos, pero el evento
+    lleva el id de siempre: si no, el dashboard ve dos `edge_id` para la misma
+    carretera según quién la cortó."""
+    await sim.inject("road_cut", {"edge": "wp_sur_01-wp_sur_02", "cause": "árbol"})
+    assert eventos(EventType.WORLD_ROAD_CHANGED)[-1]["edge_id"] == (
+        "road:wp_sur_01-wp_sur_02"
+    )
+
+
+async def test_cortar_una_carretera_que_no_existe_no_miente(sim):
+    """Un id que no casa no puede pasar por un corte efectivo."""
+    await sim.inject("road_cut", {"edge": "road:wp_a-wp_b", "cause": "x"})
+    ev = eventos(EventType.WORLD_ROAD_CHANGED)[-1]
+    assert ev["cut"] is False and "desconocida" in ev["cause"]
