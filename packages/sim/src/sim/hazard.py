@@ -152,8 +152,20 @@ class CellularHazard:
     DURATION: float | None = None
     NEIGHBOURS = NEIGHBOURS_8
 
-    def __init__(self, spec: HazardSpec, seed: int) -> None:
+    def __init__(
+        self,
+        spec: HazardSpec,
+        seed: int,
+        burnable: tuple[float, float, float, float] | None = None,
+    ) -> None:
         self.spec = spec
+        self.burnable = burnable
+        """(x1, z1, x2, z2) de lo que puede arder, o None para todo.
+
+        Fuera del valle no hay nada que quemar. Sin esto el frente se pasa los
+        pueblos y sigue ardiendo en hierba vacía hasta el tope de radio: ruido en
+        pantalla, eventos de más y tareas de extinción por celdas a las que nadie
+        va a ir nunca."""
         self.wind = spec.wind
         self.ground_y = 64
         """Altura del render. Mientras el mapa sea plano vale una constante; con
@@ -304,17 +316,28 @@ class CellularHazard:
                 cx + dx, cz + dz
             ):
                 continue
+            fuel = self._fuel_at(cx + dx, cz + dz)
+            if fuel <= 0:
+                continue  # fuera del valle no hay nada que arder
             distance = math.hypot(dx, dz)
-            rate = self._rate(dx, dz, distance)
+            rate = self._rate(dx, dz, distance) * fuel
             out.append(
                 (neighbour, max(0.0, rate) / distance / SECONDS_PER_MINUTE)
             )
         return out
 
-    @property
-    def _fuel(self) -> float:
-        """Uniforme mientras no haya terreno. Con el mapa real, por celda."""
-        return 1.0
+    def _fuel_at(self, cx: int, cz: int) -> float:
+        """Combustible de una celda: 1 dentro del valle, 0 fuera.
+
+        Es el freno natural del incendio. Antes lo paraba `MAX_RADIUS_CELLS`, que
+        es un círculo alrededor de la ignición y no tiene nada que ver con dónde
+        hay algo que arder.
+        """
+        if self.burnable is None:
+            return 1.0
+        x1, z1, x2, z2 = self.burnable
+        x, z = cx * self.spec.cell_size, cz * self.spec.cell_size
+        return 1.0 if x1 <= x <= x2 and z1 <= z <= z2 else 0.0
 
     def _too_far(self, cx: int, cz: int) -> bool:
         return math.dist((cx, cz), self._origin) > MAX_RADIUS_CELLS
@@ -355,7 +378,7 @@ class Wildfire(CellularHazard):
         cosine = (dx * wind_x + dz * wind_z) / distance
         # Celdas por minuto: base isótropa más el empuje del viento, que solo
         # suma a favor.
-        return (self.spec.base_spread + self.wind.speed * max(0.0, cosine)) * self._fuel
+        return self.spec.base_spread + self.wind.speed * max(0.0, cosine)
 
     @property
     def burning(self) -> list[str]:
@@ -425,7 +448,7 @@ class Blackout(CellularHazard):
     NEIGHBOURS = NEIGHBOURS_4
 
     def _rate(self, dx: int, dz: int, distance: float) -> float:
-        return self.spec.base_spread * self._fuel
+        return self.spec.base_spread
 
     @property
     def dark(self) -> list[str]:
@@ -444,10 +467,14 @@ class Blackout(CellularHazard):
 HAZARDS = {"wildfire": Wildfire, "flood": Flood, "blackout": Blackout}
 
 
-def build_hazard(spec: HazardSpec, seed: int) -> Hazard:
+def build_hazard(
+    spec: HazardSpec,
+    seed: int,
+    burnable: tuple[float, float, float, float] | None = None,
+) -> Hazard:
     """`spec.kind` → la implementación. Falla fuerte si no existe."""
     if spec.kind not in HAZARDS:
         raise ValueError(
             f"peligro desconocido: {spec.kind!r}. Hay {sorted(HAZARDS)}"
         )
-    return HAZARDS[spec.kind](spec, seed)
+    return HAZARDS[spec.kind](spec, seed, burnable)

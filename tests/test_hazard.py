@@ -308,3 +308,21 @@ def test_cada_cambio_dice_por_que():
     causas = {c.cause for _ in range(60) for c in f.tick(1.0)}
     assert causas <= {"spread", "burnout", "at_risk", "inject"}
     assert {"spread", "at_risk"} <= causas
+
+
+def test_fuera_del_valle_no_arde_nada():
+    """El freno del incendio es el combustible, no un radio alrededor de la chispa.
+    Sin esto el frente se pasa los pueblos y sigue ardiendo en hierba vacía: ruido
+    en pantalla y tareas de extinción por celdas a las que nadie va a ir."""
+    valle = (0.0, 0.0, 80.0, 80.0)   # 20x20 celdas de 4 bloques
+    f = Wildfire(spec(origin_cell="cell_10_10", base_spread=2.0), seed=5, burnable=valle)
+    correr(f, 400)
+    for cid in list(f.burning) + [c for c, s in f._state.items() if s == "burnt"]:
+        x, z = f.center_of(cid)
+        assert -4 <= x <= 84 and -4 <= z <= 84, f"{cid} ardió fuera del valle"
+
+
+def test_sin_valle_declarado_arde_todo_como_antes():
+    f = Wildfire(spec(base_spread=0.9), seed=5)
+    correr(f, 120)
+    assert len(f.burning) > 5

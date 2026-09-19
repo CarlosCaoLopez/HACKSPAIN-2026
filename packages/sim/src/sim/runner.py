@@ -125,12 +125,30 @@ def _run_id() -> str:
         return f"run_{uuid.uuid4().hex[:8]}"
 
 
+BURNABLE_MARGIN_M = 30.0
+"""Cuánto se extiende lo quemable más allá de POIs y waypoints.
+
+El incendio se para donde se acaba el valle. Justo lo suficiente para que el
+frente pueda amenazar un pueblo del borde sin seguir ardiendo detrás en hierba
+vacía, que no cuenta nada y llena el journal."""
+
+
+def _burnable(scenario) -> tuple[float, float, float, float]:
+    """La caja de lo que puede arder: todo lo que el escenario declara, con margen."""
+    xs = [p.x for p in scenario.pois] + [w.x for w in scenario.waypoints]
+    zs = [p.z for p in scenario.pois] + [w.z for w in scenario.waypoints]
+    m = BURNABLE_MARGIN_M
+    return min(xs) - m, min(zs) - m, max(xs) + m, max(zs) + m
+
+
 class Sim:
     def __init__(self, scenario_path: Path, rcon: Rcon) -> None:
         self.scenario = load(scenario_path)
         self.rcon = rcon
         self.graph = RoadGraph.from_scenario(self.scenario)
-        self.hazard = build_hazard(self.scenario.hazard, self.scenario.seed)
+        self.hazard = build_hazard(
+            self.scenario.hazard, self.scenario.seed, _burnable(self.scenario)
+        )
         self.injects = InjectScheduler(self.scenario.injects)
 
         self.t_sim = 0.0

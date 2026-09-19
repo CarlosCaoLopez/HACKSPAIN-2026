@@ -26,6 +26,7 @@ from pathlib import Path
 
 from contracts.scenario import Scenario
 from contracts.world import POI, Unit
+from sim.hazard import MAX_RADIUS_CELLS, parse_cell
 from sim.rcon import LOW, PrintRcon, Rcon, RconClient
 
 VELA_TAG = "vela"
@@ -169,9 +170,28 @@ SCAR_Y = (GROUND_Y - 2, RIDGE_Y + 4)
 """Franja vertical que puede haber tocado el fuego, con holgura."""
 
 
+def scar_bounds(scenario: Scenario) -> tuple[int, int, int, int]:
+    """El área a limpiar: el valle **y** todo lo que el incendio pueda alcanzar.
+
+    No basta con `bounds`. El hazard se propaga hasta `MAX_RADIUS_CELLS` desde la
+    ignición, y ese círculo se sale del rectángulo del escenario: medido en
+    `wildfire_ridge`, 52 bloques por el sur. Lo que arde ahí fuera sobrevive al
+    `teardown` y reaparece en el run siguiente como una mancha suelta, sin nada
+    quemado alrededor — porque el camino que la unía sí se limpió y ella no.
+    """
+    x1, z1, x2, z2 = bounds(scenario)
+    cx, cz = parse_cell(scenario.hazard.origin_cell)
+    size = scenario.hazard.cell_size
+    r = MAX_RADIUS_CELLS * size + size
+    return (
+        min(x1, cx * size - r), min(z1, cz * size - r),
+        max(x2, cx * size + r), max(z2, cz * size + r),
+    )
+
+
 def scar_commands(scenario: Scenario) -> list[str]:
     """`fill ... replace` por losas, respetando el límite de bloques por comando."""
-    x1, z1, x2, z2 = bounds(scenario)
+    x1, z1, x2, z2 = scar_bounds(scenario)
     out = []
     for block, replacement in SCAR_BLOCKS.items():
         out += tiled_fill(
