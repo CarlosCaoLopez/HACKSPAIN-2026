@@ -108,6 +108,14 @@ CALL_PREFIX = humanlike.TELEGRAM_PREFIX  # "tg_"
 PIN_CONFIDENCE = 0.95
 """Un pin GPS de un móvil: observado, pero no infalible (precisión del GPS, un pin
 compartido desde otro sitio). Por encima del umbral duro (0,85) y por debajo de 1."""
+SIGNAL_LOCATION_RECEIVED = "location_received"
+"""La señal que avisa al agente, EN LLAMADA, de que el pin ya ha llegado.
+
+Sin ella la conversación se muere: el vecino manda la ubicación, el bot le contesta
+por Telegram, y el agente al teléfono sigue esperando algo que nunca le llega. El
+canal existía y estaba encendido (*Agent Signals*); lo que faltaba era el emisor.
+"""
+
 PENDING_CONFIDENCE = 0.7
 """Un recuento del tool («dos que no pueden andar») colocado por el pin: el dato es de la
 llamada y el sitio del pin, ninguno verificado por Jev. `inferred`, por encima del umbral
@@ -326,15 +334,46 @@ async def handle(inc: Incoming) -> dict:
                 "sent": None,
             }
         if poi_id:
+            # Con una llamada de voz viva, los hechos del pin se atribuyen A ELLA:
+            # es lo que hace que el core cuente el replan por teléfono y no por chat.
+            destino = fact_target(voice, call_id)
             key = f"poi:{poi_id}:confirmed"
             if key not in mon.state.tool_facts_keys:
-                fact = _fact_event(_pin_fact(poi_id, call_id), call_id)
+                fact = _fact_event(_pin_fact(poi_id, call_id), destino)
                 fact.causes = [loc_seq]
                 await publish(fact)
                 causes.append(fact.seq)
                 mon.state.tool_facts_keys.add(key)
+            # El punto exacto va aparte del `confirmed`, pero sigue su misma cadencia:
+            # una ubicación en vivo que no cambia de POI retorna antes de llegar aquí,
+            # así que el punto NO se refresca con cada metro que ande el vecino. Es a
+            # propósito: cada hecho nuevo es un replan, y esa puerta ya estaba puesta
+            # para no encadenarlos. Se actualiza cuando cambia de POI.
+            geo = pois.geo()
+            x = z = None
+            if geo is not None and inc.lat is not None and inc.lon is not None:
+                x, z = project(geo, inc.lat, inc.lon)
+                punto = _fact_event(_point_fact(poi_id, call_id, x, z), destino)
+                punto.causes = [loc_seq]
+                await publish(punto)
+                causes.append(punto.seq)
             if voice is not None:
                 n_pending = await publish_pending(voice, mon, poi_id, loc_seq)
+                # Y se le dice al agente, en llamada, que ya la tenemos. Esto no
+                # espera a que haya un medio asignado: un perdido ileso no funda
+                # ninguna tarea, así que sin esta señal nadie le confirmaría nada.
+                await publish(
+                    make_event(
+                        EventType.CALL_SIGNAL_REQUESTED,
+                        {
+                            "call_id": voice.call_id,
+                            "key": SIGNAL_LOCATION_RECEIVED,
+                            "payload": {"poi_name": poi_name, "x": x, "z": z},
+                        },
+                        source="voice",
+                        causes=[loc_seq],
+                    )
+                )
 
     n_text_facts = 0
     if inc.text:
@@ -439,7 +478,11 @@ async def publish_pending(
                 kind="inferred",
                 call_id=call_id,
             ),
-            call_id,
+            # Atribuido a la llamada de VOZ, no al chat: este hecho es el que funda el
+            # rescate, y el «va una ambulancia» que sale de él tiene que decirse por
+            # teléfono. Con el id del chat se iba por `sendMessage` y el operador
+            # callaba. El `source` y el `call_id` del hecho siguen diciendo el chat.
+            voice.call_id,
         )
         ev.causes = [loc_seq]
         await publish(ev)
@@ -492,6 +535,46 @@ async def _publish_location(
     )
     await publish(ev)
     return poi_id, poi_name, ev.seq
+
+
+def _point_fact(poi_id: str, call_id: str, x: float, z: float) -> Fact:
+    """El punto exacto del pin, `"x,z"` del mundo.
+
+    El `confirmed` de al lado dice «hay alguien en este POI»; éste dice **dónde**.
+    Un perdido no está en el centro del pueblo al que se ancla su pin —el anclaje
+    coge el POI más cercano dentro de `snap_m`—, está donde dice el GPS. Sin este
+    hecho el rescate hereda el waypoint del POI y la ambulancia se planta en el
+    pueblo mientras el vecino sigue en el monte.
+
+    `observed`: lo ha mandado el propio vecino desde su teléfono, no lo deduce nadie.
+    """
+    return Fact(
+        key=f"poi:{poi_id}:rescue_point",
+        value=f"{x:.1f},{z:.1f}",
+        confidence=PIN_CONFIDENCE,
+        source=f"call:{call_id}",
+        severity="critical",
+        t_sim=current_t_sim(),
+        kind="observed",
+        call_id=call_id,
+    )
+
+
+def fact_target(voice: humanlike.CallState | None, chat_call_id: str) -> str:
+    """A quién se le atribuye un hecho nacido de un pin, para que el core sepa a
+    quién contarle el replan.
+
+    `_fact_event` usa esto como `source` del EVENTO (`call:<id>`), y `loop._emit_signal`
+    lo lee tal cual para decidir a qué llamada mandar el `unit_dispatched`. Con el
+    id del chat, ese aviso —«va una ambulancia por tal ruta»— se iba por `sendMessage`
+    a Telegram, porque `humanlike.signal_dispatcher` descarta los `tg_*`. El vecino lo
+    leía en el móvil mientras el operador callaba al teléfono.
+
+    Atribuyéndolo a la llamada de voz, el aviso se dice en voz alta y el prompt ya
+    sabe qué hacer con él. El `source` y el `call_id` DEL HECHO no se tocan: siguen
+    diciendo que el dato vino del chat, que es la verdad y lo que pinta el dashboard.
+    """
+    return voice.call_id if voice is not None else chat_call_id
 
 
 def _pin_fact(poi_id: str, call_id: str) -> Fact:

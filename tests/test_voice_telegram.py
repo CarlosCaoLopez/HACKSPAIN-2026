@@ -179,13 +179,23 @@ async def test_pin_publishes_started_location_and_observed_fact(
     assert (round(p["x"]), round(p["z"])) == (187, 94) and p["live"] is False
     assert p["text"] == "Estoy aquí, junto a unas casas"
 
-    facts = _of(journal, EventType.WORLD_FACT_ASSERTED)
-    assert len(facts) == 1
-    f = facts[0]
-    assert f.payload["key"] == "poi:poi_pueblo_b:confirmed" and f.payload["value"] is True
+    # Dos hechos por pin: quién está en el POI, y DÓNDE exactamente. El segundo es
+    # el que hace que la ambulancia salga hacia el vecino y no hacia la plaza.
+    facts = {e.payload["key"]: e for e in _of(journal, EventType.WORLD_FACT_ASSERTED)}
+    assert set(facts) == {
+        "poi:poi_pueblo_b:confirmed",
+        "poi:poi_pueblo_b:rescue_point",
+    }
+    f = facts["poi:poi_pueblo_b:confirmed"]
+    assert f.payload["value"] is True
     assert f.payload["kind"] == "observed" and f.payload["severity"] == "critical"
     assert f.source == f"call:{CALL_ID}" and f.payload["call_id"] == CALL_ID
     assert f.causes == [loc[0].seq]
+
+    punto = facts["poi:poi_pueblo_b:rescue_point"]
+    assert punto.payload["value"] == "187.0,94.0"  # el pin, no la plaza
+    assert punto.payload["kind"] == "observed"  # lo manda el vecino desde su móvil
+    assert punto.causes == [loc[0].seq]
 
     # la transcripción para el CallsPanel: el vecino y el acuse del operador
     turns = _of(journal, EventType.CALL_TRANSCRIPT_PARTIAL)
@@ -337,7 +347,9 @@ async def test_live_location_acks_only_when_poi_changes(
     r = await client.post("/webhooks/telegram", json=moved)
     assert r.json()["unchanged"] is True and r.json()["ack"] is None
     assert len(_of(journal, EventType.CITIZEN_LOCATION)) == 2
-    assert len(_of(journal, EventType.WORLD_FACT_ASSERTED)) == 1
+    # Los dos del primer pin (`confirmed` y `rescue_point`) y ninguno del segundo:
+    # moverse 20 m dentro del mismo POI no vuelve a asertar nada ni replanifica.
+    assert len(_of(journal, EventType.WORLD_FACT_ASSERTED)) == 2
     turns = _of(journal, EventType.CALL_TRANSCRIPT_PARTIAL)
     assert len(turns) == 1  # un solo acuse
     # el pin se va a Pueblo A: hecho nuevo y acuse nuevo
@@ -348,7 +360,12 @@ async def test_live_location_acks_only_when_poi_changes(
     )
     assert r.json()["poi_id"] == "poi_pueblo_a" and "Pueblo A" in r.json()["ack"]
     keys = [e.payload["key"] for e in _of(journal, EventType.WORLD_FACT_ASSERTED)]
-    assert keys == ["poi:poi_pueblo_b:confirmed", "poi:poi_pueblo_a:confirmed"]
+    assert keys == [
+        "poi:poi_pueblo_b:confirmed",
+        "poi:poi_pueblo_b:rescue_point",
+        "poi:poi_pueblo_a:confirmed",
+        "poi:poi_pueblo_a:rescue_point",
+    ]
     assert len(_of(journal, EventType.CALL_TRANSCRIPT_PARTIAL)) == 2
 
 
@@ -607,7 +624,12 @@ async def test_pin_hangs_from_the_voice_call_and_places_its_pending_facts(
     ]
     assert len(imm) == 1  # el del tool; el texto («mi madre») no lo duplica
     assert imm[0].payload["value"] == 2 and imm[0].payload["kind"] == "inferred"
-    assert imm[0].source == f"call:{CALL_ID}" and imm[0].causes == [loc.seq]
+    # El EVENTO se atribuye a la llamada de voz: es lo que hace que el core cuente el
+    # «va una ambulancia» por teléfono. Con el id del chat, `loop._emit_signal` lo
+    # mandaba a `sendMessage` y el operador callaba mientras el vecino lo leía en el
+    # móvil. El hecho en sí sigue diciendo que el dato vino del chat.
+    assert imm[0].source == "call:v2_in" and imm[0].causes == [loc.seq]
+    assert imm[0].payload["call_id"] == CALL_ID
     assert imm[0].payload["severity"] == "critical"
     assert humanlike.MONITORS["v2_in"].state.pending_facts == {}
     # y el POI confirmado, observado, sigue ahí

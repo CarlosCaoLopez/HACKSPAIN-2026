@@ -14,7 +14,7 @@ Reglas que cumple y por qué:
   un tipo de evento es un cambio libre, y una lista copiada se desincroniza en silencio.
 - **Determinista**: seed del escenario y `t_wall` derivado de `t_sim` sobre una base
   fija. Dos ejecuciones producen bytes idénticos.
-- **`fixtures/**` solo se añade.** Esto genera `run_fake_v4.jsonl` y no toca el golden ni
+- **`fixtures/**` solo se añade.** Esto genera `run_fake_v5.jsonl` y no toca el golden ni
   los fixtures anteriores. `run_fake.jsonl` (v1) y `run_fake_v2.jsonl` se quedan como
   están: llevan los ids de carretera de antes de que P2 los renombrara a `road:wp_a-wp_b`
   y los tres eventos de voz que P3 añadió después, así que **ya no se pueden regenerar**
@@ -92,7 +92,7 @@ from gateway.scenarios import load_scenario
 # de P3 (`call.affect`, `call.signal.requested`, `call.signal.sent`). v3 también queda
 # congelado: v4 = v3 + la percepción con Jev (`call.completeness`, `kind` y `call_id` en
 # los hechos, un hecho `assumed_default`).
-OUT = Path("fixtures/run_fake_v4.jsonl")
+OUT = Path("fixtures/run_fake_v5.jsonl")
 SCENARIO = Path("scenarios/wildfire_ridge.yaml")
 
 RUN_ID = "run_fake_0001"
@@ -108,7 +108,7 @@ class Variation:
     que Carlos corra los doce runs el domingo de madrugada.
 
     **Los valores por defecto son los de hoy, byte a byte**: `Variation()` produce
-    exactamente `run_fake_v4.jsonl`, y `test_es_determinista` lo comprueba contra el
+    exactamente `run_fake_v5.jsonl`, y `test_es_determinista` lo comprueba contra el
     fichero commiteado. Un fixture que se mueve sin querer corre los `t_sim` contra los
     que están escritos los criterios.
 
@@ -390,7 +390,7 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
 
     `var` es el mismo guion salido mejor o peor, para los runs sintéticos del H5. Con
     `Variation()` —el valor por defecto— produce **byte a byte**
-    `fixtures/run_fake_v4.jsonl`.
+    `fixtures/run_fake_v5.jsonl`.
     """
     rng = random.Random(sc.seed)
     tl = Timeline()

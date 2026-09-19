@@ -93,6 +93,11 @@ class Task(BaseModel):
     kind: TaskKind
     target_poi: str | None = None
     target_cell: str | None = None
+    target_x: float | None = None
+    target_z: float | None = None
+    """Punto exacto del mundo, cuando se conoce. Lo pone un pin de GPS: un perdido no
+    está en el centro del pueblo al que se ancla su pin, está donde dice el pin. El
+    solver enruta al waypoint más cercano a este punto en vez de al del POI."""
     required_capability: str
     severity: TaskSeverity
     created_t: float

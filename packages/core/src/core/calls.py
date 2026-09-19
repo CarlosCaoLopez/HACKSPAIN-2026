@@ -491,8 +491,25 @@ def _situation_brief_crew(
     )
 
 
+def exact_point(task: Task) -> str:
+    """«en el punto 187, 94» si la tarea trae coordenadas del pin, o cadena vacía.
+
+    Un rescate nacido de un pin de GPS sabe dónde está el vecino de verdad, no solo
+    a qué pueblo se ancló. Decírselo a la dotación es la diferencia entre plantarse
+    en la plaza y llegar hasta él.
+    """
+    if task.target_x is None or task.target_z is None:
+        return ""
+    return f" en el punto {task.target_x:.0f}, {task.target_z:.0f}"
+
+
 def _situation_brief_ambulance(
-    live: dict[str, str], hazard: str, poi_name: str, immobile: int, peticion: str
+    live: dict[str, str],
+    hazard: str,
+    poi_name: str,
+    immobile: int,
+    peticion: str,
+    punto: str = "",
 ) -> str:
     cuantos = (
         f"{immobile} personas que no pueden moverse solas"
@@ -500,8 +517,9 @@ def _situation_brief_ambulance(
         else "una persona que no puede moverse sola"
     )
     pide = f"Les pedimos {peticion}. " if peticion else ""
+    donde = f"{poi_name}{punto}"
     return (
-        f"Le piden una ambulancia en {poi_name}, por un {hazard}: hay {cuantos}. "
+        f"Le piden una ambulancia en {donde}, por un {hazard}: hay {cuantos}. "
         f"{live['roads_status'].capitalize()}. {pide}Dígalo en dos frases, pregunte "
         "si pueden ir ya y después si tienen otra unidad disponible."
     )
@@ -753,7 +771,9 @@ def ambulance_call(
     brief = (
         _situation_brief_queued(live, hazard, poi.name, immobile, priority)
         if queued
-        else _situation_brief_ambulance(live, hazard, poi.name, immobile, peticion)
+        else _situation_brief_ambulance(
+            live, hazard, poi.name, immobile, peticion, exact_point(task)
+        )
     )
     return CallRequest(
         task_id=task.id,
