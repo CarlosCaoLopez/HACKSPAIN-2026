@@ -199,7 +199,13 @@ def test_compare_delta_signs(tmp_path: Path) -> None:
     assert result["delta"]["total"] > 0
 
 
-# --- bus: escribe → reparte ------------------------------------------------
+# --- journal ↔ bus: el writer inyectado escribe ANTES de repartir ----------
+#
+# El bus lo escribió Hugo (`contracts/bus.py`) y su `writer` es un
+# `Callable[[Event], None]`: `JournalWriter.write` es exactamente esa forma. Aquí
+# se verifica el invariante que es propio del journal (07-journal.md, done H2):
+# cuando el suscriptor ve el evento, la línea ya está en disco. Los internos del
+# bus (seq, filtro, malformed) los cubre test_voice_fact.
 
 
 @pytest.fixture(autouse=True)
@@ -210,54 +216,24 @@ def _fresh_bus():
 
 
 @pytest.mark.asyncio
-async def test_publish_writes_before_dispatch(tmp_path: Path) -> None:
+async def test_journal_writer_wired_to_bus_writes_before_dispatch(
+    tmp_path: Path,
+) -> None:
     w = JournalWriter("run_bus", directory=tmp_path)
-    bus.start_run("run_bus", w)
+    bus.configure(run_id="run_bus", writer=w.write)
     sub = bus.subscribe(EventType.WORLD_TICK)
 
-    await bus.publish(_tick(0, 0.0))  # seq lo sella el bus
-    # Cuando el suscriptor lo recibe, el journal YA tiene la línea en disco.
+    await bus.publish(
+        bus.make_event(
+            EventType.WORLD_TICK,
+            {"t_sim": 0.0, "wind": {"bearing_deg": 270.0, "speed": 1.2}},
+            source="sim",
+        )
+    )
+    # Cuando el suscriptor lo recibe, el journal YA tiene la línea en disco y es
+    # legible por `read`: sin esto no hay replay.
     ev = await sub.__anext__()
     assert ev.seq == 1
-    assert w.path.read_text(encoding="utf-8").strip() != ""
-    assert list(read(w.path))[0].seq == 1
-
-
-@pytest.mark.asyncio
-async def test_publish_stamps_monotonic_seq(tmp_path: Path) -> None:
-    bus.start_run("run_seq", JournalWriter("run_seq", directory=tmp_path))
-    sub = bus.subscribe()
-    for _ in range(3):
-        await bus.publish(_tick(0, 0.0))
-    seqs = [(await sub.__anext__()).seq for _ in range(3)]
-    assert seqs == [1, 2, 3]
-
-
-@pytest.mark.asyncio
-async def test_subscribe_filters_by_type(tmp_path: Path) -> None:
-    bus.start_run("run_filter", JournalWriter("run_filter", directory=tmp_path))
-    sub = bus.subscribe(EventType.RUN_STARTED)
-    await bus.publish(_tick(0, 0.0))  # no interesa
-    await bus.publish(_ev(0, EventType.RUN_STARTED, {"scenario_id": "wildfire_ridge"}))
-    ev = await sub.__anext__()
-    assert ev.type == EventType.RUN_STARTED
-
-
-@pytest.mark.asyncio
-async def test_malformed_does_not_crash_in_demo(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(bus.settings, "vela_mode", "demo")
-    bus.start_run("run_mal", JournalWriter("run_mal", directory=tmp_path))
-    sub = bus.subscribe()
-    # world.tick sin wind: inválido. En demo se degrada a event.malformed.
-    await bus.publish(_ev(0, EventType.WORLD_TICK, {"t_sim": 1.0}))
-    ev = await sub.__anext__()
-    assert ev.type == EventType.EVENT_MALFORMED
-    assert ev.payload["type"] == "world.tick"
-
-
-@pytest.mark.asyncio
-async def test_malformed_raises_in_dev(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(bus.settings, "vela_mode", "dev")
-    bus.start_run("run_dev", JournalWriter("run_dev", directory=tmp_path))
-    with pytest.raises(Exception):
-        await bus.publish(_ev(0, EventType.WORLD_TICK, {"t_sim": 1.0}))
+    back = list(read(w.path))
+    assert len(back) == 1 and back[0].seq == 1
+    w.close()
