@@ -57,6 +57,10 @@ RESOLVE_GAP_S = 5.0
 """Tareas que van hacia personas: las únicas que se cuentan como "ya va" por teléfono."""
 
 
+RESCUES: frozenset[str] = frozenset({"evacuate", "rescue"})
+"""Tareas cuya llegada mueve gente. Espejo de `tasks.ARRIVAL_CLOSES`: lo que se
+cierra al llegar es también lo que hay que ejecutar al llegar."""
+
 SUBSCRIBED: tuple[EventType, ...] = tuple(
     t for t in EventType if t.value.startswith("world.")
 ) + (EventType.CALL_ENDED, EventType.HUMAN_OVERRIDE)
@@ -117,6 +121,7 @@ class Core:
         self._purge_vetoes()
         before = self._state.tasks
         changed = await self._sync_tasks(ev)
+        await self._emit_rescue(changed, ev)
 
         # Plan inicial: en cuanto hay tareas abiertas y aún no hay plan.
         if self._plan is None:
@@ -360,6 +365,47 @@ class Core:
                 cause,
             )
         self._last_actions = current
+
+    async def _emit_rescue(self, changed: list[Task], cause: Event) -> None:
+        """Llegar a un POI cierra su evacuación; mover a la gente es otra cosa.
+
+        `sim.execute` acepta cuatro verbos y el core solo pedía `goto`, así que
+        `rescue` no se ejecutaba nunca: la demo cantaba "Pueblo B evacuado" en el
+        minuto 5 con los aldeanos plantados donde estaban, que es justo lo que un
+        jurado mirando el mundo —y no el dashboard— nota. Y la condición de
+        `tasks.py` de cerrar una evacuación "cuando todos sus grupos están `safe`"
+        no podía cumplirse jamás, porque solo ese verbo pone un grupo a `safe`.
+
+        Se emite con la llegada, no con el plan: es la consecuencia de que una
+        unidad esté ya en el sitio, no una asignación nueva.
+        """
+        if cause.type != EventType.WORLD_UNIT_ARRIVED:
+            return
+        shelter = next(
+            (p.id for p in self._state.pois.values() if p.kind == "shelter"), None
+        )
+        if shelter is None:
+            return
+        for task in changed:
+            if not task.done or task.kind not in RESCUES or task.target_poi is None:
+                continue
+            groups = sorted(
+                g.id
+                for g in self._state.civilians.values()
+                if g.poi_id == task.target_poi and g.state != "safe"
+            )
+            if not groups:
+                continue
+            self._action_seq += 1
+            await self._emit(
+                EventType.ACTION_REQUESTED,
+                ActionRequested(
+                    action_id=f"act_{self.run_id}_{self._action_seq}",
+                    verb="rescue",
+                    args={"civ_ids": groups, "shelter_id": shelter},
+                ),
+                cause,
+            )
 
     async def _emit_calls(self, plan: Plan, cause: Event) -> None:
         """Una orden de evacuación (`call.requested`) por tarea `evacuate` recién
