@@ -198,7 +198,7 @@ async def _fact_by_jev(mon: humanlike.ConversationMonitor, params: dict) -> dict
     road = pois.road_label(cf.road_blocked) if cf.road_blocked else None
     bot, hint = telegram_bot(), needs_telegram(cf.resolved_poi_id)
     draft = with_telegram_hint(
-        ack_draft(cf.location_hint, road, cf.people_immobile), bot, hint
+        ack_draft(cf.location_hint, road, cf.people_immobile, cf.injuries), bot, hint
     )
     message, got_plan = await _ack(mon, draft, t0, n)
     return {
