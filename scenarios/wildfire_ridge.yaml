@@ -34,12 +34,14 @@ pois:
   - id: poi_base
     name: Parque de bomberos
     kind: base
+    description: "Fire station, the base of the fire trucks (Parque de bomberos)"
     x: -44
     z: 0
     waypoint_id: wp_base
   - id: poi_pueblo_a
     name: Pueblo A
     kind: village
+    description: "Village A (Pueblo A), east of the ridge, reached by the north or the south detour"
     x: 187
     z: 11
     waypoint_id: wp_pueblo_a
@@ -48,6 +50,7 @@ pois:
   - id: poi_pueblo_b
     name: Pueblo B
     kind: village
+    description: "Village B (Pueblo B), east of the ridge, at the end of the south road branch"
     x: 187
     z: 94
     waypoint_id: wp_pueblo_b
@@ -56,6 +59,7 @@ pois:
   - id: poi_hospital
     name: Hospital comarcal
     kind: hospital
+    description: "County hospital (Hospital comarcal), reached from the crossing"
     x: 22
     z: -77
     waypoint_id: wp_hospital
@@ -63,6 +67,7 @@ pois:
   - id: poi_refugio
     name: Refugio municipal
     kind: shelter
+    description: "Municipal shelter (Refugio municipal), reached from the fire station"
     x: -33
     z: 77
     waypoint_id: wp_refugio
@@ -111,19 +116,19 @@ waypoints:
   - {id: wp_refugio, x: -33, z: 77}
 
 roads:
-  - {id: road:wp_base-wp_cruce, a: wp_base, b: wp_cruce, length_m: 77}
+  - {id: road:wp_base-wp_cruce, a: wp_base, b: wp_cruce, length_m: 77, description: "main road from the fire station east to the crossing where the road forks"}
   # desvío norte: 120 m más largo, pero el viento aleja el fuego de él
-  - {id: road:wp_cruce-wp_nor_01, a: wp_cruce, b: wp_nor_01, length_m: 70}
-  - {id: road:wp_nor_01-wp_nor_02, a: wp_nor_01, b: wp_nor_02, length_m: 66}
-  - {id: road:wp_nor_02-wp_pueblo_a, a: wp_nor_02, b: wp_pueblo_a, length_m: 72}
+  - {id: road:wp_cruce-wp_nor_01, a: wp_cruce, b: wp_nor_01, length_m: 70, description: "north detour, first stretch after the crossing"}
+  - {id: road:wp_nor_01-wp_nor_02, a: wp_nor_01, b: wp_nor_02, length_m: 66, description: "north detour, middle stretch"}
+  - {id: road:wp_nor_02-wp_pueblo_a, a: wp_nor_02, b: wp_pueblo_a, length_m: 72, description: "north detour, last stretch into village A"}
   # desvío sur: el corto, y el que el incendio corta hacia el minuto 3
-  - {id: road:wp_cruce-wp_sur_01, a: wp_cruce, b: wp_sur_01, length_m: 56}
-  - {id: road:wp_sur_01-wp_sur_02, a: wp_sur_01, b: wp_sur_02, length_m: 61}
-  - {id: road:wp_sur_02-wp_pueblo_a, a: wp_sur_02, b: wp_pueblo_a, length_m: 45}
+  - {id: road:wp_cruce-wp_sur_01, a: wp_cruce, b: wp_sur_01, length_m: 56, description: "south detour, first stretch after the crossing (short, exposed road)"}
+  - {id: road:wp_sur_01-wp_sur_02, a: wp_sur_01, b: wp_sur_02, length_m: 61, description: "south detour, middle stretch (short, exposed road)"}
+  - {id: road:wp_sur_02-wp_pueblo_a, a: wp_sur_02, b: wp_pueblo_a, length_m: 45, description: "south detour, last stretch into village A"}
   # ramales
-  - {id: road:wp_sur_02-wp_pueblo_b, a: wp_sur_02, b: wp_pueblo_b, length_m: 84}
-  - {id: road:wp_cruce-wp_hospital, a: wp_cruce, b: wp_hospital, length_m: 78}
-  - {id: road:wp_base-wp_refugio, a: wp_base, b: wp_refugio, length_m: 78}
+  - {id: road:wp_sur_02-wp_pueblo_b, a: wp_sur_02, b: wp_pueblo_b, length_m: 84, description: "south road branch from the south detour to village B"}
+  - {id: road:wp_cruce-wp_hospital, a: wp_cruce, b: wp_hospital, length_m: 78, description: "road from the crossing to the county hospital"}
+  - {id: road:wp_base-wp_refugio, a: wp_base, b: wp_refugio, length_m: 78, description: "road from the fire station to the municipal shelter"}
 
 civilians:
   - {id: civ_pueblo_a, poi_id: poi_pueblo_a, count: 24, immobile: 3}

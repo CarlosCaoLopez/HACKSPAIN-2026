@@ -14,7 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from contracts.calls import CallRequest, CallResult, Severity, Urgency
+from contracts.calls import CallRequest, CallResult, FactKind, Severity, Urgency
 from contracts.plan import Plan, Policy, Violation
 from contracts.world import CellState, CivState, UnitStatus, Wind
 
@@ -52,6 +52,7 @@ class EventType(StrEnum):
     CALL_STARTED = "call.started"
     CALL_TRANSCRIPT_PARTIAL = "call.transcript.partial"
     CALL_AFFECT = "call.affect"  # Humalike: emoción del interlocutor durante la llamada
+    CALL_COMPLETENESS = "call.completeness"  # Jev: qué campos van resueltos en la llamada
     CALL_ENDED = "call.ended"
     CALL_SIGNAL_REQUESTED = (
         "call.signal.requested"  # core → voice: algo que decir en vivo
@@ -153,6 +154,8 @@ class FactAsserted(BaseModel):
     confidence: float
     source: str
     severity: Severity
+    kind: FactKind = "observed"
+    call_id: str | None = None
 
 
 # --- Payloads: call.* ------------------------------------------------------
@@ -182,6 +185,26 @@ class CallAffect(BaseModel):
     call_id: str
     emotions: list[Emotion] = []
     risk: float | None = None  # riesgo de que la siguiente frase aterrice mal
+
+
+FieldStatus = Literal["open", "observed", "asked", "assumed_default"]
+
+
+class FieldCompleteness(BaseModel):
+    key: str  # "location_hint" | "road_blocked" | "people_immobile" | "urgency"
+    status: FieldStatus
+    value: str | None = None
+    confidence: float | None = None
+
+
+class CallCompleteness(BaseModel):
+    """El vector de completitud tras cada tick de Jev. Lo pinta el dashboard: huecos
+    en gris que pasan a sólidos, o a gris cursiva si los rellenó el LLM."""
+
+    call_id: str
+    budget_s: float | None = None  # None hasta que `urgency` se resuelve
+    elapsed_s: float = 0.0
+    fields: list[FieldCompleteness] = []
 
 
 class SignalRequested(BaseModel):
@@ -283,6 +306,7 @@ PAYLOAD_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.CALL_STARTED: CallStarted,
     EventType.CALL_TRANSCRIPT_PARTIAL: TranscriptPartial,
     EventType.CALL_AFFECT: CallAffect,
+    EventType.CALL_COMPLETENESS: CallCompleteness,
     EventType.CALL_ENDED: CallResult,
     EventType.CALL_SIGNAL_REQUESTED: SignalRequested,
     EventType.CALL_SIGNAL_SENT: SignalSent,

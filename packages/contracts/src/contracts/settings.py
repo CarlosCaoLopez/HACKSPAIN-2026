@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     happyrobot_api_key: str = ""
     happyrobot_hook_evacuation: str = ""  # la URL del incoming hook
     humalike_api_key: str = ""
+    typesafe_api_key: str = ""  # P3 · percepción en llamada (Jev). Sin ella: --no-jev
+    typesafe_model: str = "jev-1.13.0"
+    vela_no_jev: bool = False  # P3 · fuerza el plan B: fenic con Literal, sin bucle
     happyrobot_webcall_url: str = ""  # P3/P4: enlace de la web call del workflow entrante
     judge_phone: str = ""
 

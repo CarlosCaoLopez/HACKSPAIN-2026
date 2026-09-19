@@ -18,6 +18,9 @@ CallIntent = Literal[
 ]
 CallOutcome = Literal["answered", "no_answer", "busy", "failed", "hung_up"]
 Severity = Literal["low", "medium", "critical"]
+FactKind = Literal["observed", "inferred", "assumed_default"]
+"""Regla 4: un hecho asumido nunca se disfraza de observado. Solo `observed` puede
+fundar una restricción dura o reabrir una arista cortada."""
 
 
 class CallRequest(BaseModel):
@@ -86,3 +89,5 @@ class Fact(BaseModel):
     source: str  # "call:hl_8821"
     severity: Severity
     t_sim: float
+    kind: FactKind = "observed"
+    call_id: str | None = None

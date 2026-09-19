@@ -58,6 +58,7 @@ class RoadEdge(BaseModel):
     length_m: float
     cut: bool = False
     cut_cause: str | None = None
+    description: str | None = None  # en inglés: es un `criteria` de Jev
 
 
 class POI(BaseModel):
@@ -73,6 +74,7 @@ class POI(BaseModel):
     waypoint_id: str
     min_coverage: int = 0  # unidades mínimas que no se pueden retirar
     contact_phone: str | None = None
+    description: str | None = None  # en inglés: es un `criteria` de Jev
 
 
 class CivilianGroup(BaseModel):

@@ -14,7 +14,7 @@ Reglas que cumple y por qué:
   un tipo de evento es un cambio libre, y una lista copiada se desincroniza en silencio.
 - **Determinista**: seed del escenario y `t_wall` derivado de `t_sim` sobre una base
   fija. Dos ejecuciones producen bytes idénticos.
-- **`fixtures/**` solo se añade.** Esto genera `run_fake_v3.jsonl` y no toca el golden ni
+- **`fixtures/**` solo se añade.** Esto genera `run_fake_v4.jsonl` y no toca el golden ni
   los fixtures anteriores. `run_fake.jsonl` (v1) y `run_fake_v2.jsonl` se quedan como
   están: llevan los ids de carretera de antes de que P2 los renombrara a `road:wp_a-wp_b`
   y los tres eventos de voz que P3 añadió después, así que **ya no se pueden regenerar**
@@ -45,12 +45,14 @@ from contracts.events import (
     ActionFailed,
     ActionRequested,
     CallAffect,
+    CallCompleteness,
     CallStarted,
     CellChanged,
     CiviliansChanged,
     DivergenceReport,
     Emotion,
     Event,
+    FieldCompleteness,
     EventType,
     FactAsserted,
     FireDetected,
@@ -85,8 +87,10 @@ from gateway.scenarios import load_scenario
 # v1 (`run_fake.jsonl`, H2/H3) y v2 (`run_fake_v2.jsonl`, H4) están CONGELADOS: los
 # criterios de aceptación de SPEC-003 y SPEC-004 van por sus `t_sim`. `fixtures/**` solo
 # se añade, así que v3 es otro fichero: v2 + los ids de carretera de hoy + la voz en vivo
-# de P3 (`call.affect`, `call.signal.requested`, `call.signal.sent`).
-OUT = Path("fixtures/run_fake_v3.jsonl")
+# de P3 (`call.affect`, `call.signal.requested`, `call.signal.sent`). v3 también queda
+# congelado: v4 = v3 + la percepción con Jev (`call.completeness`, `kind` y `call_id` en
+# los hechos, un hecho `assumed_default`).
+OUT = Path("fixtures/run_fake_v4.jsonl")
 SCENARIO = Path("scenarios/wildfire_ridge.yaml")
 
 RUN_ID = "run_fake_0001"
@@ -102,7 +106,7 @@ class Variation:
     que Carlos corra los doce runs el domingo de madrugada.
 
     **Los valores por defecto son los de hoy, byte a byte**: `Variation()` produce
-    exactamente `run_fake_v3.jsonl`, y `test_es_determinista` lo comprueba contra el
+    exactamente `run_fake_v4.jsonl`, y `test_es_determinista` lo comprueba contra el
     fichero commiteado. Un fixture que se mueve sin querer corre los `t_sim` contra los
     que están escritos los criterios.
 
@@ -380,7 +384,7 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
 
     `var` es el mismo guion salido mejor o peor, para los runs sintéticos del H5. Con
     `Variation()` —el valor por defecto— produce **byte a byte**
-    `fixtures/run_fake_v3.jsonl`.
+    `fixtures/run_fake_v4.jsonl`.
     """
     rng = random.Random(sc.seed)
     tl = Timeline()
@@ -654,6 +658,8 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
             confidence=0.86,
             source=f"call:{CALL_OUT}",
             severity="medium",
+            kind="observed",
+            call_id=CALL_OUT,
         ),
         "voice",
         causes=("callend",),
@@ -785,11 +791,14 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
             confidence=0.93,
             source=f"call:{CALL_IN}",
             severity="critical",
+            kind="observed",
+            call_id=CALL_IN,
         ),
         "voice",
         label="fact_road",
         causes=("inbound",),
     )
+    _completitud_de_la_llamada(tl)
     tl.add(
         229.5,
         EventType.PLAN_VIOLATION,
@@ -1090,6 +1099,68 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
         _llamada_sin_respuesta(tl)
 
     return tl.events(var.run_id)
+
+
+def _completitud_de_la_llamada(tl: Timeline) -> None:
+    """Lo que ve el CompletenessPanel durante la llamada del vecino: Jev puntúa cada 5 s.
+
+    `urgency` se resuelve primero y de ella sale el reloj (critical: 8 s). El corte de la
+    pista sube por encima del umbral duro y se aserta como `observed` (es el hecho de
+    229 s); `people_immobile` no llega, el agente pregunta solo eso, y al agotarse el
+    presupuesto el LLM lo rellena como `assumed_default`: gris cursiva, no sólido."""
+    src = f"call:{CALL_IN}"
+
+    def tick(t: float, budget: float | None, fields: list[FieldCompleteness]) -> None:
+        elapsed = 0.0 if budget is None else max(0.0, t - 221.0)
+        tl.add(
+            t,
+            EventType.CALL_COMPLETENESS,
+            CallCompleteness(
+                call_id=CALL_IN, budget_s=budget, elapsed_s=elapsed, fields=fields
+            ),
+            "voice",
+            causes=("inbound",),
+        )
+
+    def f(key: str, status: str, value: str | None = None, conf: float | None = None):
+        return FieldCompleteness(key=key, status=status, value=value, confidence=conf)
+
+    tick(216.0, None, [
+        f("location_hint", "open"), f("road_blocked", "open"),
+        f("people_immobile", "open"), f("urgency", "open"),
+    ])
+    tick(221.0, 8.0, [
+        f("location_hint", "open"), f("road_blocked", "open", None, 0.61),
+        f("people_immobile", "open"), f("urgency", "observed", "critical", 0.92),
+    ])
+    tick(226.0, 8.0, [
+        f("location_hint", "open"), f("road_blocked", "asked", None, 0.61),
+        f("people_immobile", "open"), f("urgency", "observed", "critical", 0.92),
+    ])
+    tick(229.0, 8.0, [
+        f("location_hint", "open"), f("road_blocked", "observed", ROAD_CUT, 0.93),
+        f("people_immobile", "asked"), f("urgency", "observed", "critical", 0.92),
+    ])
+    tick(234.0, 8.0, [
+        f("location_hint", "open"), f("road_blocked", "observed", ROAD_CUT, 0.93),
+        f("people_immobile", "assumed_default", "1", 0.3),
+        f("urgency", "observed", "critical", 0.92),
+    ])
+    tl.add(
+        234.5,
+        EventType.WORLD_FACT_ASSERTED,
+        FactAsserted(
+            key=f"poi:{PUEBLO_B}:immobile",
+            value=1,
+            confidence=0.3,
+            source=src,
+            severity="critical",
+            kind="assumed_default",
+            call_id=CALL_IN,
+        ),
+        "voice",
+        causes=("inbound",),
+    )
 
 
 def _llamada_sin_respuesta(tl: Timeline) -> None:
