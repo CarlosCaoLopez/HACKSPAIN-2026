@@ -57,6 +57,9 @@ TREES = ["oak", "oak", "birch", "spruce", "oak_bees_0002"]
 """Features de vanilla: árboles de verdad, no cajas de `fill`."""
 
 ROAD_BLOCK = "gray_concrete"
+CUT_ROAD_BLOCK = "red_concrete"
+"""Un tramo cortado se repinta de rojo. En el clímax el jurado ve al camión dar
+media vuelta; sin esto no ve **por qué**, y el motivo solo vive en el dashboard."""
 ROAD_WIDTH = 3
 ROAD_CLEARANCE = 3
 """Bloques a cada lado que la carretera despeja por encima.
@@ -322,7 +325,9 @@ def road_commands(scenario: Scenario) -> list[str]:
     return out
 
 
-def _strip(a: tuple[float, float], b: tuple[float, float]) -> list[str]:
+def _strip(
+    a: tuple[float, float], b: tuple[float, float], block: str = ROAD_BLOCK
+) -> list[str]:
     """Rasteriza el segmento a bloques. Un `fill` por paso: feo de contar, pero
     son cien comandos y salen en menos de un segundo."""
     (x1, z1), (x2, z2) = a, b
@@ -340,8 +345,32 @@ def _strip(a: tuple[float, float], b: tuple[float, float]) -> list[str]:
         )
         out.append(
             f"fill {x - half} {GROUND_Y} {z - half} "
-            + f"{x + half} {GROUND_Y} {z + half} {ROAD_BLOCK}"
+            + f"{x + half} {GROUND_Y} {z + half} {block}"
         )
+    return out
+
+
+def road_cut_commands(
+    a: tuple[float, float], b: tuple[float, float], cut: bool = True
+) -> list[str]:
+    """Pinta un tramo como cortado, o lo devuelve a carretera normal.
+
+    En el clímax el jurado ve al camión dar media vuelta; sin esto no ve **por
+    qué**, porque el motivo solo existe en el dashboard. El firme se repinta de
+    rojo, que se lee al instante desde el plano cenital, y en mitad del tramo se
+    cruzan dos troncos — que es lo que se aprecia en el plano cercano y coincide
+    con la causa que declara el escenario, "árbol caído".
+    """
+    out = _strip(a, b, CUT_ROAD_BLOCK if cut else ROAD_BLOCK)
+    mx, mz = round((a[0] + b[0]) / 2), round((a[1] + b[1]) / 2)
+    reach = ROAD_WIDTH // 2 + 1
+    log = "oak_log" if cut else "air"
+    out += [
+        f"fill {mx - reach} {GROUND_Y + 1} {mz} "
+        + f"{mx + reach} {GROUND_Y + 1} {mz} {log}",
+        f"fill {mx} {GROUND_Y + 1} {mz - reach} "
+        + f"{mx} {GROUND_Y + 1} {mz + reach} {log}",
+    ]
     return out
 
 

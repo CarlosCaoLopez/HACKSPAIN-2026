@@ -23,7 +23,13 @@ from sim.injects import ROAD_CUT, UNIT_FAILURE, WIND_SHIFT, InjectScheduler
 from sim.movement import TICK_HZ, Movement, tp_command
 from sim.rcon import HIGH, LOW, Rcon
 from sim.scenario import load
-from sim.worldgen import GROUND_Y, POI_STYLE, build, teardown
+from sim.worldgen import (
+    GROUND_Y,
+    POI_STYLE,
+    build,
+    road_cut_commands,
+    teardown,
+)
 
 TICK_S = 1.0
 """Un segundo simulado por tick. La interpolación va a 5 Hz por dentro."""
@@ -317,6 +323,7 @@ class Sim:
             )
             return
         self.graph.cut(edge_id, cause)
+        await self._render_road(edge_id, cut=True)
         await self._emit(
             EventType.WORLD_ROAD_CHANGED,
             {"edge_id": edge_id, "cut": True, "cause": cause},
@@ -325,8 +332,6 @@ class Sim:
         # ya iban por ahí tienen que recalcular. Sin esto, el camión sigue tan
         # tranquilo por una pista cortada mientras el dashboard dice otra cosa.
         for unit_id, (movement, action_id) in list(self._moving.items()):
-            if self.graph.shortest_path(movement.route[-1], movement.route[-1]) is None:
-                continue
             destino = movement.route[-1]
             nueva = self._route_from(unit_id, destino)
             if nueva is None:
@@ -360,6 +365,15 @@ class Sim:
             "injects_fired": [i.type for i in self.injects.fired],
             "unpublished": len(_FALLBACK),
         }
+
+    async def _render_road(self, edge_id: str, cut: bool) -> None:
+        """Pinta el tramo. Carril lento: es decorado, no puede adelantar a un `/tp`."""
+        edge = next((r for r in self.scenario.roads if r.id == edge_id), None)
+        if edge is None:
+            return
+        a = self.graph.position_of(edge.a)
+        b = self.graph.position_of(edge.b)
+        await self.rcon.send_many(road_cut_commands(a, b, cut), LOW)
 
     def _join(self, unit_id: str, route: list[str]) -> list[str] | None:
         """Pega la unidad al principio de una ruta que viene ya resuelta."""
