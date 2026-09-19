@@ -87,14 +87,10 @@ export function Sidebar({
       aria-label="Vistas"
     >
       <div className={`flex items-center ${collapsed ? 'flex-col gap-3' : 'justify-between px-1'}`}>
-        {/* La marca del diseño: cuadrado oscuro con un punto blanco. */}
-        <span className="flex items-center gap-2.5">
-          <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] bg-vela-ink">
-            <span className="h-2.5 w-2.5 rounded-[3px] bg-vela-panel" />
-          </span>
-          {!collapsed && (
-            <span className="text-xl font-bold tracking-[0.14em] text-vela-ink">VELA</span>
-          )}
+        {/* La marca: el logotipo taiafox (SPEC-006 REQ-207). Plegado no cabe la palabra, así
+            que el mismo SVG se recorta a su árbol, que es su primer quinto por la izquierda. */}
+        <span className={`block shrink-0 overflow-hidden ${collapsed ? 'w-[26px]' : 'w-[123px]'}`}>
+          <img src="/taiafox-C-rounded.svg" alt="taiafox" className="h-[30px] w-[123px] max-w-none" />
         </span>
         <button
           type="button"
