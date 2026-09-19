@@ -148,7 +148,7 @@ async def _call(prompt: str) -> Policy:
         resp = await asyncio.wait_for(
             client.chat.completions.create(
                 model=MODEL,
-                max_tokens=MAX_TOKENS,
+                max_completion_tokens=MAX_TOKENS,
                 tools=[_POLICY_TOOL],
                 tool_choice=_TOOL_CHOICE,
                 messages=[{"role": "user", "content": prompt}],

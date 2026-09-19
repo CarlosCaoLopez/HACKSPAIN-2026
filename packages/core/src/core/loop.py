@@ -52,6 +52,7 @@ CALL_SOURCE_PREFIX = "call:"
 
 SIGNAL_UNIT_DISPATCHED = "unit_dispatched"
 
+
 SUBSCRIBED: tuple[EventType, ...] = tuple(
     t for t in EventType if t.value.startswith("world.")
 ) + (EventType.CALL_ENDED, EventType.HUMAN_OVERRIDE)
@@ -71,6 +72,10 @@ class Core:
         self._vetoes: dict[tuple[str, str], float] = {}  # (unit, task) -> expiry t_sim
         self._action_seq = 0
         self._called: set[str] = set()  # task_ids con `call.requested` ya emitido
+        # Violaciones duras que el plan vigente ya traía cuando se adoptó: el
+        # planner tuvo sus dos vueltas y no pudo con ellas. Verlas otra vez en el
+        # siguiente evento no es novedad, y no vuelve a llamar al modelo.
+        self._residual: set[str] = set()
         self._warned_no_phone = False
 
     async def run(self) -> None:
@@ -104,9 +109,15 @@ class Core:
             return
 
         value, broken = divergence(self._state, self._plan.context)
-        await self._emit(EventType.PLAN_DIVERGENCE, DivergenceReport(value=value, broken=broken), ev)
+        await self._emit(
+            EventType.PLAN_DIVERGENCE, DivergenceReport(value=value, broken=broken), ev
+        )
 
-        hard = [v for v in verify(self._state, self._plan, self.graph) if v.severity == "hard"]
+        hard = [
+            v
+            for v in verify(self._state, self._plan, self.graph)
+            if v.severity == "hard" and v.message not in self._residual
+        ]
         criticals = self._critical_facts_of(ev)
 
         flag, reason = should_replan(value, len(hard), criticals)
@@ -150,6 +161,11 @@ class Core:
             plan, unknown = self._solve(policy, vetoes)
 
         await self._adopt(plan, cause)
+        self._residual = {
+            v.message
+            for v in verify(self._state, plan, self.graph)
+            if v.severity == "hard"
+        }
         return plan
 
     async def resolve(self, changed: list[Task], cause: Event) -> Plan:
@@ -301,7 +317,8 @@ class Core:
             if not to:
                 if not self._warned_no_phone:
                     log.warning(
-                        "sin JUDGE_PHONE ni contact_phone: no se llama (tarea %s)", task.id
+                        "sin JUDGE_PHONE ni contact_phone: no se llama (tarea %s)",
+                        task.id,
                     )
                     self._warned_no_phone = True
                 continue
