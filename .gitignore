@@ -29,3 +29,6 @@ refs-dashboard/
 infra/server/logs/
 infra/server/cache/
 infra/server/*.jar
+
+# Notas de planificación personales de Carlos
+docs/carlos/
