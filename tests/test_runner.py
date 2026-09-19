@@ -150,7 +150,7 @@ async def test_cortar_la_carretera_reencamina_al_camion(sim):
                                          "waypoint_id": "wp_pueblo_a"})
     assert "wp_sur_01" in sim._moving["unit_truck1"][0].route
 
-    await sim.inject("road_cut", {"edge": "rd_sur01_sur02", "cause": "árbol caído"})
+    await sim.inject("road_cut", {"edge": "road:wp_sur_01-wp_sur_02", "cause": "árbol caído"})
 
     ruta = sim._moving["unit_truck1"][0].route
     assert "wp_nor_01" in ruta, f"debería desviarse al norte, fue por {ruta}"
