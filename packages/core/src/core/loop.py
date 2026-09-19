@@ -18,6 +18,7 @@ Si la bandera no se levanta, no se llama al modelo.
 """
 
 import logging
+import math
 from datetime import UTC, datetime
 
 from contracts.calls import Fact
@@ -58,6 +59,11 @@ CALL_SOURCE_PREFIX = "call:"
 SIGNAL_UNIT_DISPATCHED = "unit_dispatched"
 PEOPLE_TASKS = frozenset({"evacuate", "rescue"})
 """Tareas que van hacia personas: las únicas que se cuentan como "ya va" por teléfono."""
+AT_THE_DOOR_M = 60.0
+"""Metros a los que el frente deja de ser una amenaza y es una emergencia propia: el
+pueblo recibe su orden de evacuación aunque otro esté peor. Mismo umbral que
+`tasks.CRITICAL_DISTANCE_M`, y por el mismo motivo."""
+
 RESOLVE_GAP_S = 5.0
 """Cadencia mínima (segundos de sim) entre re-solves por altas de extinción."""
 
@@ -580,17 +586,51 @@ class Core:
                 cause,
             )
 
+    def _fire_distance(self, poi: POI) -> float:
+        return calls.nearest_fire(self._state, poi, self.graph)[0]
+
+    def _most_threatened_village(self) -> str | None:
+        """El pueblo con el frente más cerca. Es el que se evacúa; a los demás se les
+        avisa de que puede llegarles gente hasta que el fuego llegue a su puerta.
+
+        `tasks._evacuate` abre una tarea de evacuación por cada pueblo en cuanto arde
+        una celda en cualquier parte del mapa, así que sin esto los dos pueblos del
+        valle reciben la misma orden con quince segundos de diferencia: medido en el
+        ensayo de las 16:40, la segunda llamada dio «ocupado» porque la primera seguía
+        abierta en el mismo teléfono."""
+        villages = [p for p in self._state.pois.values() if p.kind == "village"]
+        if not villages:
+            return None
+        best = min(villages, key=lambda p: (self._fire_distance(p), p.id))
+        return best.id if math.isfinite(self._fire_distance(best)) else None
+
+    def _fire_at_the_door(self, poi: POI) -> bool:
+        """El frente encima: ya no vale avisarle, hay que sacarlos."""
+        return self._fire_distance(poi) <= AT_THE_DOOR_M
+
     async def _emit_calls(self, plan: Plan, cause: Event) -> None:
         """Una orden de evacuación (`call.requested`) por tarea `evacuate` recién
-        asignada. Una sola llamada por tarea y run. El número: `JUDGE_PHONE` si está
-        (existe para cambiarlo cinco minutos antes de subir al escenario) y, si no,
-        el `contact_phone` del POI; sin ninguno se anota una vez y no se llama."""
+        asignada, y solo al pueblo que la necesita: el que tiene el fuego más cerca o
+        el que ya lo tiene en la puerta. Al resto se les llama aparte, con el aviso de
+        que pueden recibir gente (`_emit_neighbor_calls`).
+
+        Una sola llamada por tarea y run. El número: `JUDGE_PHONE` si está (existe
+        para cambiarlo cinco minutos antes de subir al escenario) y, si no, el
+        `contact_phone` del POI; sin ninguno se anota una vez y no se llama."""
+        amenazado = self._most_threatened_village()
         for a in plan.assignments:
             task = self._state.tasks.get(a.task_id)
             if task is None or task.kind != "evacuate" or task.id in self._called:
                 continue
             poi = self._state.pois.get(task.target_poi or "")
             if poi is None:
+                continue
+            # Todavía no es su emergencia: a ese le toca el aviso, no la orden.
+            if (
+                poi.kind == "village"
+                and poi.id != amenazado
+                and not self._fire_at_the_door(poi)
+            ):
                 continue
             to = settings.judge_phone or poi.contact_phone
             if not to:
@@ -624,26 +664,20 @@ class Core:
         par de pueblos.
 
         Quién es "el vecino" no lo decide la existencia de su tarea de evacuación
-        —`tasks._evacuate` abre una por cada pueblo en cuanto hay fuego en el
-        mapa—, sino su gravedad: el que tiene el frente encima (`critical`) recibe
-        la orden de evacuar, y el que todavía no, este aviso. Si el viento cambia y
-        pasa a `critical`, `_emit_calls` le llama con su propia orden."""
+        —`tasks._evacuate` abre una por cada pueblo en cuanto hay fuego en el mapa—
+        sino la distancia al frente: se evacúa al que lo tiene más cerca y se avisa a
+        los demás. Cuando el fuego llega a la puerta de uno de ellos
+        (`AT_THE_DOOR_M`), `_emit_calls` le llama con su propia orden."""
         for poi in sorted(self._state.pois.values(), key=lambda p: p.id):
             if poi.id == source_poi.id or poi.kind != "village":
                 continue
             pair = (source_poi.id, poi.id)
             if pair in self._neighbor_called:
                 continue
-            evac_id = tasks.evac_task_id(poi.id)
-            if evac_id in self._called:
+            if tasks.evac_task_id(poi.id) in self._called:
                 continue  # ya se le ha dictado su propia orden de evacuación
-            neighbor_evac = self._state.tasks.get(evac_id)
-            if (
-                neighbor_evac is not None
-                and not neighbor_evac.done
-                and neighbor_evac.severity == "critical"
-            ):
-                continue  # el fuego también le llega: lo suyo es una orden, no un aviso
+            if self._fire_at_the_door(poi):
+                continue  # el fuego ya le llega: lo suyo es una orden, no un aviso
             # `NEIGHBOR_PHONE` antes que `JUDGE_PHONE`: en el ensayo las dos llamadas
             # iban al mismo móvil y se pisaban. Quien está a salvo tiene su número.
             to = settings.neighbor_phone or settings.judge_phone or poi.contact_phone

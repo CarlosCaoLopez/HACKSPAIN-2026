@@ -33,6 +33,13 @@ UNIT_NAMES = {
     "crew": "brigada",
 }
 
+UNIT_PLURALS = {
+    "camión": "camiones",  # pierde la tilde: por regla salía «camiónes» en voz alta
+    "ambulancia": "ambulancias",
+    "dron": "drones",
+    "brigada": "brigadas",
+}
+
 _SEVERITY_URGENCY: dict[str, Urgency] = {
     "low": "low",
     "medium": "medium",
@@ -118,7 +125,8 @@ DOWNWIND_HALF_ANGLE_DEG = 45.0
 """Igual que en `core.tasks`: el cono dentro del cual el viento empuja hacia el POI."""
 
 
-def _plural(n: int, singular: str, plural: str) -> str:
+def _plural(n: int, singular: str) -> str:
+    plural = UNIT_PLURALS.get(singular, f"{singular}s")
     return f"{n} {singular}" if n == 1 else f"{n} {plural}"
 
 
@@ -134,20 +142,23 @@ def resources_line(state: WorldState) -> str:
         cuenta: dict[str, int] = {}
         for k in kinds:
             cuenta[k] = cuenta.get(k, 0) + 1
-        nombres = ", ".join(
-            _plural(n, k, f"{k}es" if k.endswith("n") else f"{k}s")
-            for k, n in sorted(cuenta.items())
-        )
+        nombres = ", ".join(_plural(n, k) for k, n in sorted(cuenta.items()))
         partes.append(f"{nombres} {word}")
     return "; ".join(partes) if partes else "sin medios registrados"
 
 
-def fire_line(state: WorldState, poi: POI, graph: RoadGraph | None) -> str:
-    """A qué distancia está el frente más cercano a ese pueblo y si el viento empuja
-    hacia él. Sin grafo (o sin fuego) se dice lo que se sabe, que es nada."""
+def nearest_fire(
+    state: WorldState, poi: POI, graph: RoadGraph | None
+) -> tuple[float, bool]:
+    """(metros hasta el frente más cercano, si el viento lo empuja hacia el POI).
+    `inf` si no hay fuego o no hay grafo con el que medir.
+
+    Es la medida con la que se decide a quién se evacúa y a quién se avisa: en un
+    valle con dos pueblos, los dos están «amenazados» casi desde el primer minuto, y
+    lo que los distingue no es una etiqueta sino cuál tiene el fuego más cerca."""
     burning = [c for c in state.cells.values() if c.state == "burning"]
     if not burning or graph is None:
-        return "no hay ningún frente activo cerca ahora mismo"
+        return math.inf, False
     best = math.inf
     downwind = False
     push = (state.wind.bearing_deg + 180.0) % 360.0  # el viento EMPUJA hacia aquí
@@ -160,6 +171,15 @@ def fire_line(state: WorldState, poi: POI, graph: RoadGraph | None) -> str:
             bearing = math.degrees(math.atan2(dx, -dz)) % 360.0  # 0 = norte (-z)
             gap = abs((bearing - push + 180.0) % 360.0 - 180.0)
             downwind = state.wind.speed > 0 and gap <= DOWNWIND_HALF_ANGLE_DEG
+    return best, downwind
+
+
+def fire_line(state: WorldState, poi: POI, graph: RoadGraph | None) -> str:
+    """A qué distancia está el frente más cercano a ese pueblo y si el viento empuja
+    hacia él. Sin grafo (o sin fuego) se dice lo que se sabe, que es nada."""
+    best, downwind = nearest_fire(state, poi, graph)
+    if not math.isfinite(best):
+        return "no hay ningún frente activo cerca ahora mismo"
     metros = int(round(best / 10.0) * 10)
     empuje = (
         " y el viento lo empuja hacia ustedes"
