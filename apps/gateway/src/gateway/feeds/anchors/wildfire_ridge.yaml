@@ -1,0 +1,23 @@
+# Ancla de `wildfire_ridge` (SPEC-007). Dónde del mundo real está el valle.
+#
+# ESTO ES UN MARCADOR: `fixed: false` deja todas las fuentes `off` con la nota
+# «ancla sin fijar». Las coordenadas de abajo NO son un sitio elegido, solo hacen válido
+# el fichero. Se fija con `make feeds-probe` (F5 del plan): el primer incendio real que dé
+# >= 5 focos FIRMS n/h y un giro de viento visible. Entonces se cambia `fixed` a true y se
+# rellenan `place`, `lat0`, `lon0`, `reference_start`, `edges` y `aemet_*`.
+id: wildfire_ridge
+place: "SIN FIJAR (ver make feeds-probe)"
+fixed: false
+lat0: 40.0
+lon0: -4.0
+meters_per_block: 25
+# reference_start: 2025-08-14T12:00:00+02:00   # con fecha = modo fechado; sin ella, en vivo
+time_scale: 60 # segundos reales por segundo de t_sim
+spread_ratio: 0.10
+firms_radius_km: 10
+edges: {}
+# Ejemplo de una arista declarada equivalente a un tramo real:
+#   road:wp_sur_03-wp_sur_04: { road_name: N-400, pk_from: 36.0, pk_to: 38.5 }
+aemet_area: ""
+aemet_zones: []
+aemet_events: []
