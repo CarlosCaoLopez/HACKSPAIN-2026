@@ -43,12 +43,6 @@ VERBS = ("goto", "set_marker", "announce", "rescue")
 """Exactamente cuatro. Cualquier otro es `action.failed` con `unknown_verb`."""
 
 DEFAULT_SPEED_MPS = 4.0
-
-WALK_SPEED_MPS = 1.3
-"""A lo que anda un pueblo: el paso de alguien mayor con prisa, no el de un coche. Lo
-que importa no es el número exacto sino que se vea la columna avanzando por la
-carretera durante la demo, y que el plazo que se les dicta por teléfono tenga sentido
-contra ella."""
 """Velocidad de una unidad por carretera. A 14 m/s la ruta corta se hacía en 12 s:
 demasiado rápido para verlo, y sobre todo demasiado rápido para que el corte de
 carretera del minuto 3:30 pille a alguien en ruta — el clímax se quedaba sin nadie
@@ -169,11 +163,6 @@ class Sim:
         self.civilians = {c.id: c.model_copy() for c in self.scenario.civilians}
         self._pois = {p.id: p for p in self.scenario.pois}
         self._moving: dict[str, tuple[Movement, str]] = {}
-        # Grupos de civiles andando hacia donde se les dijo por teléfono. Van aparte de
-        # `_moving` porque no son unidades: no tienen `status`, no publican
-        # `world.unit.position` y lo que cierra su viaje es llegar, no un
-        # `action.completed` por unidad.
-        self._walking: dict[str, tuple[Movement, str, str]] = {}
         self._marker_state: dict[str, str] = {}
         """Color actual de cada POI, para repintar solo cuando cambia."""
         self._loop_task: asyncio.Task | None = None
@@ -280,7 +269,6 @@ class Sim:
         )
         await self._advance_hazard(dt)
         await self._advance_units(dt)
-        await self._advance_walkers(dt)
         await self._suppress(dt)
         await self._update_markers()
         for spec in self.injects.due(self.t_sim):
@@ -537,20 +525,7 @@ class Sim:
         await self._completed(action_id, {"text": text})
 
     async def _do_rescue(self, action_id: str, args: dict) -> None:
-        """Sacar gente de un POI. Dos maneras, y la diferencia se ve en el mundo.
-
-        Con `route`, **andan**: es una evacuación, y la ruta es la que el operador les
-        dictó por teléfono. Salen a `WALK_SPEED_MPS` y se les ve avanzar por esa
-        carretera hasta el destino; llegar es lo que les pone `safe`.
-
-        Sin `route`, traslado inmediato: es un rescate, a quien no puede moverse lo
-        lleva la ambulancia que ya está en la puerta."""
-        destino = self._pois[args["shelter_id"]]
-        conocidos = set(self.graph.waypoint_ids)
-        ruta = [wp for wp in (args.get("route") or []) if wp in conocidos]
-        if ruta and len(ruta) > 1:
-            await self._walk(action_id, args.get("civ_ids", []), ruta, destino.id)
-            return
+        shelter = self._pois[args["shelter_id"]]
         rescatados = []
         for group_id in args.get("civ_ids", []):
             group = self.civilians.get(group_id)
@@ -558,8 +533,8 @@ class Sim:
                 continue
             self.civilians[group_id] = group.model_copy(update={"state": "safe"})
             await self.rcon.send(
-                f"tp @e[tag={group_id}] {int(destino.x)} {GROUND_Y + 1} "
-                f"{int(destino.z) + 16}",
+                f"tp @e[tag={group_id}] {int(shelter.x)} {GROUND_Y + 1} "
+                f"{int(shelter.z) + 16}",
                 HIGH,
             )
             await self.rcon.send(f"effect give @e[tag={group_id}] glowing 60 0 true", LOW)
@@ -569,78 +544,11 @@ class Sim:
                     "group_id": group_id,
                     "count": group.count,
                     "state": "safe",
-                    "poi_id": destino.id,
+                    "poi_id": shelter.id,
                 },
             )
             rescatados.append(group_id)
         await self._completed(action_id, {"rescued": rescatados})
-
-    async def _walk(
-        self, action_id: str, civ_ids: list[str], ruta: list[str], destino_id: str
-    ) -> None:
-        """Pone en marcha a los grupos. El `action.completed` sale cuando llegan."""
-        andando = []
-        for group_id in civ_ids:
-            group = self.civilians.get(group_id)
-            if group is None or group.state == "safe":
-                continue
-            self.civilians[group_id] = group.model_copy(update={"state": "evacuating"})
-            self._walking[group_id] = (
-                Movement(group_id, ruta, WALK_SPEED_MPS, self.graph),
-                action_id,
-                destino_id,
-            )
-            await self.rcon.send(
-                f"effect give @e[tag={group_id}] glowing 600 0 true", LOW
-            )
-            await self._emit(
-                EventType.WORLD_CIVILIANS_CHANGED,
-                {
-                    "group_id": group_id,
-                    "count": group.count,
-                    "state": "evacuating",
-                    "poi_id": group.poi_id,
-                },
-            )
-            andando.append(group_id)
-        if not andando:
-            await self._completed(action_id, {"rescued": []})
-
-    async def _advance_walkers(self, dt: float) -> None:
-        """Los mueve por la carretera, igual que a las unidades pero más despacio.
-        Llegar es lo que les pone `safe`: mientras andan siguen expuestos, que es la
-        verdad y lo que el `DivergenceChart` tiene que poder contar."""
-        steps = max(int(TICK_HZ * dt), 1)
-        llegados: dict[str, list[str]] = {}
-        for group_id, (movement, action_id, destino_id) in list(self._walking.items()):
-            for _ in range(steps):
-                if movement.done:
-                    break
-                x, z, yaw = movement.step(dt / steps)
-                await self.rcon.send(
-                    f"tp @e[tag={group_id}] {x:.1f} {GROUND_Y + 1} {z:.1f} {yaw:.0f} 0",
-                    HIGH,
-                )
-            if not movement.done:
-                continue
-            self._walking.pop(group_id, None)
-            group = self.civilians[group_id]
-            self.civilians[group_id] = group.model_copy(
-                update={"state": "safe", "poi_id": destino_id}
-            )
-            await self._emit(
-                EventType.WORLD_CIVILIANS_CHANGED,
-                {
-                    "group_id": group_id,
-                    "count": group.count,
-                    "state": "safe",
-                    "poi_id": destino_id,
-                },
-            )
-            llegados.setdefault(action_id, []).append(group_id)
-        for action_id, grupos in llegados.items():
-            if not any(a == action_id for _, a, _ in self._walking.values()):
-                await self._completed(action_id, {"rescued": sorted(grupos)})
 
     # --- injects ---
 

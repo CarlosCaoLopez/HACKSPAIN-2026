@@ -182,13 +182,6 @@ class Core:
         # los medios confirmen. Se construye al soltar, no al diferir: así la orden
         # lleva los medios que van de verdad y no los que se pensaban mandar.
         self._deferred_calls: dict[str, tuple[str, Assignment | None]] = {}
-        self._walked: set[str] = set()  # POIs que ya han echado a andar
-        # poi_id -> (destino, ruta) que se le DICTÓ por teléfono. Se guarda al emitir
-        # la orden y se usa al colgar: lo que caminan tiene que ser lo que se les dijo,
-        # no un recálculo. Sin esto la orden decía «hacia Pueblo B por la pista sur» y
-        # el pueblo salía al refugio por la norte, porque entre la llamada y el colgado
-        # el fuego se había movido (visto en `runs/run_9d8e47850123.jsonl`).
-        self._evac_plan: dict[str, tuple[str, list[str]]] = {}
 
     async def run(self) -> None:
         """Consume el bus indefinidamente."""
@@ -640,19 +633,20 @@ class Core:
         `tasks.py` de cerrar una evacuación "cuando todos sus grupos están `safe`"
         no podía cumplirse jamás, porque solo ese verbo pone un grupo a `safe`.
 
-        Un `rescue` se emite con el CIERRE de la tarea: la ambulancia **llega**
-        (`WORLD_UNIT_ARRIVED`) y se lleva a quien no puede moverse.
+        Se emite con el CIERRE de la tarea, no con el plan: es la consecuencia de que
+        la evacuación esté resuelta, no una asignación nueva. Dos cosas la cierran, y
+        por eso hay dos causas válidas:
 
-        Una `evacuate` no: se emite al **colgar** (`CALL_ENDED`). El pueblo acepta la
-        orden a mitad de conversación —el hecho `poi:<id>:confirmed` entra por el tool
-        mientras siguen hablando— y sacarlos en ese momento es sacarlos con el operador
-        todavía al teléfono. Salen cuando se despide, que es cuando en la vida real
-        alguien cuelga y echa a andar.
+        - un `rescue`, cuando la ambulancia **llega** (`WORLD_UNIT_ARRIVED`);
+        - una `evacuate`, cuando el pueblo **acepta la orden** por teléfono
+          (`WORLD_FACT_ASSERTED` con `poi:<id>:confirmed`). Sin esta segunda causa,
+          quitarle el vehículo a la evacuación dejaba a los vecinos plantados en el
+          pueblo: el `/tp` al refugio solo lo hace este verbo.
         """
-        if cause.type == EventType.CALL_ENDED:
-            await self._walk_out_on_hangup(cause)
-            return
-        if cause.type != EventType.WORLD_UNIT_ARRIVED:
+        if cause.type not in (
+            EventType.WORLD_UNIT_ARRIVED,
+            EventType.WORLD_FACT_ASSERTED,
+        ):
             return
         shelter = next(
             (p.id for p in self._state.pois.values() if p.kind == "shelter"), None
@@ -660,64 +654,25 @@ class Core:
         if shelter is None:
             return
         for task in changed:
-            if not task.done or task.kind != "rescue" or task.target_poi is None:
+            if not task.done or task.kind not in RESCUES or task.target_poi is None:
                 continue
-            await self._walk_out(task, shelter, cause)
-
-    async def _walk_out_on_hangup(self, cause: Event) -> None:
-        """Colgó el pueblo: si había aceptado la orden, echan a andar.
-
-        Si la llamada acabó sin aceptación —no contestaron, o dijeron que no— la tarea
-        sigue abierta y aquí no sale nadie: nadie evacúa un pueblo por su cuenta."""
-        task_id = str(cause.payload.get("task_id") or "")
-        task = self._state.tasks.get(task_id)
-        if task is None or task.kind != "evacuate" or not task.done:
-            return
-        if task.target_poi in self._walked:
-            return
-        shelter = next(
-            (p.id for p in self._state.pois.values() if p.kind == "shelter"), None
-        )
-        if shelter is None:
-            return
-        self._walked.add(task.target_poi or "")
-        await self._walk_out(task, shelter, cause)
-
-    async def _walk_out(self, task: Task, shelter: str, cause: Event) -> None:
-        """Saca a la gente de un POI: a pie si evacúan, en la ambulancia si es rescate.
-
-        Una evacuación va **andando y por la carretera que se le dictó por teléfono**:
-        la misma `evacuation_route` que produjo el `route_name` de la llamada, para que
-        «salgan por la pista sur» sea lo que se ve en el mundo y no una manera de
-        hablar. Un rescate no: a quien no puede moverse lo lleva la ambulancia que ya
-        ha llegado, y ahí el traslado es inmediato."""
-        poi_id = task.target_poi or ""
-        # `evacuating` fuera: ese grupo ya va por la carretera. Sin esto, la ambulancia
-        # que llega a por los inmóviles teletransportaba al pueblo entero que estaba
-        # andando —visto en `runs/run_984da0622d93.jsonl`, seq 2355— y borraba de un
-        # golpe el beat que este cambio existe para enseñar.
-        groups = sorted(
-            g.id
-            for g in self._state.civilians.values()
-            if g.poi_id == poi_id and g.state not in ("safe", "evacuating")
-        )
-        if not groups:
-            return
-        args: dict = {"civ_ids": groups, "shelter_id": shelter}
-        if task.kind == "evacuate":
-            dictado = self._evac_plan.get(poi_id)
-            if dictado is not None:
-                args["shelter_id"], args["route"] = dictado[0], list(dictado[1])
-        self._action_seq += 1
-        await self._emit(
-            EventType.ACTION_REQUESTED,
-            ActionRequested(
-                action_id=f"act_{self.run_id}_{self._action_seq}",
-                verb="rescue",
-                args=args,
-            ),
-            cause,
-        )
+            groups = sorted(
+                g.id
+                for g in self._state.civilians.values()
+                if g.poi_id == task.target_poi and g.state != "safe"
+            )
+            if not groups:
+                continue
+            self._action_seq += 1
+            await self._emit(
+                EventType.ACTION_REQUESTED,
+                ActionRequested(
+                    action_id=f"act_{self.run_id}_{self._action_seq}",
+                    verb="rescue",
+                    args={"civ_ids": groups, "shelter_id": shelter},
+                ),
+                cause,
+            )
 
     def _fire_distance(self, poi: POI) -> float:
         return calls.nearest_fire(self._state, poi, self.graph)[0]
@@ -911,13 +866,6 @@ class Core:
         to = settings.phone_for_poi(poi.id, poi.contact_phone)
         if not to:
             return
-        avisados = {
-            t.target_poi or ""
-            for tid in self._called
-            if (t := self._state.tasks.get(tid)) is not None and t.kind == "evacuate"
-        }
-        destino = calls.evacuation_target(self._state, poi, self.graph, avisados)
-        ruta = calls.evacuation_route(self._state, poi, self.graph, avisados)
         req = calls.evacuation_call(
             task,
             poi,
@@ -929,11 +877,7 @@ class Core:
             state=self._state,
             graph=self.graph,
             committed=self._committed_resources(),
-            destino=destino,
-            ruta=ruta,
         )
-        if destino is not None and ruta:
-            self._evac_plan[poi.id] = (destino.id, ruta)
         await self._emit(EventType.CALL_REQUESTED, req, cause)
         await self._emit_neighbor_calls(task, poi, cause)
 
