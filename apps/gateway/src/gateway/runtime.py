@@ -70,6 +70,7 @@ class Runtime:
     sim: Any | None = None
     voice: Any | None = None
     writer: Any | None = None
+    feeds: Any | None = None  # `gateway.feeds.poller.Feeds` del run, o None (VELA_FEEDS=off)
 
     # Estado plegado del replay, cuando no hay core que lo mantenga.
     replay_state: WorldState | None = None
@@ -254,6 +255,8 @@ class Runtime:
             # noche el token no existe todavía y unos webhooks devolviendo 401 sin que
             # nadie sepa por qué cuestan una hora de depuración a las tres de la mañana.
             "webhooks": "activo" if settings.webhook_shared_token else "sin token",
+            # Solo el modo. El detalle por fuente (qué falló y por qué) vive en `/api/feeds`.
+            "feeds": settings.vela_feeds,
             "webhook_rejected": self.webhook_rejected,
             **self.hub.stats(),
         }

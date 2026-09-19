@@ -83,8 +83,25 @@ def transport(routes: dict[str, bytes | int | Exception]) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
+_CAPTURES = {"dir": Path()}
+
+
+@pytest.fixture(autouse=True)
+def _captures_in_tmp(tmp_path: Path):
+    """En `live` el poller guarda cada respuesta cruda. Sin esto, cada test escribiría sus
+    capturas en `fixtures/feeds/` —dentro del repo— y `fixtures/**` solo se añade a mano."""
+    _CAPTURES["dir"] = tmp_path / "capturas"
+    yield
+
+
 def make_feeds(rt=None, client=None, mode="live", **over) -> Feeds:
-    kwargs = {"rt": rt or FakeRt(), "anchor": anchor(), "scenario": SCENARIO, "mode": mode}
+    kwargs = {
+        "rt": rt or FakeRt(),
+        "anchor": anchor(),
+        "scenario": SCENARIO,
+        "mode": mode,
+        "feeds_dir": _CAPTURES["dir"],
+    }
     return Feeds(client=client, **{**kwargs, **over})
 
 

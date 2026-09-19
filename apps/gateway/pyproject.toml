@@ -12,6 +12,9 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "websockets>=13",
+    # Las fuentes reales (`gateway/feeds`) piden por HTTP. Ya estaba en el lock por `voice`;
+    # se declara porque el gateway lo usa por su cuenta.
+    "httpx>=0.27",
     # Para leer `scenarios/*.yaml` mientras `sim.scenario.load` no tenga cuerpo
     # (gateway/scenarios.py). Se declara porque se usa.
     "pyyaml>=6",

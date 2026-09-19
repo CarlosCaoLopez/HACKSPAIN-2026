@@ -9,8 +9,9 @@ Tres reglas que explican por qué este fichero es como es:
    en el dashboard y un solo sitio donde mirar cuando un botón no hace lo que esperaba.
 2. **El gateway no fabrica eventos del mundo.** `world.inject` lo emite el sim
    (catálogo de `docs/interfaces.md`): sin sim esto responde 503 y no se inventa un
-   evento con `source: "sim"`. El único evento que P4 emite por su cuenta es
-   `human.override`, que es suyo por contrato.
+   evento con `source: "sim"`. Lo único que P4 emite por su cuenta es `human.override`,
+   que es suyo por contrato, y —con `VELA_FEEDS≠off`— observaciones de fuentes externas
+   (`gateway/feeds`, SPEC-007), publicadas con su propio `source` y nunca como `sim`.
 3. **En replay, el override no entra en el chorro.** Se acepta, se contesta con
    `echo: true` y ahí se queda: el hub lo numeraría con `last_seq + 1`, que es el `seq`
    que trae el siguiente evento del journal, y el cliente lo leería como hueco, pediría

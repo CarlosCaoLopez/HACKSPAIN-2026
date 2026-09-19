@@ -39,6 +39,8 @@ from contracts.settings import settings
 from gateway import replay_source
 from gateway.bridges import mount_bridges
 from gateway.control import router as control_router
+from gateway.feeds.anchor import load_anchor
+from gateway.feeds.poller import feeds_from_settings, off_status
 from gateway.rcon_null import NullRcon
 from gateway.runtime import SHUTDOWN_GRACE_S, Rt, Runtime
 from gateway.scenarios import list_ids, load_scenario, scenario_path
@@ -145,7 +147,7 @@ async def _shutdown(rt: Runtime) -> None:
         with contextlib.suppress(Exception):
             await stop_run(rt)
 
-    await rt.stop_tasks("voice", "core")
+    await rt.stop_tasks("feeds", "voice", "core")
     if rt.sim is not None:
         with contextlib.suppress(Exception):
             await asyncio.wait_for(rt.sim.stop(), timeout=SHUTDOWN_GRACE_S)
@@ -244,8 +246,30 @@ async def start_run(
 
     mount_bridges(rt)
     await rt.publish(EventType.RUN_STARTED, RunStarted(scenario_id=scenario_id), "core")
+    # Después de `run.started`, no antes: así es lo primero que ve el journal del run y
+    # ningún hecho de una fuente puede colarse por delante de él.
+    _start_feeds(rt, scenario_id)
     log.info("run %s arrancado · escenario %s", rt.run_id, scenario_id)
     return rt.run_id
+
+
+def _start_feeds(rt: Runtime, scenario_id: str) -> None:
+    """Las fuentes reales (SPEC-007), solo con `VELA_FEEDS≠off`. Con `off` esto no hace
+    nada: ni tarea, ni socket, ni nota (REQ-233).
+
+    Un escenario sin ancla no es un error: es un escenario al que no se le pueden
+    contrastar datos reales, y se anota (degradación explícita).
+    """
+    if settings.vela_feeds == "off":
+        return
+    with rt.guard("feeds"):
+        anchor = load_anchor(scenario_id)
+        if anchor is None:
+            rt.mark("feeds", "absent", f"sin ancla para {scenario_id}")
+            return
+        rt.feeds = feeds_from_settings(rt, anchor, load_scenario(scenario_id))
+        rt.spawn("feeds", rt.feeds.run())
+        rt.mark("feeds", "up", settings.vela_feeds)
 
 
 async def _ask_for_speed(rt: Runtime, speed: float) -> None:
@@ -276,6 +300,9 @@ async def stop_run(rt: Runtime) -> dict:
         return {"run_id": None, "stopped": False, "journal": None}
 
     run_id, scenario_id = rt.run_id, rt.scenario_id or DEFAULT_SCENARIO
+    # Las fuentes primero: si siguieran vivas, un hecho podría entrar después de `run.ended`.
+    await rt.stop_tasks("feeds")
+    rt.feeds = None
     await rt.publish(
         EventType.RUN_ENDED, RunEnded(scenario_id=scenario_id), "core"
     )  # antes de cerrar el writer, siempre
@@ -340,6 +367,21 @@ async def get_health(rt: Rt) -> dict:
     nadie más: es mío, y es cómo se diagnostica el arranque a las tres de la mañana
     sin leer logs."""
     return rt.health()
+
+
+@app.get("/api/feeds")
+async def get_feeds(rt: Rt) -> dict:
+    """Las fuentes reales: modo, ancla y el estado de cada una (SPEC-007 · REQ-260).
+
+    Sin run —o con `VELA_FEEDS=off`— devuelve todo `off`. **En replay sirve el ancla aunque
+    las fuentes no corran** (REQ-234, REQ-265): los hechos `api:*` llegan por el journal y el
+    dashboard tiene que poder decir de qué sitio real son.
+    """
+    if rt.feeds is not None:
+        return rt.feeds.status()
+    mode = "replay" if rt.mode == "replay" else settings.vela_feeds
+    anchor = load_anchor(rt.scenario_id or DEFAULT_SCENARIO) if mode != "off" else None
+    return off_status(mode, anchor)
 
 
 @app.get("/api/state")
