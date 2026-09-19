@@ -1,0 +1,227 @@
+# Escenario RÁPIDO: el mismo valle y el mismo guion en la mitad de tiempo.
+#
+# `wildfire_ridge.yaml` sigue siendo el de seis minutos y no se toca: alguien puede
+# estar calibrando contra sus tiempos. Este existe para ensayar cuando la demo dura
+# 2-3 minutos, que es lo que se está barajando.
+#
+# Qué se comprime y qué no: los injects van a la mitad de su hora, el fuego se
+# propaga al doble y el viento empuja al doble, así que el frente cubre el mismo
+# terreno en la mitad del tiempo. La geometría, los POIs, las unidades y las
+# carreteras son idénticos — si cambian ahí, cambian en los dos ficheros.
+#
+# Las unidades van al doble de velocidad: eso NO está aquí, está en
+# `DEFAULT_SPEED_MPS` de `sim/runner.py`, que es global. Para el ensayo rápido se
+# corre con `--speed 2`, que acelera el reloj de pared sin tocar `t_sim`.
+
+# El mundo no se genera, se declara. Este fichero es la única fuente de verdad.
+# Dueño: P2. P1 puede añadir campos previo aviso.
+# Esquema: contracts.scenario.Scenario
+#
+# Coordenadas del mundo Minecraft (x, z). Ids con prefijo: poi_, unit_, wp_, cell_.
+# La semilla hace que el mismo escenario produzca el mismo incendio en cada ensayo.
+#
+# El mapa NO se construye a mano: `make world` lo levanta entero desde aquí por
+# RCON. Cambiar una coordenada y relanzar cuesta treinta segundos, así que estos
+# números se ajustan mirando el resultado desde arriba, no midiendo en el juego.
+#
+# La geografía, de oeste a este: la base de bomberos, el cruce donde la carretera
+# se abre en Y, los dos desvíos (norte largo y seguro, sur corto y expuesto) y los
+# dos pueblos al este, separados por la cresta. El incendio nace al sur, entre el
+# cruce y los pueblos, y el viento de poniente lo empuja justo sobre el desvío sur.
+
+id: wildfire_ridge_fast
+name: Cresta oeste (3 min)
+seed: 1821
+origin: [0, 0]
+
+hazard:
+  kind: wildfire
+  origin_cell: cell_13_11 # (52,44): al suroeste del desvío sur, a 28 bloques
+  cell_size: 4 # bloques por celda
+  base_spread: 0.24 # celdas por minuto, isótropo
+  wind:
+    bearing_deg: 270 # viene del oeste, empuja hacia el este (+X)
+    speed: 2.4 # celdas por minuto que suma a favor del viento
+
+# `name` y `contact_phone` los dice y marca el agente telefónico: si no viven en
+# el estado, P3 acaba con un diccionario paralelo y se llama al número equivocado.
+pois:
+  - id: poi_base
+    name: Parque de bomberos
+    kind: base
+    description: "Fire station, the base of the fire trucks (Parque de bomberos)"
+    x: -44
+    z: 0
+    waypoint_id: wp_base
+  - id: poi_pueblo_a
+    name: Pueblo A
+    kind: village
+    description: "Village A (Pueblo A), east of the ridge, reached by the north or the south detour"
+    x: 187
+    z: 11
+    waypoint_id: wp_pueblo_a
+    # Unidades que no se pueden retirar, restricción DURA en `coverage_maintained`:
+    # cuenta las que quedan en el POI o que el plan lleva allí. Con cuatro unidades y
+    # el incendio, cualquier reasignación la incumple, el verificador veta el plan y
+    # el core replanifica — 73 llamadas al LLM por run con Pueblo B a 1, y otras 147
+    # con Pueblo A. Ambos a 0 hasta que haya unidades de sobra para sostenerla.
+    min_coverage: 0
+    contact_phone: "+34000000001"
+  - id: poi_pueblo_b
+    name: Pueblo B
+    kind: village
+    description: "Village B (Pueblo B), east of the ridge, at the end of the south road branch"
+    x: 187
+    z: 94
+    waypoint_id: wp_pueblo_b
+    min_coverage: 0
+    contact_phone: "+34000000002"
+  - id: poi_hospital
+    name: Hospital comarcal
+    kind: hospital
+    description: "County hospital (Hospital comarcal), reached from the crossing"
+    x: 22
+    z: -77
+    waypoint_id: wp_hospital
+    contact_phone: "+34000000003"
+  - id: poi_refugio
+    name: Refugio municipal
+    kind: shelter
+    description: "Municipal shelter (Refugio municipal), reached from the fire station"
+    x: -33
+    z: 77
+    waypoint_id: wp_refugio
+  - id: poi_molino
+    name: El molino viejo
+    kind: landmark
+    description: "The old mill, a lone house on the south track just outside village A; callers name it by sight, not by village"
+    x: 162
+    z: 44
+    waypoint_id: wp_sur_02
+
+# 2 camiones, 1 ambulancia, 1 dron. `capabilities` es lo que el solver cruza con
+# `Task.required_capability` para poner coste infinito: una ambulancia no extingue.
+units:
+  - id: unit_truck1
+    kind: fire_truck
+    x: -44
+    z: 0
+    capabilities: [extinguish]
+    capacity: 0
+  - id: unit_truck2
+    kind: fire_truck
+    x: -44
+    z: 10
+    capabilities: [extinguish]
+    capacity: 0
+  - id: unit_ambulance
+    kind: ambulance
+    x: 22
+    z: -77
+    capabilities: [transport, medical]
+    capacity: 4
+  - id: unit_drone
+    kind: drone
+    x: -44
+    z: -10
+    capabilities: [recon]
+    capacity: 0
+
+# La Y: del cruce salen el desvío norte (largo, a resguardo del incendio) y el sur
+# (corto, y justo por donde pasa el frente). Sin los dos, cortar una carretera no
+# obliga a replanificar y el clímax de la demo se queda sin mecanismo.
+waypoints:
+  - {id: wp_base, x: -44, z: 0}
+  - {id: wp_cruce, x: 33, z: 0}
+  - {id: wp_nor_01, x: 82, z: -50}
+  - {id: wp_nor_02, x: 148, z: -50}
+  - {id: wp_sur_01, x: 82, z: 28}
+  - {id: wp_sur_02, x: 143, z: 22}
+  - {id: wp_pueblo_a, x: 187, z: 11}
+  - {id: wp_pueblo_b, x: 187, z: 94}
+  - {id: wp_hospital, x: 22, z: -77}
+  - {id: wp_refugio, x: -33, z: 77}
+
+roads:
+  - {id: road:wp_base-wp_cruce, a: wp_base, b: wp_cruce, length_m: 77, description: "main road from the fire station east to the crossing where the road forks"}
+  # desvío norte: 120 m más largo, pero el viento aleja el fuego de él
+  - {id: road:wp_cruce-wp_nor_01, a: wp_cruce, b: wp_nor_01, length_m: 70, description: "north detour, first stretch after the crossing"}
+  - {id: road:wp_nor_01-wp_nor_02, a: wp_nor_01, b: wp_nor_02, length_m: 66, description: "north detour, middle stretch"}
+  - {id: road:wp_nor_02-wp_pueblo_a, a: wp_nor_02, b: wp_pueblo_a, length_m: 72, description: "north detour, last stretch into village A"}
+  # desvío sur: el corto, y el que el incendio corta hacia el minuto 3
+  - {id: road:wp_cruce-wp_sur_01, a: wp_cruce, b: wp_sur_01, length_m: 56, description: "south detour, first stretch after the crossing (short, exposed road)"}
+  - {id: road:wp_sur_01-wp_sur_02, a: wp_sur_01, b: wp_sur_02, length_m: 61, description: "south detour, middle stretch (short, exposed road)"}
+  - {id: road:wp_sur_02-wp_pueblo_a, a: wp_sur_02, b: wp_pueblo_a, length_m: 45, description: "south detour, last stretch into village A"}
+  # ramales
+  - {id: road:wp_sur_02-wp_pueblo_b, a: wp_sur_02, b: wp_pueblo_b, length_m: 84, description: "south road branch from the south detour to village B"}
+  - {id: road:wp_cruce-wp_hospital, a: wp_cruce, b: wp_hospital, length_m: 78, description: "road from the crossing to the county hospital"}
+  - {id: road:wp_base-wp_refugio, a: wp_base, b: wp_refugio, length_m: 78, description: "road from the fire station to the municipal shelter"}
+
+civilians:
+  - {id: civ_pueblo_a, poi_id: poi_pueblo_a, count: 24, immobile: 3}
+  - {id: civ_pueblo_b, poi_id: poi_pueblo_b, count: 15, immobile: 1}
+
+injects:
+  - at: 75
+    type: wind_shift
+    payload: {bearing: 300, speed: 1.8}
+  - at: 105
+    type: road_cut
+    payload: {edge: road:wp_sur_01-wp_sur_02, cause: "árbol caído"}
+  - at: 120
+    type: unit_failure
+    payload: {unit: unit_truck2, reason: "avería de bomba"}
+
+# Cómo dice la gente los sitios por teléfono → id. Los lee `voice.pois`
+# (`resolve_poi_local` / `resolve_edge_local`): alias exacto primero, y si no,
+# nombre por parecido. Se normaliza (minúsculas, sin tildes), así que "El Molino"
+# y "el molino" son el mismo alias. Un alias que apunte a un id que no existe
+# falla al cargar (`sim.scenario._check`).
+poi_aliases:
+  el molino: poi_molino
+  el molino viejo: poi_molino
+  molino viejo: poi_molino
+  el pueblo de arriba: poi_pueblo_a # el del norte (z pequeña) en el plano cenital
+  pueblo de arriba: poi_pueblo_a
+  pueblo a: poi_pueblo_a
+  el pueblo de abajo: poi_pueblo_b
+  pueblo de abajo: poi_pueblo_b
+  pueblo b: poi_pueblo_b
+  el hospital: poi_hospital
+  hospital comarcal: poi_hospital
+  el refugio: poi_refugio
+  refugio municipal: poi_refugio
+  la base: poi_base
+  el parque de bomberos: poi_base
+  los bomberos: poi_base
+
+# Las carreteras por su nombre de calle. "Pista del sur" es el tramo central del
+# desvío sur: el que corta el inject del segundo 210 y el que un vecino ve caer.
+road_aliases:
+  pista del sur: road:wp_sur_01-wp_sur_02
+  pista sur: road:wp_sur_01-wp_sur_02
+  carretera del sur: road:wp_sur_01-wp_sur_02
+  carretera sur: road:wp_sur_01-wp_sur_02
+  desvío sur: road:wp_sur_01-wp_sur_02
+  desvio del sur: road:wp_sur_01-wp_sur_02
+  pista del norte: road:wp_nor_01-wp_nor_02
+  pista norte: road:wp_nor_01-wp_nor_02
+  carretera del norte: road:wp_nor_01-wp_nor_02
+  carretera norte: road:wp_nor_01-wp_nor_02
+  desvío norte: road:wp_nor_01-wp_nor_02
+  desvio del norte: road:wp_nor_01-wp_nor_02
+  carretera del hospital: road:wp_cruce-wp_hospital
+  carretera del refugio: road:wp_base-wp_refugio
+  carretera de la base: road:wp_base-wp_cruce
+
+# Telegram: dónde cae un pin GPS en este valle. Un pin en Madrid (Puerta del Sol) cae en
+# Pueblo B; con `scale` 0.01 un kilómetro real son 10 m de mundo, así que cualquier pin de
+# la ciudad queda a menos de `snap_m` de Pueblo B y se ancla a él. Cambiad lat/lon al
+# sitio desde el que se vaya a mandar el pin en la demo si no es Madrid.
+geo:
+  lat: 40.4168
+  lon: -3.7038
+  x: 187
+  z: 94
+  scale: 0.01
+  snap_m: 80
