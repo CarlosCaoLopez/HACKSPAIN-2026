@@ -1435,7 +1435,10 @@ async def test_ambulance_is_called_only_when_asked_for_and_free(
     r = amb[0]
     assert r.to == "+34900000002"
     assert r.facts["role"] == "ambulance"
-    assert r.facts["unit_id"] == "unit_ambulance"  # libre: ninguna estaba evacuando
+    # Cuál de las dos da igual —el desempate del solver es asunto suyo, y `358eeed`
+    # lo cambió—; lo que importa es que sea una libre, y con la evacuación a pie lo
+    # están las dos.
+    assert r.facts["unit_id"] in ("unit_ambulance", "unit_ambulance2")
     assert r.facts["immobile"] == "2"
     assert "no pueden moverse" in r.facts["situation_brief"]
 
