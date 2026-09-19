@@ -5,6 +5,9 @@
 //      La coordenada viaja en el propio `source`, así que funciona en replay y sin red.
 //   2. `/api/feeds` → detecciones, que incluyen los focos que caen FUERA de la rejilla del
 //      valle y por eso no llegan a ser hecho (`feeds/firms.py`: sin celda no hay hecho).
+//
+// Con tope (REQ-288): el día del ancla trae más de 1.500 detecciones, y un cuadrado con
+// etiqueta por cada una bloquea la vista Mapa. Se enseñan los más cercanos al ancla.
 import type { Event, VelaEvent } from '../types'
 import type { FeedDetection } from '../hooks/useFeeds'
 
@@ -20,6 +23,11 @@ export interface Focus {
 }
 
 const VIIRS_PIXEL_M = 375
+/** Los focos que caben en pantalla sin tapar el valle (REQ-288). */
+export const MAX_FOCI = 5
+/** Dos píxeles VIIRS: por debajo, dos focos se leen como uno solo. */
+const MIN_SEPARATION_M = 2 * VIIRS_PIXEL_M
+const EARTH_RADIUS_M = 6_371_000
 const SOURCE = /^api:firms:([^:]+):(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2}):(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/
 
 /** El formato de `feeds/firms.py::source_of`, o `null` si no es de FIRMS o está roto.
@@ -57,7 +65,34 @@ function fromDetection(d: FeedDetection): Focus | null {
   }
 }
 
-export function firmsFoci(events: Event[], detections: FeedDetection[]): Focus[] {
+/** Distancia equirectangular: a esta escala (km) el error es despreciable. */
+function distanceM(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const rad = Math.PI / 180
+  const x = (lon2 - lon1) * rad * Math.cos(((lat1 + lat2) / 2) * rad)
+  const y = (lat2 - lat1) * rad
+  return Math.hypot(x, y) * EARTH_RADIUS_M
+}
+
+/** Los `max` focos más cercanos al ancla, a ≥ `MIN_SEPARATION_M` entre sí: sin la
+ *  separación, los cinco más cercanos suelen ser píxeles contiguos del mismo frente. */
+function nearestSpread(foci: Focus[], lat0: number, lon0: number, max: number): Focus[] {
+  const byDistance = [...foci].sort(
+    (a, b) => distanceM(lat0, lon0, a.lat, a.lon) - distanceM(lat0, lon0, b.lat, b.lon),
+  )
+  const picked: Focus[] = []
+  for (const f of byDistance) {
+    if (picked.length >= max) break
+    if (picked.every((p) => distanceM(p.lat, p.lon, f.lat, f.lon) >= MIN_SEPARATION_M)) picked.push(f)
+  }
+  return picked
+}
+
+export function firmsFoci(
+  events: Event[],
+  detections: FeedDetection[],
+  anchor: { lat0: number; lon0: number },
+  max: number = MAX_FOCI,
+): Focus[] {
   const out = new Map<string, Focus>()
   for (const envelope of events) {
     if (envelope.type !== 'world.fact.asserted') continue
@@ -70,5 +105,5 @@ export function firmsFoci(events: Event[], detections: FeedDetection[]): Focus[]
     const focus = fromDetection(d)
     if (focus && !out.has(focus.key)) out.set(focus.key, focus)
   }
-  return [...out.values()]
+  return nearestSpread([...out.values()], anchor.lat0, anchor.lon0, max)
 }

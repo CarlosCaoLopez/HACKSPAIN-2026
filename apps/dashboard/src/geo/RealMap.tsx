@@ -138,7 +138,10 @@ export function RealMap({
     }
   }, [layer, stableAnchor])
 
-  const foci = useMemo(() => firmsFoci(events, feeds.detections), [events, feeds.detections])
+  const foci = useMemo(
+    () => firmsFoci(events, feeds.detections, stableAnchor),
+    [events, feeds.detections, stableAnchor],
+  )
   const callers = useMemo(
     () => activeCallers(events, layer?.pois ?? [], view.tSim),
     [events, layer, view.tSim],
