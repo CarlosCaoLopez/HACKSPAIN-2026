@@ -5,7 +5,7 @@
 // sin decir de qué llamada viene, y que una extracción fallida (`facts: null`) se vea
 // como lo que es —la transcripción cruda, marcada *sin extraer*— y no como una tarjeta
 // vacía que parezca una llamada que no ocurrió.
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 
 import type { Event } from '../types'
 import { Empty, Panel, Skeleton } from '../components/Panel'
@@ -17,9 +17,13 @@ import { factValue, mmss, pct, shortId } from '../story/format'
 export function CallsPanel({
   events,
   awaitingSnapshot,
+  focusCallId = null,
 }: {
   events: Event[]
   awaitingSnapshot: boolean
+  /** La llamada a la que hay que llevar la vista: se llega aquí con un clic en la persona
+   *  que llama del mapa (SPEC-008 REQ-310). Aditiva: sin ella el panel es el de siempre. */
+  focusCallId?: string | null
 }) {
   const calls = useMemo(() => callCards(events), [events])
   const enCurso = calls.filter((call) => !call.ended).length
@@ -39,7 +43,7 @@ export function CallsPanel({
       ) : (
         <ol className="flex flex-col gap-3">
           {calls.map((call) => (
-            <CallCard key={call.callId} call={call} />
+            <CallCard key={call.callId} call={call} focused={call.callId === focusCallId} />
           ))}
         </ol>
       )}
@@ -47,13 +51,21 @@ export function CallsPanel({
   )
 }
 
-function CallCard({ call }: { call: Call }) {
+function CallCard({ call, focused }: { call: Call; focused: boolean }) {
   const entrante = call.direction === 'inbound'
   // Que una llamada no se contestara es información de primera, no una nota al pie.
   const fallida = call.ended != null && call.ended.outcome !== 'answered'
+  const ref = useRef<HTMLLIElement>(null)
+
+  useEffect(() => {
+    if (focused) ref.current?.scrollIntoView({ block: 'center' })
+  }, [focused])
 
   return (
-    <li className="rounded-[9px] border border-vela-edge p-2.5">
+    <li
+      ref={ref}
+      className={`rounded-[9px] border p-2.5 ${focused ? 'border-vela-call' : 'border-vela-edge'}`}
+    >
       <div className="flex items-baseline gap-2">
         <span className="tabular-nums text-vela-dim">{mmss(call.t_sim)}</span>
         {/* Las llamadas tienen su propio tono (REQ-200): el cian era suyo y de las

@@ -55,6 +55,11 @@
      carretera y alerta. `alert` es un ámbar vivo pensado para leerse sobre satélite
      oscuro: `warn` es el marrón del texto sobre blanco y ahí se apagaría. Ninguno es
      `vela-replan`, que es del banner. */
+  /* Los tonos de los iconos del mapa real (SPEC-008 REQ-299): fuego y agua. Sobre el
+     mapa claro de OpenStreetMap hacen falta colores más saturados que los de celda, que
+     llevan alfa. Ninguno es `vela-replan` (REQ-077). */
+  --color-vela-fire: #ea580c;
+  --color-vela-water: #0284c7;
   --color-vela-ground: #2b3628;
   --color-vela-road: #d1d5db;
   --color-vela-road-shadow: rgba(10, 12, 10, 0.55);
@@ -291,4 +296,318 @@ body {
     transition: none;
     animation: none;
   }
+}
+
+/* ---- Mapa real (SPEC-008 REQ-298…310) -------------------------------------------------
+   Insignias con icono sobre Leaflet. Todo el movimiento es CSS (REQ-227, REQ-295): nada
+   de bucles en React. El color de un icono lo da la clase de tono, con los tokens. */
+.vela-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: var(--color-vela-marker);
+  border: 2px solid currentColor;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.35);
+}
+.vela-badge > svg {
+  width: 62%;
+  height: 62%;
+}
+.vela-size-unit {
+  width: 30px;
+  height: 30px;
+}
+.vela-size-poi {
+  width: 26px;
+  height: 26px;
+}
+.vela-size-small {
+  width: 22px;
+  height: 22px;
+}
+.vela-tone-fire {
+  color: var(--color-vela-fire);
+}
+.vela-tone-unit {
+  color: var(--color-vela-accent);
+}
+.vela-tone-poi {
+  color: var(--color-vela-ink);
+}
+.vela-tone-water {
+  color: var(--color-vela-water);
+}
+.vela-tone-warn {
+  color: var(--color-vela-warn);
+}
+.vela-tone-call {
+  color: var(--color-vela-call);
+}
+.vela-tone-dim {
+  color: var(--color-vela-dim);
+}
+
+/* El rótulo de un marcador: id de unidad, nombre de pueblo. Halo para leerse sobre
+   cualquier trozo del mapa (REQ-218). */
+.vela-tag {
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-vela-ink);
+  paint-order: stroke;
+  text-shadow:
+    0 0 3px var(--color-vela-halo),
+    0 0 3px var(--color-vela-halo),
+    0 0 3px var(--color-vela-halo);
+  pointer-events: none;
+}
+/* REQ-301.4: los rótulos secundarios solo con zoom cercano o al pasar el ratón. */
+.vela-zoom-far .vela-tag-minor,
+.vela-zoom-mid .vela-tag-minor {
+  display: none;
+}
+.leaflet-marker-icon:hover .vela-tag-minor {
+  display: block;
+}
+/* REQ-301.6: con zoom lejano solo unidades, fuego, focos y cortes. */
+.vela-zoom-far .vela-zoom-hide {
+  display: none;
+}
+.vela-zoom-far .vela-tag-poi {
+  display: none;
+}
+
+/* Estado de una unidad en el borde (REQ-300): el camión sigue siendo un camión. */
+.vela-unit-idle > .vela-badge {
+  border-color: var(--color-vela-dim);
+}
+.vela-unit-working > .vela-badge {
+  animation: vela-geo-pulse 1.4s ease-in-out infinite;
+}
+.vela-unit-unavailable > .vela-badge {
+  color: var(--color-vela-dim);
+  border-color: var(--color-vela-warn);
+  opacity: 0.85;
+}
+.vela-unit-unavailable::after {
+  content: '✕';
+  position: absolute;
+  right: -6px;
+  top: -8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-vela-warn);
+  text-shadow: 0 0 3px var(--color-vela-halo);
+}
+/* Voltear según el sentido (REQ-307): el icono no rota, un camión boca abajo no se lee. */
+.vela-flip > .vela-badge > svg {
+  transform: scaleX(-1);
+}
+
+/* La luz de emergencia de camión y ambulancia en marcha. */
+.vela-unit-moving.vela-siren > .vela-badge {
+  animation: vela-geo-siren 0.9s steps(1) infinite;
+}
+.vela-unit-moving.vela-hover > .vela-badge > svg {
+  animation: vela-geo-hover 1.2s ease-in-out infinite;
+}
+.vela-unit-moving.vela-sway > .vela-badge > svg {
+  animation: vela-geo-sway 0.8s ease-in-out infinite;
+}
+@keyframes vela-geo-siren {
+  0% {
+    box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.55);
+  }
+}
+@keyframes vela-geo-hover {
+  50% {
+    transform: translateY(-2px);
+  }
+}
+@keyframes vela-geo-sway {
+  25% {
+    transform: rotate(-6deg);
+  }
+  75% {
+    transform: rotate(6deg);
+  }
+}
+@keyframes vela-geo-pulse {
+  50% {
+    box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.25);
+  }
+}
+
+/* La llama parpadea y oscila; el desfase sale del id de la celda (REQ-307). */
+.vela-geo-flame > .vela-badge > svg {
+  animation: vela-geo-flicker 1.3s ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+  transform-origin: 50% 90%;
+}
+@keyframes vela-geo-flicker {
+  0%,
+  100% {
+    transform: scale(1) rotate(-3deg);
+  }
+  50% {
+    transform: scale(1.12) rotate(3deg);
+  }
+}
+
+/* Las celdas del valle. Al arder crecen desde el lado de la vecina que ya ardía
+   (REQ-308); `fill-box` para que la escala no salga del origen del SVG. */
+.vela-geo-cell {
+  transform-box: fill-box;
+  transition:
+    fill 1s ease,
+    fill-opacity 1s ease;
+}
+.vela-geo-cell-grow {
+  animation: vela-geo-grow 600ms ease-out;
+}
+@keyframes vela-geo-grow {
+  from {
+    transform: scale(0.15);
+    opacity: 0.4;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Rutas: la vieja se va y la nueva entra en 600 ms (REQ-305, REQ-226). */
+.vela-geo-route-in {
+  animation: vela-geo-fade-in 600ms ease-out;
+}
+.vela-geo-route-out {
+  transition: opacity 600ms ease-out;
+  opacity: 0;
+}
+@keyframes vela-geo-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Anillo de evento: se expande una vez (REQ-309). */
+.vela-geo-ring {
+  width: 40px;
+  height: 40px;
+  margin: -20px 0 0 -20px;
+  border-radius: 9999px;
+  border: 3px solid var(--color-vela-fire);
+  animation: vela-geo-ring 800ms ease-out forwards;
+  pointer-events: none;
+}
+@keyframes vela-geo-ring {
+  from {
+    transform: scale(0.3);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* Persona llamando: las ondas laten (REQ-310). Colgada, en gris. */
+.vela-geo-voice > .vela-badge > svg {
+  animation: vela-geo-voice 1.1s ease-in-out infinite;
+}
+@keyframes vela-geo-voice {
+  50% {
+    transform: scale(1.12);
+  }
+}
+.vela-geo-ended > .vela-badge {
+  color: var(--color-vela-dim);
+  opacity: 0.7;
+}
+
+/* Sin animación de zoom ni de fundido con "reducir movimiento" (REQ-297, REQ-307). */
+@media (prefers-reduced-motion: reduce) {
+  .vela-badge,
+  .vela-badge > svg,
+  .vela-geo-cell,
+  .vela-geo-cell-grow,
+  .vela-geo-route-in,
+  .vela-geo-route-out,
+  .vela-geo-ring,
+  .vela-geo-flame > .vela-badge > svg,
+  .vela-geo-voice > .vela-badge > svg {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* El interior de una insignia. El abanico de unidades solapadas (REQ-301.5) es un
+   desplazamiento de ESTE elemento, no del marcador: Leaflet coloca y desliza el marcador
+   con su propio `transform` y ahí no se toca. */
+.vela-unit-inner {
+  position: relative;
+  transform: translate(var(--fan-x, 0px), var(--fan-y, 0px));
+  transition: transform 300ms ease-out;
+}
+.vela-marker {
+  background: none;
+  border: none;
+}
+/* Los civiles de un pueblo: una burbuja con el recuento, pegada a su insignia (REQ-301.3). */
+.vela-civ-bubble {
+  position: absolute;
+  right: -8px;
+  top: -8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9999px;
+  background: var(--color-vela-marker);
+  border: 2px solid currentColor;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+}
+.vela-poi-alert > .vela-badge {
+  animation: vela-geo-pulse 1.4s ease-in-out infinite;
+}
+
+/* Los rótulos sueltos del mapa real. Leaflet los pinta con caja blanca; se aligeran. */
+.vela-valley-tip,
+.vela-cut-tip,
+.vela-eta-tip,
+.vela-firms-tip,
+.vela-call-tip {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-vela-ink);
+  padding: 1px 6px;
+  border: none;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.3);
+}
+.vela-valley-tip {
+  background: transparent;
+  box-shadow: none;
+  color: var(--color-vela-dim);
+  text-shadow:
+    0 0 3px var(--color-vela-halo),
+    0 0 3px var(--color-vela-halo);
+}
+.vela-cut-tip {
+  color: var(--color-vela-warn);
+}
+/* Con zoom lejano las etiquetas de FIRMS estorban y se quedan en el `title` (REQ-288). */
+.vela-zoom-far .vela-firms-tip,
+.vela-zoom-mid .vela-firms-tip {
+  display: none;
 }

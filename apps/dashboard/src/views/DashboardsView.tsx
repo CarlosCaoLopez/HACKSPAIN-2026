@@ -27,11 +27,13 @@ export function DashboardsView({
   plan,
   events,
   awaitingSnapshot,
+  focusCallId,
 }: {
   state: WorldState | null
   plan: Plan | null
   events: Event[]
   awaitingSnapshot: boolean
+  focusCallId: string | null
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -53,7 +55,11 @@ export function DashboardsView({
             <ActionLog events={events} awaitingSnapshot={awaitingSnapshot} />
           </div>
           <div style={{ height: ROW_HEIGHT }} className="min-h-0">
-            <CallsPanel events={events} awaitingSnapshot={awaitingSnapshot} />
+            <CallsPanel
+              events={events}
+              awaitingSnapshot={awaitingSnapshot}
+              focusCallId={focusCallId}
+            />
           </div>
           <div style={{ height: HALF_ROW_HEIGHT }} className="col-span-2 min-h-0">
             <DivergenceChart events={events} />

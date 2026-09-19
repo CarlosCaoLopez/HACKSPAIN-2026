@@ -24,6 +24,13 @@ export default function App() {
   const health = useHealth(events)
   const [view, setView] = useView()
   const [comparing, setComparing] = useState(false)
+  // La llamada a la que lleva un clic en la persona que llama del mapa (REQ-310): se pasa
+  // a Dashboards, que la trae a la vista en el panel de Llamadas.
+  const [focusCallId, setFocusCallId] = useState<string | null>(null)
+  const openCall = (callId: string) => {
+    setFocusCallId(callId)
+    setView('dashboards')
+  }
   // El run ha terminado: es cuando la comparación tiene algo nuevo que decir, y cuando
   // yo la abro en el pitch.
   const finished = events.some((ev) => ev.type === 'run.ended')
@@ -57,6 +64,7 @@ export default function App() {
             plan={plan}
             events={events}
             awaitingSnapshot={awaitingSnapshot}
+            focusCallId={focusCallId}
           />
         ) : (
           <MapView
@@ -65,6 +73,7 @@ export default function App() {
             events={events}
             scenarioId={scenarioId}
             awaitingSnapshot={awaitingSnapshot}
+            onOpenCall={openCall}
           />
         )}
       </main>
