@@ -952,11 +952,18 @@ def parse_webhook(body: dict) -> CallResult:
         direction = "inbound"
     status = str(body.get("status") or call.get("status") or "completed").lower()
     transcript = body.get("transcript") or call.get("transcript") or ""
+    if isinstance(transcript, str) and transcript.lstrip().startswith("["):
+        # HappyRobot serializa la transcripción del agente como JSON dentro del
+        # cuerpo crudo: [{"role": "user"|"assistant", "content": "...", ...}].
+        try:
+            transcript = json.loads(transcript)
+        except ValueError:
+            pass
     if isinstance(transcript, list):
         transcript = "\n".join(
-            f"{m.get('role') or m.get('speaker') or '?'}: {m.get('content') or m.get('text') or ''}"
+            f"{_speaker_label(m)}: {m.get('content') or m.get('text') or ''}"
             for m in transcript
-            if isinstance(m, dict)
+            if isinstance(m, dict) and (m.get("content") or m.get("text"))
         )
     now = time.time()
     started = _as_epoch(body.get("started_at") or call.get("started_at")) or now
@@ -990,6 +997,11 @@ def turns_from_text(text: str) -> list[dict[str, str]]:
         speaker = "operator" if role.strip().lower() in AGENT_ROLES else "caller"
         turns.append({"speaker": speaker, "text": said.strip()})
     return turns
+
+
+def _speaker_label(m: dict) -> str:
+    role = str(m.get("role") or m.get("speaker") or "").lower()
+    return AGENT_NAME if role in AGENT_ROLES else CALLER_NAME
 
 
 def _as_epoch(value: Any) -> float | None:

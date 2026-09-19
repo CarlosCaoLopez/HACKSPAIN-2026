@@ -257,3 +257,23 @@ async def test_failed_outbound_without_session_is_still_archived(client, journal
     assert ended.payload["call_id"] == "run_x"
     assert ended.payload["task_id"] == "task_evac_a"
     assert ended.payload["outcome"] == "failed"
+
+
+def test_parse_webhook_reads_json_transcript_string():
+    from voice.humanlike import parse_webhook
+
+    body = {
+        "type": "end",
+        "session_id": "s9",
+        "run_id": "run_9",
+        "task_id": "task_evac_a",
+        "direction": "outbound",
+        "status": "voicemail",
+        "transcript": '[{"content":"Buenos días, le llamo del 112","role":"assistant"},{"content":"Se te ha redirigido al buzón de voz","role":"user"}]',
+    }
+    r = parse_webhook(body)
+    assert r.call_id == "run_9" and r.outcome == "no_answer"
+    assert (
+        r.transcript
+        == "operador: Buenos días, le llamo del 112\nvecino: Se te ha redirigido al buzón de voz"
+    )
