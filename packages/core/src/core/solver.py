@@ -75,15 +75,15 @@ ALT_RADIUS = 2
 """Al buscar otra celda del mismo frente para el segundo camión se recorre el frente
 con el mismo vecindario dilatado con el que `tasks` lo forma."""
 
-ANCHOR_BIAS_M = 5_000.0
-"""Histéresis del emparejamiento en un frente de dos columnas (primary + alt). El
-óptimo global voltea qué camión va a cada columna cuando el fuego se extiende y los
-costes cambian unos metros: el segundo camión recibía `goto` sur_01→sur_02→sur_01 y
-rebotaba (`superseded` a mitad de camino). Se ancla cada columna a un camión estable
-—el más cercano por carretera a su waypoint, desempate por `unit.id`— sumando este
-margen al camión ancla en la columna del otro. Grande para que la deriva de coste no
-lo voltee, pero por debajo de `HOLD_PENALTY_M` (una permanencia mínima manda más) y
-sin tocar el reparto entre frentes distintos: solo sesga las dos columnas del mismo."""
+STICKY_BIAS_M = 6_000.0
+"""Pegajosidad al plan vigente: una unidad ya comprometida (en marcha o parada
+trabajando) con un waypoint de ataque para una tarea abierta sigue yendo a él aunque
+cambie su rol primary/alt o se quede sola en el frente. Sin esto el segundo camión,
+al quedarse solo en el frente, era arrastrado de vuelta al waypoint primario y giraba
+en U a mitad de ruta (`goto` sur_01→sur_02→sur_01, `superseded`). Se descuenta del par
+(unidad, su columna pegajosa). Por debajo de `HOLD_PENALTY_M` (una permanencia estricta
+manda) y muy por encima de la deriva de coste de unos metros al extenderse el fuego;
+finita para que un crítico huérfano o un waypoint que deja de ser válido la ganen."""
 
 
 class RoadGraph:
@@ -439,6 +439,7 @@ def cost_matrix(
     graph: RoadGraph,
     vetoes: set[tuple[str, str]] | None = None,
     holds: dict[str, str] | None = None,
+    sticky: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[list[list[float]], list[Unit], list[Task], list[list[list[str]]]]:
     """Filas = unidades activas, columnas = tareas abiertas (una tarea de extinción
     puede aparecer en dos columnas: `_columns`). Puro, inspeccionable.
@@ -449,11 +450,17 @@ def cost_matrix(
     `vetoes` son pares (unit_id, task_id) que un `veto_assignment` humano ha puesto a
     coste infinito: el mismo tratamiento que una capacidad que no cuadra. `holds` es
     unidad → waypoint que no debe abandonar todavía (permanencia mínima): cualquier
-    columna que se trabaje desde otro waypoint le cuesta `HOLD_PENALTY_M` más."""
+    columna que se trabaje desde otro waypoint le cuesta `HOLD_PENALTY_M` más.
+
+    `sticky` es unidad → (tarea, waypoint) al que ya va comprometida por el plan
+    vigente: se garantiza que exista esa columna (aunque el frente pase a un solo
+    camión y `_columns` deje de duplicarla) y se le descuenta `STICKY_BIAS_M` a ese
+    par para que la unidad no sea arrastrada de vuelta al waypoint primario."""
     units = _active_units(state)
     tasks = _columns(state, units, _open_tasks(state))
     vetoes = vetoes or set()
     holds = holds or {}
+    sticky = sticky or {}
     matrix: list[list[float]] = []
     routes: list[list[list[str]]] = []
 
@@ -461,29 +468,45 @@ def cost_matrix(
     # segunda columna de un frente se trabaja desde otro waypoint si lo hay.
     col_wp: list[str | None] = []
     offroad: list[float] = []
-    seen_tasks: dict[str, int] = {}
-    # Frentes con dos columnas: (col primary, col alt). Se anclan al final para que el
-    # emparejamiento no voltee qué camión toma cada una (`ANCHOR_BIAS_M`).
-    front_pairs: list[tuple[int, int]] = []
-    for j, task in enumerate(tasks):
+    seen_tasks: set[str] = set()
+    for task in tasks:
         wp = _task_waypoint(state, task, graph)
         cell_id = task.target_cell
         if task.id in seen_tasks:
             wp, alt_cell = _alt_target(state, task, wp, graph)
             cell_id = alt_cell or cell_id
-            primary_j = seen_tasks[task.id]
-            if wp is not None and wp != col_wp[primary_j]:
-                front_pairs.append((primary_j, j))
-        else:
-            seen_tasks[task.id] = j
+        seen_tasks.add(task.id)
         col_wp.append(wp)
         offroad.append(_offroad_m(state, cell_id, wp, graph) if wp else 0.0)
+
+    # Columnas pegajosas: garantiza una columna para la tarea que la unidad ya sirve,
+    # en el waypoint al que va comprometida. Sin esto, cuando el frente pasa a tener un
+    # solo hueco de columna, el segundo camión es arrastrado al waypoint primario.
+    by_id = {u.id: u for u in units}
+    sticky_cols: dict[str, int] = {}  # unit_id → índice de su columna pegajosa
+    for unit_id, (tid, wp_s) in sticky.items():
+        if unit_id not in by_id:
+            continue
+        task = state.tasks.get(tid)
+        if task is None or task.done:
+            continue
+        existing = next(
+            (j for j, t in enumerate(tasks) if t.id == tid and col_wp[j] == wp_s), None
+        )
+        if existing is not None:
+            sticky_cols[unit_id] = existing
+            continue
+        sticky_cols[unit_id] = len(tasks)
+        tasks.append(task)
+        col_wp.append(wp_s)
+        offroad.append(_offroad_m(state, task.target_cell, wp_s, graph))
 
     for unit in units:
         row: list[float] = []
         row_routes: list[list[str]] = []
         u_wp = _unit_waypoint(unit, graph)
         held_at = holds.get(unit.id)
+        sticky_col = sticky_cols.get(unit.id)
         for j, task in enumerate(tasks):
             if (unit.id, task.id) in vetoes:
                 row.append(INFEASIBLE)
@@ -506,46 +529,14 @@ def cost_matrix(
                 cost = _weighted_cost(base + offroad[j], state, task, policy)
                 if held_at is not None and t_wp != held_at:
                     cost += HOLD_PENALTY_M
+                if sticky_col == j:
+                    cost = max(0.0, cost - STICKY_BIAS_M)
                 row.append(cost)
             row_routes.append(route)
         matrix.append(row)
         routes.append(row_routes)
 
-    _anchor_front_pairs(matrix, routes, units, graph, front_pairs)
     return matrix, units, tasks, routes
-
-
-def _anchor_front_pairs(
-    matrix: list[list[float]],
-    routes: list[list[list[str]]],
-    units: list[Unit],
-    graph: RoadGraph,
-    front_pairs: list[tuple[int, int]],
-) -> None:
-    """Histéresis por frente de dos columnas, in situ. A cada columna se le fija un
-    camión ancla —el más cercano por carretera a su waypoint, desempate por `unit.id`—
-    y se le suma `ANCHOR_BIAS_M` al ancla de una columna en la columna de la otra, para
-    que el óptimo global no los intercambie cuando la deriva de coste es de unos metros.
-    Solo mira los camiones factibles para AMBAS columnas: el que solo llega a una no
-    entra en la disputa."""
-    for primary_j, alt_k in front_pairs:
-        eligible = [
-            i
-            for i in range(len(units))
-            if math.isfinite(matrix[i][primary_j]) and math.isfinite(matrix[i][alt_k])
-        ]
-        if len(eligible) < 2:
-            continue
-        anchor_p = min(
-            eligible,
-            key=lambda i: (graph.route_length_m(routes[i][primary_j]), units[i].id),
-        )
-        anchor_a = min(
-            (i for i in eligible if i != anchor_p),
-            key=lambda i: (graph.route_length_m(routes[i][alt_k]), units[i].id),
-        )
-        matrix[anchor_p][alt_k] += ANCHOR_BIAS_M
-        matrix[anchor_a][primary_j] += ANCHOR_BIAS_M
 
 
 def apply_hard_constraints(
@@ -672,6 +663,7 @@ def solve(
     graph: RoadGraph | None = None,
     vetoes: set[tuple[str, str]] | None = None,
     holds: dict[str, str] | None = None,
+    sticky: dict[str, tuple[str, str]] | None = None,
 ) -> Plan:
     """El plan óptimo bajo esos pesos. Lo que no se pudo cubrir sale en
     `unassigned_tasks`, y se muestra: un hueco visible es información.
@@ -680,7 +672,9 @@ def solve(
     restricción desconocida las devuelve `solve_with_violations`, que es lo que usa
     `loop.py` para publicarlas: aquí se descartan solo porque la firma no tiene
     dónde ponerlas."""
-    plan, _violations = solve_with_violations(state, policy, graph, vetoes, holds)
+    plan, _violations = solve_with_violations(
+        state, policy, graph, vetoes, holds, sticky
+    )
     return plan
 
 
@@ -690,6 +684,7 @@ def solve_with_violations(
     graph: RoadGraph | None = None,
     vetoes: set[tuple[str, str]] | None = None,
     holds: dict[str, str] | None = None,
+    sticky: dict[str, tuple[str, str]] | None = None,
 ) -> tuple[Plan, list[Violation]]:
     """`solve` más las `Violation(verifier=UNKNOWN_CONSTRAINT, severity="soft")` que
     levantó `apply_hard_constraints`. Una restricción desconocida no se ignora: sale
@@ -698,13 +693,16 @@ def solve_with_violations(
     `graph` lo inyecta `loop.py` desde el escenario; si falta, se cae a un grafo vacío
     y la asignación degrada a lo que permita el estado (la demo nunca se queda sin
     plan). `vetoes` son los pares vetados por un humano (coste infinito); `holds`,
-    las unidades con permanencia mínima en su waypoint (`HOLD_PENALTY_M`).
+    las unidades con permanencia mínima en su waypoint (`HOLD_PENALTY_M`); `sticky`, las
+    ya comprometidas con un waypoint de ataque por el plan vigente (`STICKY_BIAS_M`).
 
     Dos asignaciones pueden llevar el mismo `task_id` (dos camiones en un frente):
     `verifiers.no_double_booking` solo mira unidades repetidas."""
     live_graph = (graph or RoadGraph({}, {})).with_cuts(state)
 
-    matrix, units, tasks, routes = cost_matrix(state, policy, live_graph, vetoes, holds)
+    matrix, units, tasks, routes = cost_matrix(
+        state, policy, live_graph, vetoes, holds, sticky
+    )
     violations = apply_hard_constraints(
         matrix, state, policy, live_graph, units, tasks, routes
     )
