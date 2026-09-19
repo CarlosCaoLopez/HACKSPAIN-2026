@@ -75,6 +75,39 @@ UNIT_HEAD = {
     "drone": "light_blue_concrete",
     "crew": "orange_concrete",
 }
+"""Color por rol. El backbone pide "una cabeza de bloque distinta por rol para que
+se distingan a 10 metros"; el color cumple eso, la forma cumple algo más."""
+
+# Cada pieza es (bloque, escala, traslación). Varias piezas comparten posición de
+# entidad y se separan por su `transformation`, así que **un solo `/tp` mueve el
+# vehículo entero** y `movement.py` no se entera de que ahora son tres entidades.
+UNIT_SHAPES: dict[str, list[tuple[str, tuple[float, float, float], tuple[float, float, float]]]] = {
+    # Proporciones de camión, no de plancha: un cuerpo de 1 bloque de alto contra
+    # 3,4 de largo se lee como una lámina roja tirada en el suelo. Alto ≈ ancho.
+    "fire_truck": [
+        ("red_concrete", (1.8, 1.6, 3.6), (-0.9, 0.0, -1.8)),      # caja trasera
+        ("light_gray_concrete", (1.7, 1.3, 1.3), (-0.85, 1.6, 0.4)),  # cabina
+        ("red_concrete", (1.8, 0.35, 1.2), (-0.9, 1.6, -1.8)),     # techo trasero
+        ("sea_lantern", (0.6, 0.35, 0.7), (-0.3, 2.9, 0.7)),       # rotativo
+    ],
+    "ambulance": [
+        ("white_concrete", (1.7, 1.7, 3.2), (-0.85, 0.0, -1.6)),
+        ("light_gray_concrete", (1.6, 1.1, 1.1), (-0.8, 0.0, 1.6)),
+        ("red_concrete", (0.45, 0.45, 1.6), (-0.22, 1.7, -0.8)),
+        ("sea_lantern", (0.5, 0.3, 0.5), (-0.25, 1.75, 1.0)),
+    ],
+    "drone": [
+        ("light_blue_concrete", (1.1, 0.8, 1.1), (-0.55, 2.2, -0.55)),
+        ("gray_concrete", (2.6, 0.18, 0.25), (-1.3, 2.9, -0.12)),
+        ("gray_concrete", (0.25, 0.18, 2.6), (-0.12, 2.9, -1.3)),
+    ],
+    "crew": [("orange_concrete", (0.8, 1.8, 0.8), (-0.4, 0.0, -0.4))],
+}
+
+NO_ROT = "left_rotation:[0f,0f,0f,1f],right_rotation:[0f,0f,0f,1f]"
+VIEW_RANGE = 6.0
+"""Multiplica la distancia a la que el cliente dibuja la entidad. Con el valor por
+defecto un vehículo desaparece a ~60 bloques y el plano cenital sale vacío."""
 
 
 async def build(scenario: Scenario, rcon: Rcon) -> None:
@@ -325,15 +358,38 @@ def poi_commands(poi: POI) -> list[str]:
 
 
 def unit_commands(unit: Unit) -> list[str]:
-    """Armor stand con cabeza de bloque distinta por rol, y el tag que usa `/tp`."""
-    head = UNIT_HEAD.get(unit.kind, "stone")
+    """El vehículo, como piezas de `block_display`, más su cartel con el nombre.
+
+    Un armor stand con un cubo en la cabeza cumple la letra del backbone —se
+    distingue por color a diez metros— pero no se lee como un camión: el jurado
+    ve un palo con un bloque y pregunta qué es. Con `block_display` escalado se
+    lee como vehículo sin que nadie lo explique, y es la misma entidad que el
+    propio backbone ya usa para los marcadores de POI.
+
+    Todas las piezas se invocan en la **misma** posición y se separan por su
+    `transformation`, que gira con el yaw de la entidad. Así `movement.py` sigue
+    mandando un `/tp` por unidad y ni se entera.
+    """
     x, z = int(unit.x), int(unit.z)
-    nbt = (
-        f'{{Tags:["{VELA_TAG}","{unit.id}"],ShowArms:1b,NoGravity:1b,'
-        f'CustomNameVisible:1b,CustomName:\'{{"text":"{unit.id}"}}\','
-        + f'ArmorItems:[{{}},{{}},{{}},{{id:"minecraft:{head}",count:1}}]}}'
+    shape = UNIT_SHAPES.get(unit.kind) or [
+        (UNIT_HEAD.get(unit.kind, "stone"), (1.0, 1.0, 1.0), (-0.5, 0.0, -0.5))
+    ]
+    tags = f'Tags:["{VELA_TAG}","{unit.id}"]'
+    out = [
+        f"summon block_display {x} {GROUND_Y} {z} "
+        + f"{{{tags},block_state:{{Name:\"minecraft:{block}\"}},"
+        + f"transformation:{{{NO_ROT},translation:[{tx}f,{ty}f,{tz}f],"
+        + f"scale:[{sx}f,{sy}f,{sz}f]}},"
+        + f"brightness:{{sky:15,block:15}},view_range:{VIEW_RANGE}f}}"
+        for block, (sx, sy, sz), (tx, ty, tz) in shape
+    ]
+    # El cartel va aparte: un marcador invisible que viaja con el vehículo.
+    out.append(
+        f"summon armor_stand {x} {GROUND_Y + 2} {z} "
+        + f'{{{tags},Marker:1b,Invisible:1b,NoGravity:1b,CustomNameVisible:1b,'
+        + f'CustomName:\'{{"text":"{unit.id}"}}\'}}'
     )
-    return [f"summon armor_stand {x} {GROUND_Y + 1} {z} {nbt}"]
+    return out
 
 
 def civilian_commands(scenario: Scenario) -> list[str]:

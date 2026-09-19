@@ -87,9 +87,10 @@ def test_yaw_sigue_la_convencion_de_minecraft(destino, yaw):
     assert math.isclose(yaw_between(0, 0, *destino), yaw)
 
 
-def test_tp_command_lleva_tag_y_limite():
+def test_tp_command_mueve_todas_las_piezas_de_la_unidad():
+    """Sin `limit`: el vehículo son varias entidades con el mismo tag."""
     assert tp_command("unit_truck1", 10.5, -3.25, 64, 90) == (
-        "tp @e[tag=unit_truck1,limit=1] 10.50 64.00 -3.25 90.0 0"
+        "tp @e[tag=unit_truck1] 10.50 64.00 -3.25 90.0 0"
     )
 
 

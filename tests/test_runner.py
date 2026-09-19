@@ -12,7 +12,7 @@ import pytest
 from contracts.events import EventType
 from sim import runner as runner_mod
 from sim.rcon import HIGH, LOW, FakeRcon
-from sim.runner import Sim
+from sim.runner import DEFAULT_SPEED_MPS, Sim
 
 ESCENARIO = Path("scenarios/wildfire_ridge.yaml")
 
@@ -51,7 +51,10 @@ async def test_goto_pone_la_unidad_en_movimiento(sim):
 async def test_goto_llega_y_confirma(sim):
     await sim.execute("act_go", "goto", {"unit_id": "unit_truck1",
                                          "waypoint_id": "wp_pueblo_a"})
-    for _ in range(40):
+    # Los ticks salen del recorrido y la velocidad, no de un número a ojo: así
+    # afinar `DEFAULT_SPEED_MPS` para la demo no rompe este test.
+    viaje = sim._moving["unit_truck1"][0]
+    for _ in range(int(viaje.total_m / DEFAULT_SPEED_MPS) + 5):
         await sim.tick(1.0)
         if not sim._moving:
             break

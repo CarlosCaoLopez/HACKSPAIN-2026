@@ -41,12 +41,11 @@ def tp_command(unit_id: str, x: float, z: float, y: float, yaw: float) -> str:
     """El `tp` con selector por tag. Un solo sitio donde se escribe.
 
     Sin barra inicial: por RCON los comandos van como en la consola del servidor.
-    `limit=1` evita mover media docena de entidades si un tag se duplica.
+    **Sin `limit`**: una unidad son varias entidades —las piezas del vehículo más
+    su cartel— y el tag las mueve todas de golpe. Cada pieza guarda su sitio en la
+    `transformation`, que gira con el yaw, así que la forma se conserva.
     """
-    return (
-        f"tp @e[tag={unit_id},limit=1] "
-        f"{x:.2f} {y:.2f} {z:.2f} {yaw:.1f} 0"
-    )
+    return f"tp @e[tag={unit_id}] {x:.2f} {y:.2f} {z:.2f} {yaw:.1f} 0"
 
 
 class Movement:

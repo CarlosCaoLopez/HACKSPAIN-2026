@@ -31,9 +31,11 @@ TICK_S = 1.0
 VERBS = ("goto", "set_marker", "announce", "rescue")
 """Exactamente cuatro. Cualquier otro es `action.failed` con `unknown_verb`."""
 
-DEFAULT_SPEED_MPS = 14.0
-"""Velocidad de una unidad por carretera. A 14 m/s la ruta corta son ~12 s, que
-cabe en una demo de 6 minutos y sigue leyéndose como un desplazamiento."""
+DEFAULT_SPEED_MPS = 4.0
+"""Velocidad de una unidad por carretera. A 14 m/s la ruta corta se hacía en 12 s:
+demasiado rápido para verlo, y sobre todo demasiado rápido para que el corte de
+carretera del minuto 3:30 pille a alguien en ruta — el clímax se quedaba sin nadie
+a quien reencaminar. A 4 m/s son ~40 s, que se ven y se pueden interrumpir."""
 
 MARKER_BLOCKS = {
     "ok": "lime_concrete", "warned": "yellow_concrete",
