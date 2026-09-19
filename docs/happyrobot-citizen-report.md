@@ -307,3 +307,26 @@ evacuación).
 
 **Cada fork pierde el esquema del Tool Call Result**: hay que repetir `generate` +
 `visibility` antes de publicar, o el agente se queda sin `message` y habla de memoria.
+
+## Anexo · la cola de ambulancias (v14)
+
+Dos ambulancias y dos camiones en el escenario. Cuando llega un rescate:
+
+- Si queda una ambulancia libre, se la llama (`role: ambulance`) y va.
+- Si están las dos ocupadas, **no se cancela la llamada**: se telefonea a la que
+  antes vaya a terminar (`role: ambulance_queued`) y se le preguntan dos cosas, si
+  podrán ir después y en cuántos minutos. Esa respuesta vuelve al que sigue esperando
+  al teléfono como una señal `queued` sobre su llamada viva (`waiting_call_id`, que
+  el core saca del `call_id` del hecho `poi:<id>:immobile` que pidió el rescate).
+- `must_go_next` lo decide la gravedad del rescate: con un caso crítico el guion no
+  negocia, le dice a la dotación que en cuanto termine va directa allí.
+
+Campos nuevos en el cuerpo del hook: `unit_id`, `must_go_next`, `waiting_call_id`,
+`immobile`. Parámetro nuevo del tool: `available_after_min`. Como siempre, cada fork
+obliga a repetir `generate` + `visibility`.
+
+Ojo con el cuerpo del nodo Webhook del tool: se edita con
+`PUT /versions/{fork}/nodes/{id}` mandando `type`, `event_id`, `integration_id` y la
+`configuration` entera (no acepta un parche parcial), y los `{{$var:…}}` del `raw` se
+escriben a mano. Es fácil olvidarse de un campo y que el backend no se entere de nada:
+la v13 salió sin `unit_id` y el camino de medios quedaba muerto.

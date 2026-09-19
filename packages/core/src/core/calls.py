@@ -448,6 +448,38 @@ def neighbor_alert_call(
     )
 
 
+QUEUED_CHECKLIST = (
+    "Pregunta dos cosas y cuelga: si podrán ir en cuanto terminen lo que tienen "
+    "ahora, y en cuántos minutos calculan estar libres. Llama a la herramienta "
+    "`reportar_situacion` con `confirmed_order` (true si van después) y "
+    "`available_after_min` (los minutos que te digan). Si el encargo dice que es "
+    "prioritario, no lo negocies: dile que en cuanto terminen van directos allí y "
+    "que te lo confirme."
+)
+"""Cuando no queda ninguna libre, la pregunta ya no es «¿pueden ir?» sino «¿cuándo?».
+Los minutos son lo único que se le puede decir al que está esperando al teléfono."""
+
+
+def _situation_brief_queued(
+    live: dict[str, str], hazard: str, poi_name: str, immobile: int, prioritario: bool
+) -> str:
+    cuantos = (
+        f"{immobile} personas que no pueden moverse solas"
+        if immobile > 1
+        else "una persona que no puede moverse sola"
+    )
+    orden = (
+        "Es prioritario: en cuanto terminen lo que tienen ahora, van directos allí."
+        if prioritario
+        else "No es prioritario: si no pueden, lo cubrimos con otro medio."
+    )
+    return (
+        "Están todas las ambulancias ocupadas y hay alguien esperando al teléfono "
+        f"por un {hazard}: en {poi_name} hay {cuantos}. {orden} "
+        f"{live['roads_status'].capitalize()}."
+    )
+
+
 def fire_crew_call(
     task: Task,
     station: POI,
@@ -497,11 +529,25 @@ def ambulance_call(
     state: WorldState | None = None,
     graph: RoadGraph | None = None,
     aliases: dict[str, str] | None = None,
+    queued: bool = False,
+    priority: bool = False,
+    waiting_call_id: str = "",
 ) -> CallRequest:
-    """A la ambulancia, solo cuando alguien la ha pedido por teléfono (un rescate
-    nace de un hecho `poi:<id>:immobile` de una llamada) y solo si está libre."""
+    """A la ambulancia, cuando alguien la ha pedido por teléfono (un rescate nace de
+    un hecho `poi:<id>:immobile` de una llamada).
+
+    Con `queued` la llamada es otra: no queda ninguna libre, alguien espera al
+    teléfono, y lo que se le pregunta a la dotación es *cuándo* estará libre, para
+    poder decírselo al que espera (`waiting_call_id`). `priority` lo decide la
+    gravedad del rescate: con un caso crítico no se les pregunta si quieren, se les
+    dice que en cuanto terminen van allí."""
     hazard = hazard_name(hazard_kind)
     live = _live_or_blank(state, poi, graph, None, aliases)
+    brief = (
+        _situation_brief_queued(live, hazard, poi.name, immobile, priority)
+        if queued
+        else _situation_brief_ambulance(live, hazard, poi.name, immobile)
+    )
     return CallRequest(
         task_id=task.id,
         poi_id=poi.id,
@@ -510,21 +556,21 @@ def ambulance_call(
         intent="ambulance_dispatch",
         urgency="critical",
         facts={
-            "role": "ambulance",
+            "role": "ambulance_queued" if queued else "ambulance",
             "callee": "la dotación de la ambulancia",
             "unit_id": unit_id,
             "poi_name": poi.name,
             "base_name": base.name,
             "hazard_kind": hazard,
             "immobile": str(immobile),
-            "situation_brief": _situation_brief_ambulance(
-                live, hazard, poi.name, immobile
-            ),
-            "checklist": CREW_CHECKLIST,
+            "must_go_next": "sí" if priority else "no",
+            "waiting_call_id": waiting_call_id,
+            "situation_brief": brief,
+            "checklist": QUEUED_CHECKLIST if queued else CREW_CHECKLIST,
             "advice_rules": ADVICE_RULES,
             **live,
         },
-        expect=["confirmation"],
+        expect=["confirmation", "available_after_min"] if queued else ["confirmation"],
     )
 
 

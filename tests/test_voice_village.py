@@ -208,3 +208,55 @@ async def test_ambulance_confirms(client, journal) -> None:
     ).json()
     assert ack["ambulance_dispatched"] is True
     assert _keys(journal)["unit:unit_ambulance:available"] is True
+
+
+async def test_queued_answer_reaches_the_caller_on_hold(client, journal) -> None:
+    """El círculo completo: no había ambulancia, se llamó a la ocupada, contesta que
+    en 8 minutos, y eso vuelve como señal a la llamada que sigue esperando."""
+    body = {
+        "unit_id": "unit_ambulance",
+        "role": "ambulance_queued",
+        "call_id": "run_hr_10",
+        "waiting_call_id": "sess_vecino",
+        "must_go_next": "sí",
+        "params": {"confirmed_order": "sí", "available_after_min": "8"},
+    }
+    r = await client.post("/webhooks/happyrobot/village", json=body, headers=HEADERS)
+    assert r.status_code == 200, r.text
+    assert "esperando" in r.json()["message"]
+
+    sig = next(e for e in journal if e.type == EventType.CALL_SIGNAL_REQUESTED)
+    assert sig.payload["call_id"] == "sess_vecino"
+    assert sig.payload["key"] == "queued"
+    msg = sig.payload["payload"]["message"]
+    assert "8 minutos" in msg and "el siguiente" in msg
+    assert sig.payload["payload"]["minutes"] == 8
+    # Nadie ha quedado fuera de servicio: dijo que sí, solo que más tarde.
+    assert not [e for e in journal if e.type == EventType.WORLD_FACT_ASSERTED]
+
+
+async def test_queued_answer_no_is_relayed_and_frees_the_board(client, journal) -> None:
+    body = {
+        "unit_id": "unit_ambulance",
+        "role": "ambulance_queued",
+        "call_id": "run_hr_11",
+        "waiting_call_id": "sess_vecino",
+        "must_go_next": "no",
+        "params": {"confirmed_order": "no"},
+    }
+    await client.post("/webhooks/happyrobot/village", json=body, headers=HEADERS)
+    sig = next(e for e in journal if e.type == EventType.CALL_SIGNAL_REQUESTED)
+    assert "no va a poder ir" in sig.payload["payload"]["message"]
+    assert _keys(journal)["unit:unit_ambulance:available"] is False
+
+
+async def test_queued_without_anyone_waiting_does_not_crash(client, journal) -> None:
+    body = {
+        "unit_id": "unit_ambulance",
+        "role": "ambulance_queued",
+        "call_id": "run_hr_12",
+        "params": {"confirmed_order": "sí", "available_after_min": "5"},
+    }
+    r = await client.post("/webhooks/happyrobot/village", json=body, headers=HEADERS)
+    assert r.status_code == 200
+    assert not [e for e in journal if e.type == EventType.CALL_SIGNAL_REQUESTED]

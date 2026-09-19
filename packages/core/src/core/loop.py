@@ -775,12 +775,16 @@ class Core:
         return f"{metros} metros de {cerca.name}"
 
     async def _emit_ambulance_call(self, cause: Event) -> None:
-        """A la ambulancia, solo si alguien la ha pedido y está libre.
+        """A la ambulancia, solo si alguien la ha pedido.
 
         «Pedida» es una tarea de rescate abierta, y un rescate solo nace de un hecho
         `poi:<id>:immobile` que ha entrado por una llamada: nadie inventa un rescate
-        desde el mapa. Si la ambulancia está averiada o metida en otra tarea, no se
-        la llama; el plan ya la repartirá cuando quede libre."""
+        desde el mapa.
+
+        Si hay una libre, se la manda. Si no queda ninguna, se llama a la que antes
+        vaya a terminar para preguntarle en cuántos minutos estará libre y —si el
+        caso es crítico— decirle que en cuanto acabe va allí. Esa respuesta vuelve al
+        que sigue esperando al teléfono (`voice.webhooks`)."""
         if not settings.ambulance_phone:
             return
         rescue = next(
@@ -795,15 +799,19 @@ class Core:
         )
         if rescue is None:
             return
-        unit = self._free_unit("transport", rescue.id)
-        if unit is None:
-            log.info(
-                "rescate %s pedido con la ambulancia ocupada: no se llama", rescue.id
-            )
-            return
         poi = self._state.pois.get(rescue.target_poi or "")
         if poi is None:
             return
+        unit = self._free_unit("transport", rescue.id)
+        queued = unit is None
+        if queued:
+            # Ninguna libre: se llama igualmente, pero a preguntar CUÁNDO. Quien
+            # pidió la ambulancia sigue al teléfono, y «ahora mismo no hay» no es
+            # una respuesta: lo que se le puede dar son minutos.
+            unit = self._busiest_unit("transport")
+            if unit is None:
+                log.info("rescate %s sin ninguna ambulancia en servicio", rescue.id)
+                return
         base = next((p for p in self._state.pois.values() if p.kind == "hospital"), poi)
         immobile = max(
             (g.immobile for g in self._state.civilians.values() if g.poi_id == poi.id),
@@ -821,8 +829,37 @@ class Core:
             state=self._state,
             graph=self.graph,
             aliases=self.scenario.road_aliases,
+            queued=queued,
+            priority=rescue.severity == "critical",
+            waiting_call_id=self._who_asked(poi.id),
         )
         await self._emit(EventType.CALL_REQUESTED, req, cause)
+
+    def _busiest_unit(self, capability: str) -> Unit | None:
+        """La unidad de ese tipo que está en servicio, aunque ocupada: a la que se
+        telefonea cuando no queda ninguna libre. Se prefiere la que antes va a
+        terminar (menor ETA de su tarea en el plan vigente), porque es la que puede
+        dar una respuesta útil a quien espera."""
+        candidatas = [
+            u
+            for u in self._state.units.values()
+            if capability in u.capabilities and u.status != "unavailable"
+        ]
+        if not candidatas:
+            return None
+        etas = {
+            a.unit_id: a.eta_s for a in (self._plan.assignments if self._plan else [])
+        }
+        return min(candidatas, key=lambda u: (etas.get(u.id, 1e9), u.id))
+
+    def _who_asked(self, poi_id: str) -> str:
+        """La llamada que pidió el rescate de ese POI, para poder devolverle la
+        respuesta de la ambulancia mientras sigue al teléfono. Es el `call_id` del
+        hecho `poi:<id>:immobile` más reciente: un rescate no nace de otra cosa."""
+        for fact in reversed(self._state.facts):
+            if fact.key == f"poi:{poi_id}:immobile":
+                return fact.call_id or fact.source.removeprefix(CALL_SOURCE_PREFIX)
+        return ""
 
     async def _emit_signal(self, plan: Plan, cause: Event) -> None:
         """Si el plan lo provocó un hecho de una llamada en curso (`source=call:<id>`),

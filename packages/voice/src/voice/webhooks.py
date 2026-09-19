@@ -346,7 +346,12 @@ def _coerce(params: dict) -> dict:
     return out
 
 
-_VILLAGE_INT_FIELDS = ("headcount", "people_immobile", "injuries")
+_VILLAGE_INT_FIELDS = (
+    "headcount",
+    "people_immobile",
+    "injuries",
+    "available_after_min",
+)
 _VILLAGE_BOOL_FIELDS = ("confirmed_order", "capacity_available")
 # params del tool → sufijo de `poi:<poi_id>:<sufijo>` (contracts.factkeys). Un campo
 # fuera de este mapa (p. ej. `notes`, texto libre para el registro) no se publica.
@@ -374,6 +379,32 @@ def _coerce_village(params: dict) -> dict:
         else:
             out[k] = v
     return {k: v for k, v in out.items() if v is not None}
+
+
+SIGNAL_QUEUED = "queued"
+
+
+def queued_message(minutos: int | None, va: bool | None, prioritario: bool) -> str:
+    """Lo que se le dice a quien lleva esperando al teléfono desde que pidió la
+    ambulancia. Es la razón de ser de la llamada en espera: sin esto, el que espera
+    solo oye silencio mientras alguien decide por él."""
+    if va is False:
+        return (
+            "La ambulancia no va a poder ir. Estamos buscando otro medio; "
+            "no cuelgue, le digo algo en cuanto lo tenga."
+        )
+    if minutos:
+        cuando = "un minuto" if minutos == 1 else f"unos {minutos} minutos"
+        cola = (
+            " Es usted el siguiente: en cuanto termine, va directa allí."
+            if prioritario
+            else " En cuanto quede libre, va para allá."
+        )
+        return f"Ya he hablado con la ambulancia: estará libre en {cuando}.{cola}"
+    return (
+        "Ya he hablado con la ambulancia: está ocupada ahora mismo, pero irá en "
+        "cuanto termine. No se mueva de donde está."
+    )
 
 
 def crew_ack(role: str, disponible: bool | None) -> str:
@@ -443,6 +474,49 @@ async def happyrobot_village(
         }
     coerced = _coerce_village(params)
     unit_id = str(body.get("unit_id") or "")
+
+    if unit_id and role == "ambulance_queued":
+        # No queda ninguna libre: esta llamada existe para sacarle minutos a la
+        # dotación y devolvérselos a quien sigue esperando al teléfono.
+        va = coerced.get("confirmed_order")
+        minutos = coerced.get("available_after_min")
+        prioritario = str(body.get("must_go_next") or "").lower() in ("sí", "si", "true")
+        esperando = str(body.get("waiting_call_id") or "")
+        n = 0
+        if va is False:
+            await publish(
+                _village_fact_event(
+                    f"unit:{unit_id}:available", False, call_id, "critical"
+                )
+            )
+            n = 1
+        if esperando:
+            await publish(
+                make_event(
+                    EventType.CALL_SIGNAL_REQUESTED,
+                    {
+                        "call_id": esperando,
+                        "key": SIGNAL_QUEUED,
+                        "payload": {
+                            "message": queued_message(minutos, va, prioritario),
+                            "minutes": minutos,
+                            "unit_id": unit_id,
+                        },
+                    },
+                    source="voice",
+                )
+            )
+        else:
+            log.info("respuesta de %s sin llamada en espera a la que contársela", unit_id)
+        return {
+            "ok": True,
+            "facts_published": n,
+            "ambulance_dispatched": bool(va),
+            "message": (
+                "Entendido, queda anotado y se lo digo ahora mismo a quien está "
+                "esperando. Gracias."
+            ),
+        }
 
     if unit_id:
         # Llamada a un medio (retén, ambulancia): lo único que cambia el mundo es si

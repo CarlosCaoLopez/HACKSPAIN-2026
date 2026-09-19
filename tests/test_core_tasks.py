@@ -1301,15 +1301,17 @@ async def test_ambulance_is_called_only_when_asked_for_and_free(
     assert "no pueden moverse" in r.facts["situation_brief"]
 
 
-async def test_busy_ambulance_is_not_called(
-    journal, fixed_planner, monkeypatch, caplog
+async def test_all_ambulances_busy_calls_to_ask_when(
+    journal, fixed_planner, monkeypatch
 ) -> None:
-    """Si ya está metida en otra tarea abierta, no se la llama: el plan la repartirá
-    cuando quede libre. Es la condición del guion, no una optimización."""
+    """Si no queda ninguna libre, la llamada no se cancela: se telefonea a la
+    dotación ocupada para preguntarle CUÁNDO, y esa respuesta vuelve a quien sigue
+    esperando al teléfono (`waiting_call_id`). Con un caso crítico, además, no se le
+    pregunta si quiere: se le dice que va en cuanto termine."""
     monkeypatch.setattr(settings, "ambulance_phone", "+34900000002")
     core = loop.Core(bus, _scenario())
     await _ignite(core)
-    # El plan inicial ya la mandó a evacuar Pueblo A: está ocupada.
+    # La única ambulancia ya está evacuando Pueblo A.
     assert core.state().units["unit_ambulance"].task_id == "task_evac_poi_pueblo_a"
 
     fact = _ev(
@@ -1321,16 +1323,24 @@ async def test_busy_ambulance_is_not_called(
             "source": "call:sess_amb",
             "severity": "critical",
             "kind": "observed",
+            "call_id": "sess_amb",
         },
         source="call:sess_amb",
         t_sim=40.0,
     )
-    with caplog.at_level(logging.INFO, logger="core.loop"):
-        await bus.publish(fact)
-        await core.on_event(fact)
-    assert not [
-        e
+    await bus.publish(fact)
+    await core.on_event(fact)
+
+    amb = [
+        CallRequest.model_validate(e.payload)
         for e in _of(journal, EventType.CALL_REQUESTED)
         if e.payload["intent"] == "ambulance_dispatch"
     ]
-    assert any("ocupada" in r.message for r in caplog.records)
+    assert len(amb) == 1
+    r = amb[0]
+    assert r.facts["role"] == "ambulance_queued"
+    assert r.facts["must_go_next"] == "sí"  # el rescate es crítico
+    assert r.facts["waiting_call_id"] == "sess_amb"  # a quién hay que contestarle
+    assert "todas las ambulancias ocupadas" in r.facts["situation_brief"]
+    assert "van directos allí" in r.facts["situation_brief"]
+    assert "available_after_min" in r.expect

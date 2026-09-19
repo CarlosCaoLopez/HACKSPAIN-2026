@@ -463,6 +463,13 @@ def draft_for(key: str, payload: dict) -> str:
         m, s = divmod(eta, 60)
         when = f"{m} min {s} s" if m else f"{s} segundos"
         return f"Ya va {unit} por {route}, llega en {when}. No se mueva de donde está."
+    if key == "queued":
+        # El mensaje lo redacta el core con la respuesta de la ambulancia: aquí no se
+        # inventa nada, solo se le pone la voz del operador si viene vacío.
+        return str(
+            payload.get("message")
+            or "Sigo con ello; la ambulancia está ocupada y le aviso en cuanto se libere."
+        )
     if key == "coach":
         return str(payload.get("say") or NEUTRAL_DRAFT)
     return str(payload.get("message") or payload.get("say") or NEUTRAL_DRAFT)

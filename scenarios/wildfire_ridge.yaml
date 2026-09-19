@@ -110,6 +110,12 @@ units:
     z: -77
     capabilities: [transport, medical]
     capacity: 4
+  - id: unit_ambulance2
+    kind: ambulance
+    x: 22
+    z: -70
+    capabilities: [transport, medical]
+    capacity: 4
   - id: unit_drone
     kind: drone
     x: -44
