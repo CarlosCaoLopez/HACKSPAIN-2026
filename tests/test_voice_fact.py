@@ -239,3 +239,21 @@ async def test_ack_without_plan_falls_back_to_signal(client, journal, fakes):
         "unit_dispatched", {"unit": "camión 2", "route": "pista norte", "eta_s": 40}, []
     )
     assert live.signals[-1]["kind"] == "unit_dispatched"
+
+
+async def test_failed_outbound_without_session_is_still_archived(client, journal, fakes):
+    body = {
+        "type": "end",
+        "session_id": "",
+        "run_id": "run_x",
+        "task_id": "task_evac_a",
+        "direction": "outbound",
+        "status": "failed",
+        "transcript": "",
+    }
+    r = await client.post("/webhooks/happyrobot/call", json=body, headers=HEADERS)
+    assert r.status_code == 200, r.text
+    ended = next(e for e in journal if e.type == EventType.CALL_ENDED)
+    assert ended.payload["call_id"] == "run_x"
+    assert ended.payload["task_id"] == "task_evac_a"
+    assert ended.payload["outcome"] == "failed"

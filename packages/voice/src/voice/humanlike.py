@@ -36,7 +36,9 @@ from voice.perception import CallPerception
 log = logging.getLogger("voice.humanlike")
 
 HUMALIKE_BASE = "https://api.humalike.com"
-HAPPYROBOT_BASE = settings.happyrobot_api_base or "https://platform.eu.happyrobot.ai/api/v2"
+HAPPYROBOT_BASE = (
+    settings.happyrobot_api_base or "https://platform.eu.happyrobot.ai/api/v2"
+)
 """La organización está en la región EU: el host US rechaza la key."""
 
 FORESEE_HOT_S = 3.0
@@ -570,7 +572,10 @@ class ConversationMonitor:
     def jev_turns(self) -> list[dict[str, str]]:
         """La transcripción con las etiquetas que nombran las preguntas de Jev."""
         return [
-            {"speaker": "operator" if t["speaker"] == AGENT_NAME else "caller", "text": t["text"]}
+            {
+                "speaker": "operator" if t["speaker"] == AGENT_NAME else "caller",
+                "text": t["text"],
+            }
             for t in self.state.transcript
         ]
 
@@ -604,7 +609,10 @@ class ConversationMonitor:
         refina igual que el resto) y no espera: el bucle sigue."""
         n = len(self.state.transcript)
         field = await self.perception.tick(
-            self.jev_turns(), new_text=n != self.state.last_jev_len, final=final, wait=wait
+            self.jev_turns(),
+            new_text=n != self.state.last_jev_len,
+            final=final,
+            wait=wait,
         )
         if self.perception.active:
             self.state.last_jev_len = n
@@ -932,6 +940,10 @@ def parse_webhook(body: dict) -> CallResult:
     meta = (call.get("metadata") or {}).get("custom") if call else None
     meta = meta if isinstance(meta, dict) else {}
     call_id = str(body.get("session_id") or body.get("call_id") or call.get("id") or "")
+    if not call_id:
+        # Una saliente que no llegó a establecerse no tiene sesión: el run del
+        # workflow es el id que devolvió el hook, y con él casa el core.
+        call_id = str(body.get("run_id") or "")
     task_id = body.get("task_id") or meta.get("task_id")
     direction = str(body.get("direction") or call.get("direction") or "inbound")
     if direction not in ("inbound", "outbound"):
