@@ -5,7 +5,8 @@
 // CERRADA — seis cosas:
 //
 //   1. posición y rumbo de unidad     (world.unit.position)
-//   2. estado de unidad               (world.unit.status)
+//   2. estado de unidad               (world.unit.status Y world.fact.asserted
+//                                      con clave `unit:<id>:available`)
 //   3. estado de celda y su causa     (world.cell.changed, world.fire.detected)
 //   4. corte de carretera             (world.road.changed)
 //   5. grupos de civiles              (world.civilians.changed)
@@ -211,6 +212,26 @@ function fold(d: Derived, envelope: Event): void {
       const p = ev.payload
       const before = d.units.get(p.unit_id)
       if (before) d.units.set(p.unit_id, { ...before, status: p.status })
+      break
+    }
+    // La OTRA mitad del punto 2. El estado de una unidad no siempre cambia por
+    // `world.unit.status`: cuando una dotación dice por teléfono que no puede salir,
+    // `voice/webhooks.py` asierta `unit:<id>:available=false` y quien la pone
+    // `unavailable` es `belief.apply_fact` DENTRO del core, sin emitir ningún
+    // `world.unit.status`. Sin esto, el camión que acaba de decir que no sigue
+    // pintándose en el mapa como si estuviera disponible y *Hechos* lo lista libre,
+    // justo en el minuto del guion en el que se está hablando de él.
+    //
+    // No es un séptimo punto de la lista cerrada ni es rehacer `belief`: es la misma
+    // línea de `belief.apply_fact` (`idle` si `true`, `unavailable` si no) para el
+    // único campo que este hook ya lleva. Los demás hechos siguen siendo de P1 y los
+    // pinta *Hechos* como texto.
+    case 'world.fact.asserted': {
+      const m = /^unit:([^:]+):available$/.exec(ev.payload.key)
+      if (!m?.[1]) return
+      const before = d.units.get(m[1])
+      if (!before) return
+      d.units.set(m[1], { ...before, status: ev.payload.value ? 'idle' : 'unavailable' })
       break
     }
     case 'world.cell.changed': {

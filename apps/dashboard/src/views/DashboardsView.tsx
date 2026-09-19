@@ -7,6 +7,7 @@
 // se ve estés en el panel que estés.
 import type { Event, Plan, WorldState } from '../types'
 import type { WorldView } from '../hooks/useWorldView'
+import { Medios } from '../components/Medios'
 import { ReplanBanner } from '../components/ReplanBanner'
 import { ViewHeader } from '../components/ViewIcon'
 import { ActionLog } from '../panels/ActionLog'
@@ -40,7 +41,14 @@ export function DashboardsView({
 }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <ViewHeader view="dashboards" />
+      <ViewHeader view="dashboards">
+        {/* La luz de medios va en la cabecera y no en un panel: la rejilla es 2×3 y cada
+            tarjeta mide una pantalla, así que un séptimo panel dejaría media fila coja y
+            además habría que bajar el scroll para verlo. Aquí no cuesta ni un píxel de
+            alto (la banda de 56 px ya existía y estaba vacía a la derecha) y está siempre
+            visible, sin scroll. */}
+        <Medios state={state} events={events} />
+      </ViewHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {/* `sticky`: el banner acompaña al scroll. Fondo propio para que las tarjetas que
             pasan por debajo no se transparenten. */}
