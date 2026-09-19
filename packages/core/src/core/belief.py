@@ -12,6 +12,7 @@ import logging
 from contracts.calls import Fact
 from contracts.events import Event, EventType
 from contracts.factkeys import validate_fact_key
+from contracts.world import RoadEdge
 from contracts.plan import Plan
 from contracts.scenario import Scenario
 from contracts.world import Cell, CivilianGroup, Wind, WorldState
@@ -151,6 +152,17 @@ def apply(state: WorldState, ev: Event) -> WorldState:
     return state.model_copy(update=update)
 
 
+def road_of(roads: dict[str, RoadEdge], ref: str) -> RoadEdge | None:
+    """La arista de `WorldState.roads` a la que apunta un trozo de clave de hecho.
+
+    `state.roads` se indexa por el id del escenario (`road:wp_a-wp_b`), pero la clave de
+    hecho lleva ese mismo id con el prefijo una sola vez, así que su segmento del medio es
+    `wp_a-wp_b`. Buscar `roads.get("wp_a-wp_b")` no encuentra nada y —peor— no falla: el
+    hecho de corte entraba a `facts` y no cortaba la arista. Se prueba tal cual (ids
+    sintéticos, `e1`) y con el prefijo."""
+    return roads.get(ref) or roads.get(f"road:{ref}")
+
+
 def apply_fact(state: WorldState, fact: Fact) -> WorldState:
     """Un hecho con procedencia entra al estado. Clave desconocida (no está en
     `contracts.factkeys`) se registra y no se aplica.
@@ -170,15 +182,15 @@ def apply_fact(state: WorldState, fact: Fact) -> WorldState:
     match seg:
         case ["road", edge_id, "cut"]:
             roads = dict(state.roads)
-            r = roads.get(edge_id)
+            r = road_of(roads, edge_id)
             if r is not None:
-                roads[edge_id] = r.model_copy(update={"cut": bool(value)})
+                roads[r.id] = r.model_copy(update={"cut": bool(value)})
                 update["roads"] = roads
         case ["road", edge_id, "cause"]:
             roads = dict(state.roads)
-            r = roads.get(edge_id)
+            r = road_of(roads, edge_id)
             if r is not None:
-                roads[edge_id] = r.model_copy(update={"cut_cause": str(value)})
+                roads[r.id] = r.model_copy(update={"cut_cause": str(value)})
                 update["roads"] = roads
         case ["poi", poi_id, attr]:
             update["civilians"] = _apply_poi_fact(state, poi_id, attr, value)

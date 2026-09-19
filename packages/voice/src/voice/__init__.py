@@ -14,7 +14,7 @@ import os
 
 from contracts.calls import CallFacts, CallRequest, Fact
 from contracts.events import EventType
-from contracts.factkeys import road_cut_key, validate_fact_key
+from contracts.factkeys import road_cause_key, road_cut_key, validate_fact_key
 from contracts.settings import settings
 from voice import pois
 from voice.extract_schema import CallFactsExtract, to_call_facts
@@ -108,7 +108,7 @@ class VoiceGateway:
             edge = pois.resolve_edge_local(cf.road_blocked)
             if edge:
                 add(road_cut_key(edge), True)
-                add(f"road:{edge}:cause", cf.road_blocked)
+                add(road_cause_key(edge), cf.road_blocked)
             else:
                 log.warning("carretera sin resolver: %r", cf.road_blocked)
         poi = cf.resolved_poi_id or pois.resolve_poi_local(cf.location_hint)

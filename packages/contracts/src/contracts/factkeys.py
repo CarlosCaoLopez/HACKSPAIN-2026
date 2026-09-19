@@ -48,6 +48,29 @@ def validate_fact_key(key: str) -> type | None:
     return None
 
 
+def road_bare(edge_id: str) -> str:
+    """El id de una arista sin el prefijo `road:`.
+
+    Los ids del escenario YA lo llevan (`road:wp_sur_03-wp_sur_04`, porque el id es
+    también su dirección) y las claves de hecho llevan el prefijo UNA vez
+    (`road:wp_sur_03-wp_sur_04:cut`, que es lo que valida la plantilla de arriba). Con un
+    id de escenario, `f"road:{edge_id}:cut"` da `road:road:…` —una clave que
+    `validate_fact_key` rechaza en silencio— y por eso todo pasa por aquí. Idempotente:
+    un id sin prefijo se devuelve tal cual."""
+    return edge_id.removeprefix("road:")
+
+
 def road_cut_key(edge_id: str) -> str:
-    """`road:wp_sur_03-wp_sur_04:cut` — la clave de la demo, con su helper."""
-    return f"road:{edge_id}:cut"
+    """`road:wp_sur_03-wp_sur_04:cut` — la clave de la demo. Acepta el id con o sin
+    `road:`."""
+    return f"road:{road_bare(edge_id)}:cut"
+
+
+def road_open_key(edge_id: str) -> str:
+    """`road:wp_sur_03-wp_sur_04:open` — la suposición de un plan sobre una arista."""
+    return f"road:{road_bare(edge_id)}:open"
+
+
+def road_cause_key(edge_id: str) -> str:
+    """`road:wp_sur_03-wp_sur_04:cause` — el motivo del corte."""
+    return f"road:{road_bare(edge_id)}:cause"

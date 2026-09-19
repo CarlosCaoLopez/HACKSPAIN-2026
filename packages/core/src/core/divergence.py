@@ -14,6 +14,8 @@ from contracts.calls import Fact
 from contracts.plan import DIVERGENCE_THRESHOLD, PlanContext
 from contracts.world import WorldState
 
+from core.belief import road_of
+
 WIND_TOLERANCE_DEG = 20.0
 """Cuánto puede virar el rumbo del viento antes de contar la suposición como rota.
 El coste de ruta apenas cambia con un viraje pequeño; solo un giro real invalida el
@@ -69,7 +71,7 @@ def evaluate_assumption(state: WorldState, key: str) -> str | float | bool | Non
     seg = key.split(":")
 
     if seg[0] == "road" and len(seg) == 3 and seg[2] == "open":
-        edge = state.roads.get(seg[1])
+        edge = road_of(state.roads, seg[1])
         return None if edge is None else not edge.cut
 
     if key == "wind:bearing_deg":

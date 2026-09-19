@@ -29,6 +29,7 @@ from contracts.plan import (
     is_known_constraint,
     parse_constraint,
 )
+from contracts.factkeys import road_open_key
 from contracts.scenario import Scenario
 from contracts.world import POI, Cell, Task, Unit, WorldState
 
@@ -338,7 +339,7 @@ def build_context(
                 continue
             seen.add(eid)
             assumptions.append(
-                Assumption(key=f"road:{eid}:open", expected=True, weight=1.0)
+                Assumption(key=road_open_key(eid), expected=True, weight=1.0)
             )
     assumptions.append(
         Assumption(key="wind:bearing_deg", expected=state.wind.bearing_deg, weight=0.5)
