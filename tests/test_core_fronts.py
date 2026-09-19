@@ -513,8 +513,12 @@ async def test_dwell_holds_a_moving_unit_until_its_task_closes_or_a_critical_orp
     assert core._holds() == {}
     _at(loop.DWELL_S)  # se acabó la permanencia
     assert core._holds() == {}
-    # Una tarea crítica sin unidad la libera aunque esté dentro de la permanencia.
+    # Una crítica sin unidad NO la libera si ya está en otra crítica: en un incendio
+    # que se extiende nacen críticas sin parar, y soltar a todo el mundo cada vez
+    # dejaba a los camiones cambiando de destino cada dos segundos sin llegar a
+    # ninguno (`runs/run_b07c0faefdbf.jsonl`, seq de los 171 a los 180 s).
     _at(10.0)
+    assert core.state().tasks["task_front_35_0"].severity == "critical"
     orphan = Task(
         id="task_front_x",
         kind="extinguish",
@@ -525,6 +529,15 @@ async def test_dwell_holds_a_moving_unit_until_its_task_closes_or_a_critical_orp
     )
     core._state = core._state.model_copy(
         update={"tasks": {**core._state.tasks, orphan.id: orphan}}
+    )
+    assert core._holds() == {"unit_truck1": "wp_este"}
+
+    # Pero sí la libera si lo suyo es menos urgente que lo que se reclama.
+    suya = core.state().tasks["task_front_35_0"].model_copy(
+        update={"severity": "medium"}
+    )
+    core._state = core._state.model_copy(
+        update={"tasks": {**core._state.tasks, suya.id: suya}}
     )
     assert core._holds() == {}
 

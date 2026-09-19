@@ -67,6 +67,10 @@ pueblo recibe su orden de evacuación aunque otro esté peor. Mismo umbral que
 RESOLVE_GAP_S = 5.0
 """Cadencia mínima (segundos de sim) entre re-solves por altas de extinción."""
 
+_SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+"""El mismo orden que `tasks._RANK` y `solver._SEVERITY_RANK`, para comparar lo que
+una unidad está haciendo con lo que se le reclama."""
+
 DWELL_S = 25.0
 """Permanencia mínima: una unidad en marcha hacia un destino, o parada en él, no cambia
 de destino hasta que pasen estos segundos de sim desde su último `goto`, salvo que su
@@ -396,6 +400,28 @@ class Core:
             sticky=self._sticky(),
         )
 
+    def _urgent_orphan(self, unit: Unit, task: Task, orphans: list[Task]) -> bool:
+        """¿Hay una tarea crítica sin servir que esta unidad pueda atender y que sea
+        MÁS urgente que lo que ya está haciendo?
+
+        Antes bastaba con que existiera cualquier crítica huérfana para soltar a todo
+        el mundo. En un incendio que se extiende nacen críticas sin parar, así que esa
+        puerta estaba abierta permanentemente y ni la permanencia (`DWELL_S`) ni la
+        pegajosidad llegaban a aplicarse: los camiones cambiaban de destino cada dos
+        segundos. Medido en `runs/run_b07c0faefdbf.jsonl`, `unit_truck1` fue a
+        `wp_pueblo_b`, `wp_sur_01`, `wp_pueblo_b` y `wp_sur_02` entre los segundos 171
+        y 180, con tareas de frente que vivían nueve segundos.
+
+        Que sea **estrictamente** más urgente es lo que corta el rebote sin dejar
+        críticas desatendidas: un camión que ya está en una crítica no lo mueve otra
+        crítica; uno que está en una `medium`, sí."""
+        mia = _SEVERITY_RANK.get(task.severity, 0)
+        return any(
+            o.required_capability in unit.capabilities
+            and _SEVERITY_RANK.get(o.severity, 0) > mia
+            for o in orphans
+        )
+
     def _holds(self) -> dict[str, str]:
         """Unidad → waypoint que no debe abandonar todavía (`DWELL_S` desde su último
         `goto`, en marcha hacia él o parada en él). Se levanta si su tarea cerró, si
@@ -429,7 +455,7 @@ class Core:
             task = self._state.tasks.get(task_id)
             if task is None or task.done:
                 continue
-            if any(o.required_capability in unit.capabilities for o in orphans):
+            if self._urgent_orphan(unit, task, orphans):
                 continue
             if not self._useful_at(task, dest):
                 continue
@@ -466,8 +492,8 @@ class Core:
             parked = unit.status in ("idle", "working") and self._at_waypoint(unit, dest)
             if not (en_route or parked):
                 continue
-            # No congelar una unidad que un crítico sin servir podría necesitar.
-            if any(o.required_capability in unit.capabilities for o in orphans):
+            # No congelar una unidad que un crítico MÁS urgente podría necesitar.
+            if self._urgent_orphan(unit, task, orphans):
                 continue
             if not self._useful_at(task, dest):
                 continue
