@@ -17,6 +17,7 @@ FACT_KEYS: dict[str, type] = {
     "poi:<poi_id>:headcount": int,
     "poi:<poi_id>:confirmed": bool,
     "poi:<poi_id>:evacuated": bool,
+    "poi:<poi_id>:shelter_ready": bool,  # el pueblo vecino dice si puede acoger gente
     # celdas de peligro
     "cell:<cell_id>:state": str,
     # unidades

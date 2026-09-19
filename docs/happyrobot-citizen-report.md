@@ -230,3 +230,53 @@ El `generate` dispara `POST {{VELA_URL}}/webhooks/happyrobot/fact` con `params` 
 1. Poner el usuario real del bot en `TELEGRAM_BOT` (los tres entornos) en los dos workflows.
 2. Llamar al `+1 484 558 1911` y decir «estoy cerca de unas casas al final de la pista, la pista del sur está cortada, no sé el nombre del sitio». El agente tiene que llamar al tool con el lugar aproximado y decir el `message` del ack **una sola vez** (la petición de Telegram va dentro), y con `telegram_hint: true` **no colgar**: preguntar si ha podido mandar la ubicación y seguir en línea.
 3. Mandar el pin por Telegram: en el journal `citizen.location`, `call.started` con `channel: telegram` y la unidad hacia el POI anclado.
+
+## Anexo · la llamada saliente al pueblo (v11, sábado tarde)
+
+El workflow `test` (slug `301cfio7aosi`) ya no dicta un guion fijo: es **un solo
+workflow para dos llamadas distintas**, y la rama la decide el backend.
+
+- `core.calls` construye el guion completo y lo manda en el cuerpo del hook:
+  `role` (`evacuation` | `neighbor_alert`), `situation_brief` (lo que hay que
+  contar), `checklist` (lo que hay que preguntar) y `advice_rules` (lo que **no**
+  puede inventarse). Al pueblo que arde se le dicta la evacuación; al vecino se le
+  avisa de que puede llegarle gente. Está en `pytest`, que es más de lo que puede
+  decirse de un prompt.
+- Con el guion viajan los **datos en vivo** del `WorldState` de ese segundo:
+  `resources` (qué unidades hay y qué están haciendo), `fire_status` (distancia del
+  frente y si el viento empuja hacia el pueblo), `roads_status` (cortes, con su
+  nombre y su causa) y `unit_eta` (qué unidad va y cuándo llega). El prompt los
+  enseña bajo «Datos en tiempo real» y obliga a recomendar solo con ellos.
+- Tool nuevo `reportar_situacion` (nodo hijo del agente) → `POST village` →
+  `{{VELA_URL}}/webhooks/happyrobot/village` con `call_id` (`current.run_id`),
+  `poi_id` y `role` del trigger, y los `params` del tool. El backend publica
+  `poi:<id>:headcount|immobile|injuries|confirmed|shelter_ready` como `observed`
+  (el POI no se adivina: lo pone el core), y responde `message` +
+  `ambulance_dispatched`, que son los campos expuestos al agente. Si hay inmóviles,
+  el rescate lo crea `core.tasks._rescue` antes de que el agente hable.
+
+### Dos cosas que costaron encontrar
+
+**Crear nodos**: `POST /versions/{version_id}/nodes` con `{"nodes":[…]}` y
+`parent_node_id` (no `parent_id`: da `400 Exactly one of parent_node_id or
+parent_node_index is required`). Un Webhook hijo de tool necesita
+`event_id: 01926f2b-2973-7ebf-ada1-e984251e27ec` e
+`integration_id: 01926a93-064a-7a00-81b2-8ab78d5907e0`, los mismos en todos los
+workflows.
+
+**Enseñarle al trigger las variables nuevas**: el *incoming hook* no tiene esquema
+propio, aprende del último cuerpo que recibió, así que un campo nuevo en el backend
+no existe para el prompt hasta que llega una llamada de verdad. Se le enseña sin
+llamar a nadie con `PUT /versions/{fork}/nodes/{trigger_id}` y
+`{"type":"action","event_id":"01929b66-a335-7514-a159-cae2fe715286","webhook_payload":…}`
+(el `event_id` es obligatorio o responde 400). **El ejemplo tiene que ir envuelto**
+como la entrega real —`{"data":{…},"headers":{…},"method":"POST","query":{}}`—: con
+el cuerpo pelado las variables pierden el prefijo `data.` y todos los
+`{{$var:<persistent>.data.campo}}` (prompt y `POST call end`) dejan de resolver.
+El `missing_variables` que devuelve `publish` sale igualmente y es cosmético: lo que
+manda es `available-vars` del nodo en la versión viva.
+
+El esquema del Tool Call Result se generó contra un gateway propio en `:8021` con un
+túnel auxiliar y `VELA_URL` de **staging** apuntando allí (mismo truco que la v3),
+sin tocar el gateway de la demo ni los valores de dev/prod. Con `params` vacíos el
+endpoint responde bien y no publica nada, así que aquí no hizo falta mock.

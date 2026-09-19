@@ -317,13 +317,18 @@ async def test_evacuate_assignment_publishes_one_call(journal, fixed_planner) ->
     req = reqs[0]
     assert req.task_id == "task_evac_poi_pueblo_a" and req.poi_id == "poi_pueblo_a"
     assert req.to == JUDGE
-    assert req.intent == "evacuation_order" and req.audience == "resident"
+    # A quien se llama es al alcalde, no a un vecino cualquiera: es él quien da el
+    # recuento y decide si acepta la orden.
+    assert req.intent == "evacuation_order" and req.audience == "official"
     assert req.urgency == "critical"
+    assert req.facts["role"] == "evacuation"
     assert req.facts["poi_name"] == "Pueblo A"
     assert req.facts["route_name"] in ("pista norte", "pista sur")
     assert req.facts["hazard_kind"] == "incendio forestal"
     assert int(req.facts["deadline_min"]) >= 6
-    assert req.expect == ["confirmation", "headcount"]
+    assert "evacuar Pueblo A" in req.facts["situation_brief"]
+    assert "reportar_situacion" in req.facts["checklist"]
+    assert req.expect == ["confirmation", "headcount", "immobile"]
     # `causes` apunta al evento que provocó el plan.
     fire = _of(journal, EventType.WORLD_FIRE_DETECTED)[0]
     assert _of(journal, EventType.CALL_REQUESTED)[0].causes == [fire.seq]
@@ -344,6 +349,150 @@ async def test_evacuate_assignment_publishes_one_call(journal, fixed_planner) ->
     await core.on_event(fact)
     assert fixed_planner["n"] == 2
     assert len(_of(journal, EventType.CALL_REQUESTED)) == 1
+
+
+async def test_the_call_carries_the_live_state_not_a_fixed_script(
+    journal, fixed_planner
+) -> None:
+    """Lo que el operador puede decir por teléfono sale del `WorldState` de ese
+    segundo: qué medios hay y qué hacen, a qué distancia está el frente, qué
+    carreteras están cortadas y qué unidad va. Si eso fuera un guion fijo, el
+    operador prometería un camión que está averiado."""
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    req = CallRequest.model_validate(_of(journal, EventType.CALL_REQUESTED)[0].payload)
+
+    # Medios: los dos del escenario, con lo que están haciendo ahora.
+    assert "camión" in req.facts["resources"]
+    assert "ambulancia" in req.facts["resources"]
+    # Frente: distancia real a Pueblo A, no una frase hecha.
+    assert "metros" in req.facts["fire_status"]
+    assert "viento" in req.facts["fire_status"]
+    # Carreteras: ninguna cortada todavía.
+    assert req.facts["roads_status"] == "no hay ninguna carretera cortada"
+    # Quién va y cuándo.
+    assert "ambulancia" in req.facts["unit_eta"] and "minuto" in req.facts["unit_eta"]
+    # Y el parte que se lee en voz alta los lleva dentro.
+    brief = req.facts["situation_brief"]
+    assert req.facts["fire_status"] in brief and req.facts["resources"] in brief
+    assert "no inventes" in req.facts["advice_rules"]
+
+    # Cortamos una carretera: la siguiente llamada ya lo dice con su nombre y causa.
+    cut = _ev(
+        EventType.WORLD_ROAD_CHANGED,
+        {
+            "edge_id": "road:wp_cruce-wp_sur_01",
+            "cut": True,
+            "cause": "un árbol caído",
+        },
+        t_sim=30.0,
+    )
+    await bus.publish(cut)
+    await core.on_event(cut)
+    linea = calls.roads_line(core.state(), {"pista del sur": "road:wp_cruce-wp_sur_01"})
+    assert "pista del sur" in linea and "árbol caído" in linea
+
+
+def _scenario_two_villages() -> Scenario:
+    """`_scenario()` más un Pueblo B lejos del fuego, con su propio contacto: lo que
+    hace falta para probar el aviso al vecino, sin ruta ni unidad para él (no se
+    evacúa, solo se le avisa). Cada pueblo con su número: la llamada al alcalde de
+    uno no es la del otro."""
+    sc = _scenario(contact_phone="+34000000001")
+    return sc.model_copy(
+        update={
+            "waypoints": [*sc.waypoints, Waypoint(id="wp_pueblo_b", x=100, z=100)],
+            "pois": [
+                *sc.pois,
+                POI(
+                    id="poi_pueblo_b",
+                    name="Pueblo B",
+                    kind="village",
+                    x=100,
+                    z=100,
+                    waypoint_id="wp_pueblo_b",
+                    contact_phone="+34000000002",
+                ),
+            ],
+            "civilians": [
+                *sc.civilians,
+                CivilianGroup(id="civ_b", poi_id="poi_pueblo_b", count=8),
+            ],
+        }
+    )
+
+
+async def test_evacuating_one_village_alerts_the_other(
+    journal, fixed_planner, monkeypatch
+) -> None:
+    """Pueblo A se evacúa; Pueblo B, que no arde, recibe una llamada aparte: puede
+    llegarle gente. No es la orden de evacuación, así que va a su propio número, no
+    al de `JUDGE_PHONE`."""
+    monkeypatch.setattr(settings, "judge_phone", "")
+    core = loop.Core(bus, _scenario_two_villages())
+    await _ignite(core)
+
+    reqs = [
+        CallRequest.model_validate(e.payload)
+        for e in _of(journal, EventType.CALL_REQUESTED)
+    ]
+    evac = [r for r in reqs if r.intent == "evacuation_order"]
+    alerts = [r for r in reqs if r.intent == "neighbor_alert"]
+    assert len(evac) == 1 and evac[0].poi_id == "poi_pueblo_a"
+
+    assert len(alerts) == 1
+    alert = alerts[0]
+    assert alert.poi_id == "poi_pueblo_b" and alert.to == "+34000000002"
+    assert alert.audience == "official" and alert.urgency == "medium"
+    assert alert.facts["role"] == "neighbor_alert"
+    assert alert.facts["source_poi_name"] == "Pueblo A"
+    assert "Pueblo A" in alert.facts["situation_brief"]
+    assert "reportar_situacion" in alert.facts["checklist"]
+    assert alert.expect == ["capacity_available"]
+
+    # Otro replan no repite el aviso: una vez por par de pueblos y run.
+    fact = _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_pueblo_a:headcount",
+            "value": 20,
+            "confidence": 1.0,
+            "source": "human",
+            "severity": "critical",
+        },
+        source="human",
+    )
+    await bus.publish(fact)
+    await core.on_event(fact)
+    reqs_after = [
+        e
+        for e in _of(journal, EventType.CALL_REQUESTED)
+        if e.payload["intent"] == "neighbor_alert"
+    ]
+    assert len(reqs_after) == 1
+
+
+async def test_both_villages_burning_does_not_alert_each_other(
+    journal, fixed_planner, monkeypatch
+) -> None:
+    """Si el vecino también arde, ya se le manda su propia orden de evacuación: no
+    hace falta avisarle además de que "puede llegarle gente"."""
+    monkeypatch.setattr(settings, "judge_phone", JUDGE)
+    core = loop.Core(bus, _scenario_two_villages())
+    # Una sola ignición entre los dos pueblos (celda de 4 m centrada en 102, 50): a
+    # 50 m de cada uno, los dos entran en `critical` a la vez.
+    fire = _ev(
+        EventType.WORLD_FIRE_DETECTED, {"cell_id": "cell_25_12", "hazard": "wildfire"}
+    )
+    await bus.publish(fire)
+    await core.on_event(fire)
+
+    # Pueblo B tiene el fuego encima (severidad `critical`): lo suyo es su propia
+    # orden de evacuación cuando haya unidad, no un aviso de "puede llegarle gente".
+    assert core.state().tasks["task_evac_poi_pueblo_b"].severity == "critical"
+    reqs = [e.payload["intent"] for e in _of(journal, EventType.CALL_REQUESTED)]
+    assert "neighbor_alert" not in reqs
+    assert "evacuation_order" in reqs
 
 
 async def test_no_phone_no_call(journal, fixed_planner, monkeypatch, caplog) -> None:

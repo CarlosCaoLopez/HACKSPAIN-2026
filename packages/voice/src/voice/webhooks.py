@@ -1,6 +1,6 @@
 """Los routers FastAPI de telefonía. P3 los registra; no toca `main.py`.
 
-Dos rutas, las dos de HappyRobot:
+Tres rutas, las tres de HappyRobot:
 
 - `POST /webhooks/happyrobot/fact`: el tool `report_fact` del agente, **durante**
   la llamada. Es solo un **disparador**: sus valores no se creen (los rellena el LLM
@@ -8,11 +8,18 @@ Dos rutas, las dos de HappyRobot:
   que publica los hechos; luego pide a Humalike el ack refinado (1,5 s) y responde.
   El replan arranca con los hechos; nunca espera al ack. Con Jev caído (`--no-jev`),
   degrada explícitamente al camino anterior y los hechos salen como `inferred`.
+- `POST /webhooks/happyrobot/village`: el tool `reportar_situacion` del agente que
+  llama a un pueblo (orden de evacuación o aviso al vecino), **durante** la llamada.
+  A diferencia del tool anterior, aquí el POI ya se conoce (`core.calls` lo pone en
+  el cuerpo del hook): no hace falta resolverlo por texto, así que los hechos salen
+  `observed` sin pasar por Jev. Si hay inmóviles, `core.tasks._rescue` crea el
+  rescate solo y el agente puede decir "vamos a mandarle una ambulancia" sabiendo
+  que es verdad.
 - `POST /webhooks/happyrobot/call`: inicio y fin de llamada (nodo Webhook del
   workflow o outbound webhook de la plataforma). Al colgar: último tick de Jev
   (`fenic` si Jev no está), `analyze` de Humalike, `call.ended`.
 
-Autenticación: token compartido en la cabecera, porque estas dos rutas van por un
+Autenticación: token compartido en la cabecera, porque estas tres rutas van por un
 túnel y un escaneo aleatorio no debe disparar nada a mitad del pitch.
 """
 
@@ -26,8 +33,9 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import ValidationError
 
 from contracts.bus import current_run_id, current_t_sim, make_event, publish
-from contracts.calls import CallFacts, Fact
+from contracts.calls import CallFacts, Fact, Severity
 from contracts.events import Event, EventType
+from contracts.factkeys import validate_fact_key
 from contracts.settings import settings
 from voice import humanlike, pois
 from voice.perception import CallPerception
@@ -57,7 +65,12 @@ def ack_draft(
     immobile: int | None,
     injuries: int | None = None,
 ) -> str:
-    """Lo que el agente le repite al vecino. Humalike lo refina si llega a tiempo."""
+    """Lo que el agente le repite al vecino. Humalike lo refina si llega a tiempo.
+
+    Abre calmando y cierra diciendo que va una patrulla a por él: quien llama viendo
+    fuego y sin saber qué hacer necesita las dos cosas antes que el detalle. El
+    detalle va en medio, porque repetirle lo que ha dicho es lo que le demuestra que
+    alguien le ha entendido."""
     parts: list[str] = ["Anotado"]
     if poi_name:
         parts.append(poi_name)
@@ -67,7 +80,11 @@ def ack_draft(
         parts.append(f"{immobile} personas sin movilidad")
     if injuries:
         parts.append(f"{injuries} heridos")
-    return ", ".join(parts) + ". Estoy avisando a los equipos, no cuelgue."
+    return (
+        "Mantenga la calma, ya le estamos ayudando. "
+        + ", ".join(parts)
+        + ". Va una patrulla a recogerle: no se mueva de donde está y no cuelgue."
+    )
 
 
 def telegram_bot() -> str | None:
@@ -327,6 +344,134 @@ def _coerce(params: dict) -> dict:
         else:
             out[k] = v
     return out
+
+
+_VILLAGE_INT_FIELDS = ("headcount", "people_immobile", "injuries")
+_VILLAGE_BOOL_FIELDS = ("confirmed_order", "capacity_available")
+# params del tool → sufijo de `poi:<poi_id>:<sufijo>` (contracts.factkeys). Un campo
+# fuera de este mapa (p. ej. `notes`, texto libre para el registro) no se publica.
+_VILLAGE_FACT_SUFFIX = {
+    "headcount": "headcount",
+    "people_immobile": "immobile",
+    "injuries": "injuries",
+    "confirmed_order": "confirmed",
+    "capacity_available": "shelter_ready",
+}
+
+
+def _coerce_village(params: dict) -> dict:
+    """Los mismos vacíos-a-None y strings-a-tipo de `_coerce`, más las dos claves
+    booleanas nuevas del guion al pueblo (aceptar la orden, tener sitio)."""
+    out: dict = {}
+    for k, v in params.items():
+        if v in ("", None, "null"):
+            continue
+        if k in _VILLAGE_INT_FIELDS and isinstance(v, str):
+            digits = "".join(c for c in v if c.isdigit())
+            out[k] = int(digits) if digits else None
+        elif k in _VILLAGE_BOOL_FIELDS and isinstance(v, str):
+            out[k] = v.strip().lower() in ("true", "sí", "si", "yes", "1")
+        else:
+            out[k] = v
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def village_ack(role: str, immobile: int | None, capacity: bool | None) -> str:
+    """Lo que el agente le dice al alcalde en cuanto anota su respuesta: nunca
+    promete nada que el estado no vaya a cumplir (si hay inmóviles, el rescate ya se
+    ha creado antes de que esta frase salga)."""
+    if role == "neighbor_alert":
+        if capacity is False:
+            return (
+                "Entendido, tomamos nota de que ahora mismo no tienen sitio; "
+                "buscaremos una alternativa para quien llegue."
+            )
+        if capacity is True:
+            return (
+                "Gracias, quedamos en que pueden acoger a quien llegue. Les "
+                "avisaremos si hace falta algo más."
+            )
+        return "Gracias por la información, quedamos atentos y les avisaremos."
+    if immobile:
+        return (
+            f"Entendido. Vamos a mandarle una ambulancia para las {immobile} "
+            "personas que no pueden moverse; manténgalas donde están hasta que "
+            "lleguen."
+        )
+    return (
+        "Anotado, gracias. Si surge algo más antes de que lleguen las unidades, "
+        "puede volver a llamarnos."
+    )
+
+
+@router.post("/happyrobot/village")
+async def happyrobot_village(
+    request: Request, x_vela_token: str = Header(default="")
+) -> dict:
+    """El tool `reportar_situacion`, en la llamada a un pueblo. Cuerpo del nodo
+    Webhook del tool: `{"poi_id", "role", "run_id", "params": {...}}` (`poi_id` y
+    `role` los pone `core.calls`/`voice.happyrobot.trigger`, no el LLM: no hay nada
+    que resolver por texto). Sin `params` anidado, el cuerpo entero son los
+    parámetros salvo las claves de encaminamiento."""
+    _check_token(x_vela_token)
+    body = await request.json()
+    poi_id = str(body.get("poi_id") or "")
+    role = str(body.get("role") or "evacuation")
+    call_id = str(
+        body.get("call_id") or body.get("session_id") or body.get("run_id") or ""
+    )
+    params = body.get("params")
+    if not isinstance(params, dict):
+        params = {
+            k: v
+            for k, v in body.items()
+            if k not in ("poi_id", "role", "run_id", "session_id", "call_id", "task_id")
+        }
+    coerced = _coerce_village(params)
+
+    n = 0
+    if not poi_id:
+        log.warning("village %s sin poi_id: nada que publicar", call_id or "?")
+    else:
+        for field, value in coerced.items():
+            suffix = _VILLAGE_FACT_SUFFIX.get(field)
+            if suffix is None:
+                continue  # `notes` y cualquier otro campo libre: no es un hecho
+            key = f"poi:{poi_id}:{suffix}"
+            if validate_fact_key(key) is None:
+                continue
+            severity: Severity = (
+                "critical" if suffix in ("immobile", "injuries") and value else "medium"
+            )
+            await publish(_village_fact_event(key, value, call_id, severity))
+            n += 1
+
+    immobile = coerced.get("people_immobile")
+    capacity = coerced.get("capacity_available")
+    return {
+        "ok": True,
+        "facts_published": n,
+        "ambulance_dispatched": bool(immobile),
+        "message": village_ack(role, immobile, capacity),
+    }
+
+
+def _village_fact_event(
+    key: str, value: object, call_id: str, severity: Severity
+) -> Event:
+    return make_event(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": key,
+            "value": value,
+            "confidence": 0.9,
+            "source": f"call:{call_id}",
+            "severity": severity,
+            "kind": "observed",
+            "call_id": call_id,
+        },
+        source=f"call:{call_id}",
+    )
 
 
 @router.post("/happyrobot/call")

@@ -35,7 +35,7 @@ from contracts.events import (
 from contracts.plan import MAX_REPLAN_ROUNDS, Assignment, Plan, Policy, Violation
 from contracts.scenario import Scenario
 from contracts.settings import settings
-from contracts.world import Task, Unit, WorldState
+from contracts.world import POI, Task, Unit, WorldState
 from core import belief, calls, memory, planner, tasks
 from core.divergence import _angular_gap, divergence, should_replan
 from core.planner import neutral_policy
@@ -114,6 +114,9 @@ class Core:
         self._vetoes: dict[tuple[str, str], float] = {}  # (unit, task) -> expiry t_sim
         self._action_seq = 0
         self._called: set[str] = set()  # task_ids con `call.requested` ya emitido
+        # pares (poi_id que arde, poi_id vecino) ya avisados de que puede llegarles
+        # gente: una vez por par y run, igual que `_called`.
+        self._neighbor_called: set[tuple[str, str]] = set()
         # call_id → (unit_id, task_id, ruta) de la última señal `unit_dispatched`:
         # tres hechos de una misma llamada no producen tres veces la misma frase.
         self._signalled: dict[str, tuple[str, str, str]] = {}
@@ -606,8 +609,55 @@ class Core:
                 self.scenario.hazard.kind,
                 self._state.roads,
                 self.scenario.road_aliases,
+                state=self._state,
+                graph=self.graph,
             )
             self._called.add(task.id)
+            await self._emit(EventType.CALL_REQUESTED, req, cause)
+            await self._emit_neighbor_calls(task, poi, cause)
+
+    async def _emit_neighbor_calls(
+        self, source_task: Task, source_poi: POI, cause: Event
+    ) -> None:
+        """El pueblo vecino de uno que se evacúa se entera de que puede llegarle
+        gente: una llamada aparte, distinta de la orden de evacuación, una vez por
+        par de pueblos.
+
+        Quién es "el vecino" no lo decide la existencia de su tarea de evacuación
+        —`tasks._evacuate` abre una por cada pueblo en cuanto hay fuego en el
+        mapa—, sino su gravedad: el que tiene el frente encima (`critical`) recibe
+        la orden de evacuar, y el que todavía no, este aviso. Si el viento cambia y
+        pasa a `critical`, `_emit_calls` le llama con su propia orden."""
+        for poi in sorted(self._state.pois.values(), key=lambda p: p.id):
+            if poi.id == source_poi.id or poi.kind != "village":
+                continue
+            pair = (source_poi.id, poi.id)
+            if pair in self._neighbor_called:
+                continue
+            evac_id = tasks.evac_task_id(poi.id)
+            if evac_id in self._called:
+                continue  # ya se le ha dictado su propia orden de evacuación
+            neighbor_evac = self._state.tasks.get(evac_id)
+            if (
+                neighbor_evac is not None
+                and not neighbor_evac.done
+                and neighbor_evac.severity == "critical"
+            ):
+                continue  # el fuego también le llega: lo suyo es una orden, no un aviso
+            to = settings.judge_phone or poi.contact_phone
+            if not to:
+                continue
+            self._neighbor_called.add(pair)
+            req = calls.neighbor_alert_call(
+                source_task,
+                poi,
+                source_poi,
+                to,
+                self.scenario.hazard.kind,
+                state=self._state,
+                graph=self.graph,
+                aliases=self.scenario.road_aliases,
+            )
             await self._emit(EventType.CALL_REQUESTED, req, cause)
 
     async def _emit_signal(self, plan: Plan, cause: Event) -> None:

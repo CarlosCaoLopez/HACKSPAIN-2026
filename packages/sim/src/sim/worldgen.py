@@ -205,8 +205,18 @@ def scar_commands(scenario: Scenario) -> list[str]:
 
 def gamerule_commands() -> list[str]:
     """Los gamerules e iluminación fijos, para que la grabación sea igual en el
-    ensayo y en el escenario."""
+    ensayo y en el escenario.
+
+    Se mandan los dos juegos de nombres a propósito. En 1.21.9 Minecraft los pasó a
+    minúsculas con guion bajo (`doDaylightCycle` → `advance_time`) y sustituyó
+    `doFireTick` por `fire_spread_radius_around_player`, un radio alrededor del
+    jugador; el que no existe en la versión que haya delante devuelve «Incorrect
+    argument for command» y no hace nada, así que el mundo sale igual con Paper 1.21
+    que con 1.21.11 sin preguntar la versión. Sin esto, en 1.21.11 el fuego que
+    pintamos se propagaba solo y el reloj corría durante la demo.
+    """
     return [
+        # nombres hasta 1.21.8
         "gamerule doFireTick false",
         "gamerule randomTickSpeed 0",
         "gamerule doDaylightCycle false",
@@ -214,6 +224,14 @@ def gamerule_commands() -> list[str]:
         "gamerule doMobSpawning false",
         "gamerule mobGriefing false",
         "gamerule announceAdvancements false",
+        # nombres desde 1.21.9
+        "gamerule fire_spread_radius_around_player 0",
+        "gamerule random_tick_speed 0",
+        "gamerule advance_time false",
+        "gamerule advance_weather false",
+        "gamerule spawn_mobs false",
+        "gamerule mob_griefing false",
+        "gamerule show_advancement_messages false",
         "time set 6000",
         "weather clear",
     ]
