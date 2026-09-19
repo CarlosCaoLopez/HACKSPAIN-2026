@@ -126,6 +126,8 @@ def resolve_edge_local(road_hint: str | None) -> str | None:
     que aparezcan en el id de la arista ("sur", "norte")."""
     if not road_hint or not _roads:
         return None
+    if road_hint in _roads:  # ya es un id del escenario (fenic con Literal)
+        return road_hint
     norm = normalize(road_hint)
     if norm in _road_aliases:
         return _road_aliases[norm]

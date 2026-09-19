@@ -17,7 +17,7 @@ from contracts.events import EventType
 from contracts.factkeys import road_cause_key, road_cut_key, validate_fact_key
 from contracts.settings import settings
 from voice import pois
-from voice.extract_schema import CallFactsExtract, to_call_facts
+from voice.extract_schema import build_extract_model, to_call_facts
 from voice.webhooks import router
 
 __all__ = ["VoiceGateway", "router"]
@@ -63,9 +63,9 @@ class VoiceGateway:
         return call_id
 
     async def extract(self, transcript: str) -> CallFacts | None:
-        """`fenic.semantic.extract` sobre un DataFrame de una fila. None si falla o
-        si tarda más de 4 s: la transcripción cruda va al dashboard sin extraer y
-        la demo continúa."""
+        """Plan B (`--no-jev`): `fenic.semantic.extract` con `Literal` sobre los ids del
+        escenario. None si falla o si tarda más de 4 s: la transcripción cruda va al
+        dashboard sin extraer y la demo continúa."""
         if not transcript.strip():
             return None
         try:
@@ -81,7 +81,9 @@ class VoiceGateway:
 
     def to_facts(self, cf: CallFacts, t_sim: float, call_id: str) -> list[Fact]:
         """Un `CallFacts` produce de 0 a N `Fact`. Claves de
-        `contracts.factkeys`, `source="call:<call_id>"`.
+        `contracts.factkeys`, `source="call:<call_id>"`. Camino sin Jev: salen como
+        `inferred` (sin confianza calibrada), y solo la dirección segura (cortar) puede
+        cambiar rutas.
 
         Ningún hecho aparece en pantalla sin decir de qué llamada viene."""
         source = f"call:{call_id}"
@@ -101,6 +103,8 @@ class VoiceGateway:
                     source=source,
                     severity=sev,
                     t_sim=t_sim,
+                    kind="inferred",
+                    call_id=call_id,
                 )
             )
 
@@ -192,9 +196,13 @@ def _fenic_extract(transcript: str) -> CallFacts | None:
     if fc is None:
         return None
     df = session.create_dataframe([{"transcript": transcript}])
+    model = build_extract_model(
+        list(pois.pois()),
+        list(pois.roads()),
+    )
     rows = df.select(
         fc.semantic.extract(
-            fc.col("transcript"), CallFactsExtract, request_timeout=EXTRACT_TIMEOUT_S
+            fc.col("transcript"), model, request_timeout=EXTRACT_TIMEOUT_S
         ).alias("f")
     ).to_pylist()
     if not rows:
@@ -202,4 +210,4 @@ def _fenic_extract(transcript: str) -> CallFacts | None:
     raw = rows[0].get("f")
     if raw is None:
         return None
-    return to_call_facts(raw)
+    return to_call_facts(raw, {i: p.name for i, p in pois.pois().items()})

@@ -208,3 +208,18 @@ async def test_tick_translates_the_sdk_response_and_never_raises(journal):
     perc = await client.tick(jev.build_state(TURNS), pois.questions())
     assert perc is not None and perc.answers["location_hint"].value == "poi_molino"
     assert perc.tokens_in == 42 and time.perf_counter() - t0 < 1
+
+
+def test_no_jev_extract_model_is_closed_over_the_scenario(journal):
+    """Plan B: fenic solo puede devolver ids del escenario, no texto libre."""
+    from pydantic import ValidationError
+
+    from voice.extract_schema import build_extract_model, to_call_facts
+
+    model = build_extract_model(list(pois.pois()), list(pois.roads()))
+    ok = model(location_hint="poi_molino", road_blocked=EDGE)
+    with pytest.raises(ValidationError):
+        model(road_blocked="una carretera inventada")
+    cf = to_call_facts(ok.model_dump(), {"poi_molino": "Molino viejo"})
+    assert cf.resolved_poi_id == "poi_molino" and cf.location_hint == "Molino viejo"
+    assert pois.resolve_edge_local(EDGE) == EDGE
