@@ -10,7 +10,7 @@ import 'leaflet/dist/leaflet.css'
 import type { Feeds } from '../hooks/useFeeds'
 import { useScenario } from '../hooks/useScenario'
 import { useWorldView, type WorldView } from '../hooks/useWorldView'
-import { problems } from '../map/problems'
+import { problems } from './problems'
 import type { Event, Plan, UnitKind, VelaEvent, WorldState } from '../types'
 import type { FeedAnchor } from './anchor'
 import { activeCallers } from './callers'
@@ -197,7 +197,7 @@ export function RealMap({
     // `isolate`: los z-index de Leaflet (hasta 1000) se quedan dentro del mapa y no pelean
     // con el banner REPLAN, que tiene que verse siempre por encima (REQ-274).
     <div className="relative isolate h-full w-full overflow-hidden rounded-[10px] border border-vela-edge-bright bg-vela-bg">
-      {/* Con `layer` sin llegar no hay mapa que montar: se dice, como el esquemático. */}
+      {/* Con `layer` sin llegar no hay mapa que montar: se dice. */}
       {!layer && (
         <p className="absolute inset-0 flex items-center justify-center text-vela-dim">
           Esperando geometría del escenario.

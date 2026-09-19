@@ -28,6 +28,10 @@ export interface UnitView {
   heading: number
   status: UnitStatus
   etaS: number | null
+  /** El `t_sim` en el que se emitió esta posición. El mapa real lo usa para interpolar entre
+   *  dos posiciones con el reloj de la simulación y no con el de llegada de los eventos
+   *  (SPEC-008 REQ-304): así el movimiento no depende de cómo se agrupen en la red. */
+  t: number
 }
 
 export interface CivilianView {
@@ -51,7 +55,13 @@ export interface WorldView {
 
 interface Derived extends WorldView {
   lastSeq: number
-  seededFrom: number | null
+  /** El `units` del snapshot con el que se sembró. Es la forma de saber si `state` es un
+   *  snapshot NUEVO o solo la copia con el `seq` al día que `useEventStream` hace con cada
+   *  evento: esa copia conserva la misma referencia. Comparar `state.seq` (lo que se hacía)
+   *  volvía a sembrar en CADA evento, y sembrar pisa las posiciones que traen los eventos
+   *  con las del snapshot: las unidades se quedaban clavadas y solo saltaban cuando llegaba
+   *  otro snapshot. */
+  seededUnits: WorldState['units'] | null
 }
 
 function empty(): Derived {
@@ -64,7 +74,7 @@ function empty(): Derived {
     tSim: 0,
     applied: 0,
     lastSeq: -1,
-    seededFrom: null,
+    seededUnits: null,
   }
 }
 
@@ -85,6 +95,7 @@ function seed(d: Derived, state: WorldState): void {
       heading: 0,
       status: unit.status,
       etaS: null,
+      t: state.t_sim,
     })
   }
   for (const cell of Object.values(state.cells)) d.cells.set(cell.id, cell.state)
@@ -102,7 +113,7 @@ function seed(d: Derived, state: WorldState): void {
   d.wind = state.wind
   d.tSim = state.t_sim
   d.lastSeq = state.seq
-  d.seededFrom = state.seq
+  d.seededUnits = state.units
 }
 
 function fold(d: Derived, envelope: Event): void {
@@ -121,6 +132,7 @@ function fold(d: Derived, envelope: Event): void {
         // posiciones.
         status: before?.status ?? 'moving',
         etaS: p.eta_s ?? null,
+        t: ev.t_sim,
       })
       break
     }
@@ -171,7 +183,7 @@ export function useWorldView(state: WorldState | null, events: Event[]): WorldVi
     // El hook del WS vacía `events` al aplicar un snapshot (hueco o reconexión): es la
     // señal de que el histórico ya no vale y la vista se rehace desde cero.
     if (events.length === 0 && d.lastSeq >= 0) reset(d)
-    if (state && state.seq !== d.seededFrom) seed(d, state)
+    if (state && state.units !== d.seededUnits) seed(d, state)
 
     for (const ev of events) {
       if (ev.seq <= d.lastSeq) continue

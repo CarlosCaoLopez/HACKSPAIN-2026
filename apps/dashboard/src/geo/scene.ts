@@ -11,12 +11,13 @@ import L from 'leaflet'
 
 import type { ScenarioLayer } from '../hooks/useScenario'
 import type { WorldView } from '../hooks/useWorldView'
-import { poiThreat } from '../map/problems'
-import type { Geo } from '../map/project'
+import { poiThreat } from './problems'
+import type { Geo } from './grid'
 import type { CellState, Plan, Task, UnitKind, UnitStatus, Waypoint } from '../types'
 import { cellBounds, squareAround, toLatLon, type FeedAnchor, type LatLon } from './anchor'
 import type { Callers } from './callers'
 import { delayOf, fireFront, zones } from './declutter'
+import { SimClock, UnitTrack } from './motion'
 import type { Focus } from './firms'
 import {
   BADGE_PX,
@@ -55,6 +56,8 @@ export interface SceneOptions {
 /** Ventana de la estela de una unidad (REQ-306). */
 const TRAIL_SIM_S = 60
 const TRAIL_MAX_POINTS = 20
+/** Cada cuántos píxeles de recorrido se añade un punto a la estela. */
+const TRAIL_STEP_PX = 8
 /** Tope de anillos de evento a la vez (REQ-309): los que sobran se descartan, no se encolan. */
 const MAX_RINGS = 3
 /** Una llamada colgada se queda así de tiempo pintada en gris (REQ-310). */
@@ -118,14 +121,20 @@ function pathClass(layer: L.Path): SVGElement | null {
 interface UnitEntry {
   marker: L.Marker
   inner: HTMLElement
+  kind: UnitKind
   status: UnitStatus
-  lastWall: number
-  lastLL: LatLon
+  /** Las posiciones emitidas: de aquí se interpola (`motion.ts`). */
+  track: UnitTrack
+  /** Dónde se está ENSEÑANDO ahora la unidad, que no es donde está su última posición: va un
+   *  intervalo y medio por detrás para poder recorrer el tramo sin saltos. */
+  shown: LatLon
+  shownXZ: { x: number; z: number }
   flip: boolean
 }
 
 interface RouteEntry {
   sig: string
+  coords: Waypoint[]
   done: L.Polyline
   pending: L.Polyline
   task: L.Marker | null
@@ -167,6 +176,12 @@ export class Scene {
     callers: Set<string>
   } | null = null
   private rings = 0
+  // Movimiento continuo (REQ-304): el reloj de la simulación y el bucle de animación que
+  // coloca cada unidad donde toca en ese reloj. El bucle NO pasa por React: muta los
+  // marcadores directamente y no hace `setState` por fotograma (REQ-227).
+  private readonly clock = new SimClock()
+  private frameId = 0
+  private zooming = false
   private fittedFoci = new Set<string>()
   private lastInput: SceneInput | null = null
   private tileLoaded = 0
@@ -220,20 +235,25 @@ export class Scene {
     this.fitToValley()
     this.applyZoomClass()
 
+    // Leaflet recoloca los marcadores por su cuenta durante la animación de zoom; si el bucle
+    // también los movía, los dos se pisarían. Durante el zoom el bucle espera.
     this.map.on('zoomstart', () => {
-      // La transición de deslizamiento de una unidad se pelea con la del zoom de Leaflet:
-      // durante el zoom se quita y la siguiente posición la vuelve a poner.
-      for (const u of this.units.values()) u.marker.getElement()?.style.removeProperty('transition')
+      this.zooming = true
     })
     this.map.on('zoomend', () => {
+      this.zooming = false
       this.applyZoomClass()
       this.layoutUnits()
     })
+
+    // Con "reducir movimiento" no hay bucle: la unidad salta a su posición (REQ-307).
+    if (!opts.reducedMotion) this.frameId = requestAnimationFrame(this.frame)
   }
 
   // --- vida del mapa ------------------------------------------------------------------
 
   destroy(): void {
+    cancelAnimationFrame(this.frameId)
     for (const t of this.timers) window.clearTimeout(t)
     this.timers.clear()
     // Libera capas, eventos y el DOM de Leaflet: sin esto cada cambio de vista fugaría un
@@ -361,7 +381,7 @@ export class Scene {
       case 'burning':
         return { fillColor: p['cell-burning'], fillOpacity: 1, color: p.fire, weight: 1.5 }
       case 'at_risk':
-        // Rayado en el mapa esquemático; aquí, borde discontinuo: se distingue del fuego por
+        // Borde discontinuo y no relleno plano: se distingue del fuego por
         // la forma además del color (REQ-220).
         return { fillColor: p['cell-at-risk'], fillOpacity: 1, color: p.warn, weight: 1.5, dashArray: '4 3' }
       case 'burnt':
@@ -485,44 +505,53 @@ export class Scene {
     }
   }
 
+  /** Recoge las posiciones nuevas. NO mueve nada: quien mueve es `frame`, que interpola
+   *  entre las muestras con el reloj de la simulación. Así el recorrido no depende de cuándo
+   *  ni cómo lleguen los eventos. */
   private syncUnits({ view, unitKinds }: SceneInput): void {
-    const now = performance.now()
+    // El tiempo ha ido hacia atrás (run nuevo, replay que da la vuelta): las posiciones
+    // antiguas ya no valen y la estela cruzaría el mapa de un extremo a otro.
+    if (this.clock.observe(view.tSim, performance.now())) {
+      for (const [id, entry] of this.units) {
+        entry.track.clear()
+        this.dropTrail(id)
+      }
+    }
+
     for (const u of view.units.values()) {
-      const at = this.ll(u.x, u.z)
       const kind = unitKinds.get(u.id) ?? 'crew'
       let entry = this.units.get(u.id)
 
       if (!entry) {
+        const at = this.ll(u.x, u.z)
         const icon = badgeIcon(UNIT_ICON[kind], 'unit', '', { text: u.id.replace(/^unit_/, ''), minor: true })
         const root = icon.options.html
         if (!(root instanceof HTMLElement)) continue
         const m = marker(at, icon, { zIndexOffset: 1000 })
         m.addTo(this.markerLayer)
-        entry = { marker: m, inner: root, status: u.status, lastWall: now, lastLL: at, flip: false }
+        entry = {
+          marker: m,
+          inner: root,
+          kind,
+          status: u.status,
+          track: new UnitTrack(),
+          shown: at,
+          shownXZ: { x: u.x, z: u.z },
+          flip: false,
+        }
         this.units.set(u.id, entry)
-        this.paintUnit(entry, kind)
+        this.paintUnit(entry)
       }
 
-      if (entry.lastLL[0] !== at[0] || entry.lastLL[1] !== at[1]) {
-        // Se desliza, no salta (REQ-304): la transición dura lo que ha tardado en llegar
-        // esta posición desde la anterior, acotada. A 60× el intervalo real se acorta solo
-        // y sigue siendo continuo.
-        const ms = Math.min(2000, Math.max(150, now - entry.lastWall))
-        if (!this.opts.reducedMotion) {
-          entry.marker.getElement()?.style.setProperty('transition', `transform ${Math.round(ms)}ms linear`)
-        }
-        // El icono no rota (un camión boca abajo no se reconoce): se voltea según el sentido
-        // este-oeste del movimiento.
-        const dx = at[1] - entry.lastLL[1]
-        if (dx !== 0) entry.flip = dx < 0
-        entry.marker.setLatLng(at)
-        entry.lastLL = at
-        entry.lastWall = now
+      entry.track.push({ t: u.t, x: u.x, z: u.z })
+      if (entry.status !== u.status) {
+        entry.status = u.status
+        this.paintUnit(entry)
       }
-      entry.status = u.status
-      this.paintUnit(entry, kind)
-      this.trail(u.id, at, u.status, view.tSim)
+      // Sin bucle (reducir movimiento) no hay interpolación: la unidad salta a la última.
+      if (this.opts.reducedMotion) this.placeUnit(u.id, entry, { x: u.x, z: u.z }, view.tSim)
     }
+
     for (const [id, entry] of this.units) {
       if (view.units.has(id)) continue
       this.markerLayer.removeLayer(entry.marker)
@@ -531,13 +560,52 @@ export class Scene {
     }
   }
 
-  private paintUnit(entry: UnitEntry, kind: UnitKind): void {
+  /** Un fotograma: cada unidad se coloca donde tocaba hace `lag()` de simulación. */
+  private readonly frame = (wallMs: number): void => {
+    this.frameId = requestAnimationFrame(this.frame)
+    if (this.zooming || this.units.size === 0) return
+    const now = this.clock.now(wallMs)
+    let moved = false
+    for (const [id, entry] of this.units) {
+      const at = entry.track.shownAt(now)
+      if (at && this.placeUnit(id, entry, at, now)) moved = true
+    }
+    if (moved) this.layoutUnits()
+  }
+
+  /** Pone la unidad en `xz`. Devuelve `true` si se ha movido. Es el único sitio que mueve una
+   *  unidad, y de él cuelgan lo que tiene que ir con ella: la estela y el tramo recorrido de
+   *  su ruta. */
+  private placeUnit(id: string, entry: UnitEntry, xz: { x: number; z: number }, tSim: number): boolean {
+    const at = this.ll(xz.x, xz.z)
+    if (at[0] === entry.shown[0] && at[1] === entry.shown[1]) return false
+
+    // El icono no rota (un camión boca abajo no se reconoce): se voltea según el sentido
+    // este-oeste del movimiento.
+    const dx = at[1] - entry.shown[1]
+    if (Math.abs(dx) > 1e-9 && entry.flip !== dx < 0) {
+      entry.flip = dx < 0
+      this.paintUnit(entry)
+    }
+    entry.marker.setLatLng(at)
+    entry.shown = at
+    entry.shownXZ = xz
+    this.trail(id, at, entry.status, tSim)
+    const route = this.routes.get(id)
+    if (route) this.splitRoute(route, xz.x, xz.z)
+    return true
+  }
+
+  private paintUnit(entry: UnitEntry): void {
+    const { kind } = entry
     const motion = kind === 'drone' ? 'vela-hover' : kind === 'crew' ? 'vela-sway' : 'vela-siren'
     entry.inner.className = `vela-unit-inner vela-unit-${entry.status} ${motion}${entry.flip ? ' vela-flip' : ''}`
   }
 
   /** Estela corta de las unidades en marcha (REQ-306): se lee de dónde vienen sin guardar
-   *  una historia infinita. */
+   *  una historia infinita. Se añade un punto cada `TRAIL_STEP_PX` píxeles de recorrido, no
+   *  en cada fotograma: 60 puntos por segundo serían una línea que ni se ve ni se puede
+   *  dibujar barata. */
   private trail(id: string, at: LatLon, status: UnitStatus, tSim: number): void {
     if (status !== 'moving') {
       this.dropTrail(id)
@@ -553,9 +621,13 @@ export class Scene {
       this.trails.set(id, trail)
     }
     const last = trail.pts.at(-1)
-    if (!last || last.ll[0] !== at[0] || last.ll[1] !== at[1]) trail.pts.push({ ll: at, t: tSim })
+    const far =
+      !last ||
+      this.map.latLngToLayerPoint(at).distanceTo(this.map.latLngToLayerPoint(last.ll)) >= TRAIL_STEP_PX
+    if (far) trail.pts.push({ ll: at, t: tSim })
     trail.pts = trail.pts.filter((p) => tSim - p.t <= TRAIL_SIM_S).slice(-TRAIL_MAX_POINTS)
-    trail.line.setLatLngs(trail.pts.map((p) => p.ll))
+    // El último tramo llega hasta la unidad, así la estela no se despega de ella.
+    trail.line.setLatLngs([...trail.pts.map((p) => p.ll), at])
   }
 
   private dropTrail(id: string): void {
@@ -569,7 +641,7 @@ export class Scene {
    *  insignia encima de otra. Se hace con un desplazamiento CSS del interior, que no se
    *  pelea con el `transform` con el que Leaflet coloca y desliza el marcador. */
   private layoutUnits(): void {
-    const items = [...this.units.values()].map((u) => ({ u, p: this.map.latLngToLayerPoint(u.lastLL) }))
+    const items = [...this.units.values()].map((u) => ({ u, p: this.map.latLngToLayerPoint(u.shown) }))
     // Un pueblo cuenta como un ocupante fijo del sitio: una unidad que está EN el pueblo
     // (el camión en su base, la ambulancia en el hospital) se aparta a su alrededor en vez
     // de taparle la insignia y el nombre.
@@ -611,10 +683,13 @@ export class Scene {
         const pending = L.polyline([], { color: this.palette.accent, weight: 4, opacity: 0.75, interactive: false, className: 'vela-geo-route-in' })
         done.addTo(this.routeLayer)
         pending.addTo(this.routeLayer)
-        entry = { sig, done, pending, task: this.taskBadge(a.unit_id, a.task_id, coords, tasks, a.eta_s) }
+        entry = { sig, coords, done, pending, task: this.taskBadge(a.unit_id, a.task_id, coords, tasks, a.eta_s) }
         this.routes.set(a.unit_id, entry)
       }
-      this.splitRoute(entry, coords, unit.x, unit.z)
+      // El tramo recorrido sigue a la unidad TAL COMO SE ENSEÑA, no a su última posición
+      // emitida, que va por delante: si no, la ruta se aclararía antes de que llegue el icono.
+      const at = this.units.get(a.unit_id)?.shownXZ ?? { x: unit.x, z: unit.z }
+      this.splitRoute(entry, at.x, at.z)
     }
     for (const [unitId, entry] of this.routes) {
       if (active.has(unitId)) continue
@@ -625,7 +700,8 @@ export class Scene {
 
   /** La ruta se parte en el tramo ya recorrido (claro) y el que queda (acento), cortando
    *  por el segmento más cercano a la unidad (REQ-305). */
-  private splitRoute(entry: RouteEntry, route: Waypoint[], x: number, z: number): void {
+  private splitRoute(entry: RouteEntry, x: number, z: number): void {
+    const route = entry.coords
     let seg = 0
     let best = Infinity
     for (let i = 0; i < route.length - 1; i += 1) {
@@ -839,7 +915,7 @@ export class Scene {
       if (line) this.ring([line.lat, line.lng])
     }
     for (const id of now.unavailable) {
-      if (!before.unavailable.has(id)) this.ring(this.units.get(id)?.lastLL ?? null)
+      if (!before.unavailable.has(id)) this.ring(this.units.get(id)?.shown ?? null)
     }
     for (const key of now.foci) {
       const f = foci.find((x) => x.key === key)

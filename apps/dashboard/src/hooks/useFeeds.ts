@@ -78,8 +78,8 @@ export function realAnchor(state: FeedsState): FeedAnchor | null {
   return anchor?.fixed ? anchor : null
 }
 
-/** El motivo por el que el mapa es esquemático, para el chip. */
-export function schematicReason(state: FeedsState): string {
+/** El motivo por el que no hay mapa real, para el chip y el aviso. */
+export function noMapReason(state: FeedsState): string {
   if (state.kind === 'loading') return 'buscando el ancla'
   if (state.kind === 'unavailable') return 'fuentes no disponibles'
   const { feeds } = state

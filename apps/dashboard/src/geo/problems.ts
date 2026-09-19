@@ -9,7 +9,7 @@ import type { CivilianView, WorldView } from '../hooks/useWorldView'
 import type { ScenarioLayer } from '../hooks/useScenario'
 import { CIV_STATE, UNIT_STATUS } from '../story/labels'
 import { shortId } from '../story/format'
-import { cellIdAt, type Geo } from './project'
+import { cellIdAt, type Geo } from './grid'
 
 /** 0 = sin problema, 1 = aviso, 2 = grave. Con tres niveles basta para ordenar y pintar. */
 export type Level = 0 | 1 | 2

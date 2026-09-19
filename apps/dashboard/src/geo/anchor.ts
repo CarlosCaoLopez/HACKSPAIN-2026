@@ -1,10 +1,9 @@
 // (x, z) del mundo Minecraft ↔ (lat, lon) reales. SPEC-008 REQ-285.
 //
-// Es la ÚNICA traducción mundo → coordenada real del dashboard, igual que `map/project.ts`
-// es la única a SVG. Es la misma fórmula que `gateway/feeds/anchor.py` (`to_geo`, la
+// Es la ÚNICA traducción mundo → coordenada real del dashboard. Es la misma fórmula que `gateway/feeds/anchor.py` (`to_geo`, la
 // inversa de `to_world`, REQ-239): equirectangular alrededor del ancla, +X este, +Z sur y
 // sin rotación. Si una cambia, la otra también, o el valle cae en otro sitio del mapa.
-import type { Geo } from '../map/project'
+import type { Geo } from './grid'
 
 /** Lo que `GET /api/feeds` sirve del ancla (`anchor_view` en el gateway). */
 export interface FeedAnchor {

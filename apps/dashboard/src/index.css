@@ -34,8 +34,7 @@
      un dato, así que ninguno de los dos es el rojo del banner. */
   --color-vela-good: #059669;
 
-  /* La rampa de peligro del mapa (REQ-199, enmendado por REQ-230). Ahora se pinta sobre
-     una imagen de satélite oscura, así que son tonos más vivos que sobre fondo liso. Aquí
+  /* La rampa de peligro de las celdas del valle sobre el mapa real (REQ-199, REQ-230). Aquí
      arriba `burning` y `vela-replan` se pueden comparar sin abrir dos ficheros: si a diez
      metros se confunden, el banner deja de ser un acontecimiento (REQ-229). */
   --color-vela-cell-at-risk: rgba(251, 191, 36, 0.55);
@@ -43,26 +42,16 @@
   --color-vela-cell-burnt: rgba(28, 25, 23, 0.6);
   --color-vela-cell-flooded: rgba(56, 189, 248, 0.5);
   --color-vela-cell-dark: rgba(15, 23, 42, 0.72);
-  /* Overlays del mapa que no son un estado de celda: resplandor del fuego, humo, estelas
-     de viento y halo de las etiquetas. Tokens y no literales por REQ-230. */
-  --color-vela-glow: #fb923c;
-  --color-vela-smoke: rgba(226, 232, 240, 0.55);
-  --color-vela-gust: rgba(255, 255, 255, 0.5);
+  /* Halo de los rótulos y fondo de las insignias del mapa real. Tokens y no literales. */
   --color-vela-halo: rgba(255, 255, 255, 0.92);
   --color-vela-marker: #ffffff;
-  --color-vela-marker-edge: #15181d;
-  /* El fondo bajo la imagen (el mapa encaja con `meet` y sobra un margen) y las capas de
-     carretera y alerta. `alert` es un ámbar vivo pensado para leerse sobre satélite
-     oscuro: `warn` es el marrón del texto sobre blanco y ahí se apagaría. Ninguno es
-     `vela-replan`, que es del banner. */
+  /* `alert` es un ámbar vivo para las zonas con problema de la leyenda; `warn` es el marrón
+     del texto sobre blanco. Ninguno es `vela-replan`, que es del banner. */
   /* Los tonos de los iconos del mapa real (SPEC-008 REQ-299): fuego y agua. Sobre el
      mapa claro de OpenStreetMap hacen falta colores más saturados que los de celda, que
      llevan alfa. Ninguno es `vela-replan` (REQ-077). */
   --color-vela-fire: #ea580c;
   --color-vela-water: #0284c7;
-  --color-vela-ground: #2b3628;
-  --color-vela-road: #d1d5db;
-  --color-vela-road-shadow: rgba(10, 12, 10, 0.55);
   --color-vela-alert: #fbbf24;
 
   --font-sans: 'DM Sans', system-ui, sans-serif;
@@ -129,121 +118,6 @@ body {
   background: transparent;
 }
 
-/* Fenómenos del mapa (SPEC-006 REQ-219…223). Todo es CSS sobre SVG: sin bucle
-   requestAnimationFrame en React ni setState por fotograma (REQ-227). Cada elemento
-   lleva su desfase en `animation-delay` para que no latan todos a la vez. */
-.vela-flame {
-  animation: vela-flicker 1.4s ease-in-out infinite;
-}
-@keyframes vela-flicker {
-  0%,
-  100% {
-    opacity: 0.75;
-  }
-  45% {
-    opacity: 1;
-  }
-  70% {
-    opacity: 0.6;
-  }
-}
-
-.vela-smoke {
-  /* Sin `fill-box` el `scale` se aplicaría desde el origen del SVG y el penacho saldría
-     disparado hacia la esquina en vez de crecer sobre su celda. */
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: vela-smoke 6s ease-out infinite;
-}
-/* Recorre `--dx/--dz` (a favor del viento) y se desvanece: no es una simulación, es un
-   penacho que sale de una celda que ya está ardiendo. */
-@keyframes vela-smoke {
-  from {
-    opacity: 0.7;
-    transform: translate(0, 0) scale(0.6);
-  }
-  to {
-    opacity: 0;
-    transform: translate(var(--dx), var(--dz)) scale(1.8);
-  }
-}
-
-.vela-gust {
-  animation: vela-gust 3.2s linear infinite;
-}
-@keyframes vela-gust {
-  from {
-    opacity: 0;
-    transform: translate(0, 0);
-  }
-  20%,
-  80% {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-    transform: translate(var(--dx), var(--dz));
-  }
-}
-
-.vela-pulse {
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: vela-pulse 1.8s ease-out infinite;
-}
-@keyframes vela-pulse {
-  from {
-    opacity: 0.9;
-    transform: scale(0.6);
-  }
-  to {
-    opacity: 0;
-    transform: scale(1.7);
-  }
-}
-
-.vela-ripple {
-  animation: vela-ripple 4s ease-in-out infinite;
-}
-@keyframes vela-ripple {
-  0%,
-  100% {
-    opacity: 0.55;
-  }
-  50% {
-    opacity: 0.9;
-  }
-}
-
-/* El viento gira con una transición corta (REQ-222). */
-.vela-wind {
-  transition: transform 600ms ease-out;
-}
-
-/* Movimiento del mapa. Las posiciones llegan cada 2-4 segundos: sin interpolar, las
-   unidades dan saltos y el mapa parece roto. Un segundo lineal es justo el hueco
-   entre dos eventos de posición. */
-.vela-unit {
-  transition: transform 1s linear;
-}
-
-/* Plan nuevo: las flechas entran con un fundido de 600 ms en vez de morfear el path
-   (la `d` no es animable de forma fiable en todos los navegadores). Es el clímax
-   visual del dashboard y tiene que leerse desde el fondo de la sala. */
-.vela-plan-enter {
-  animation: vela-plan-in 600ms ease-out;
-}
-
-@keyframes vela-plan-in {
-  from {
-    opacity: 0;
-    stroke-width: 3;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 /* El banner REPLAN entra con ganas: es lo que hay que ver sin que nadie lo señale.
    Se anima por `key={seq}`, así que solo se reejecuta con un replan nuevo y no en cada
    render: a 60× los replanes se atropellan y si no, parpadea. */
@@ -283,14 +157,6 @@ body {
 /* El proyector de la sala no tiene por qué respetar esto, pero una máquina con
    "reducir movimiento" activado sí. */
 @media (prefers-reduced-motion: reduce) {
-  .vela-unit,
-  .vela-flame,
-  .vela-smoke,
-  .vela-gust,
-  .vela-pulse,
-  .vela-ripple,
-  .vela-wind,
-  .vela-plan-enter,
   .vela-replan-enter,
   .vela-skeleton {
     transition: none;

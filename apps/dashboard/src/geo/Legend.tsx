@@ -5,7 +5,7 @@
 // cosas que no están pasando. Plegable y abierta por defecto: también ocupa sitio.
 import { useState } from 'react'
 
-import type { Problem } from '../map/problems'
+import type { Problem } from './problems'
 import type { Wind } from '../types'
 import type { IconDef } from './icons'
 
