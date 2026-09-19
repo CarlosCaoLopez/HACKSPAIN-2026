@@ -44,15 +44,6 @@ planta `worldgen` con `place feature`."""
 BURN_DURATION_S = 45.0
 """Lo que una celda arde antes de quedar `burnt`. Deja frente móvil y cicatriz."""
 
-SUPPRESS_FOCUS = 2
-"""Cuántas celdas ataca a la vez una dotación: las más cercanas.
-
-El número sale de la carrera contra `BURN_DURATION_S`, no de una intuición. Con
-`suppress_rate` 4 una celda cae en `n · 60 / 4` segundos, y tiene que ser **menos** de
-los 45 que tarda en consumirse sola: con 3 sale 45 clavados —un empate, y medido daba
-seis celdas apagadas en siete minutos— y con 2 sale 30, que gana con margen. Subirlo
-sin subir `suppress_rate` vuelve a dejar a los camiones regando sin apagar."""
-
 AT_RISK_P = 0.5
 """Probabilidad mínima de arder dentro del horizonte para marcar una celda
 `at_risk`.
@@ -240,20 +231,9 @@ class CellularHazard:
         """Sofocar desde la carretera. Devuelve las celdas apagadas en este tick.
 
         Cada unidad con capacidad trabaja las celdas `burning` a menos de
-        `suppress_reach_m`, a `suppress_rate` celdas por minuto repartidas entre
-        **las `SUPPRESS_FOCUS` más cercanas**, no entre todas las que le caben en el
-        radio. Un camión sigue sin apagar más rápido por tener más fuego delante —el
-        ritmo es el mismo— pero ataca un punto, que es lo que hace una dotación, en
-        vez de regar el perímetro entero.
-
-        Sin ese tope el reparto se autoanulaba en cuanto el incendio crecía. La cuenta:
-        una celda se consume sola en `BURN_DURATION_S` (45 s), así que para apagarla
-        antes hace falta `rate · 45 / n >= 1`, o sea **n <= 3** con `suppress_rate` 4.
-        Con 24 m de alcance y celdas de 4 m caben más de cien celdas en el radio, y
-        medido en `runs/run_cecd8873f008.jsonl` había 8 ardiendo a los 80 s, 20 a los
-        140 y 69 en el pico: de las 79 celdas que acabaron `burnt`, **las 79 fueron
-        `burnout`** y ninguna `extinguished`. Los camiones llegaban al frente, se
-        ponían `working` y no apagaban nada en todo el run.
+        `suppress_reach_m` de donde está, a `suppress_rate` celdas por minuto
+        **repartidas entre las que tenga a tiro**: un camión no apaga más rápido
+        por tener más fuego delante, lo reparte.
 
         Es física del mundo, no una decisión: el core manda el camión al frente
         con un `goto` y el mundo responde. Por eso no hay un quinto verbo — los
@@ -268,19 +248,14 @@ class CellularHazard:
         rate = self.spec.suppress_rate / SECONDS_PER_MINUTE
 
         for x, z in positions:
-            # Por distancia y, a igual distancia, por id: el reparto tiene que ser
-            # determinista o dos runs del mismo journal no coinciden.
-            alcance = sorted(
-                (
-                    (math.dist((x, z), self.center_of(cid)), cid)
-                    for cid in sorted(self._active_for)
-                    if math.dist((x, z), self.center_of(cid)) <= reach
-                ),
-            )[:SUPPRESS_FOCUS]
+            alcance = [
+                cid
+                for cid in sorted(self._active_for)
+                if math.dist((x, z), self.center_of(cid)) <= reach
+            ]
             if not alcance:
                 continue
             reparto = rate * dt / len(alcance)
-            alcance = [cid for _, cid in alcance]
             for cid in alcance:
                 self._suppressed[cid] = self._suppressed.get(cid, 0.0) + reparto
 
