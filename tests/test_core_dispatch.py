@@ -239,7 +239,7 @@ async def test_sin_respuesta_sale_igual_y_se_anota(journal, fixed_planner) -> No
     await _feed(core, _tick(5.0))
     assert _gotos(journal, unidad) == [], "el plazo no se ha agotado todavía"
 
-    await _feed(core, _tick(loop.DISPATCH_HOLD_S + 1.0))
+    await _feed(core, _tick(loop.DISPATCH_RING_S + 1.0))
 
     salidas = _gotos(journal, unidad)
     assert len(salidas) == 1
@@ -293,3 +293,38 @@ async def test_la_orden_al_pueblo_espera_a_los_medios(journal, fixed_planner) ->
     assert len(evac) == 1, "y sale una sola vez, no una por tick"
     assert evac[0].facts["committed_resources"], "con los medios que van de verdad"
     assert "Medios en camino" in evac[0].facts["situation_brief"]
+
+
+async def test_descolgar_reinicia_el_plazo(journal, fixed_planner) -> None:
+    """Lo que falló en vivo (`runs/run_4699e9e46f2f.jsonl`): la llamada descolgó a
+    los 3 s y colgó a los 69, pero el plazo único de 45 la cortó por la mitad y
+    soltó los camiones con `dispatch_confirmed=False` mientras seguían hablando.
+
+    Sonar y hablar son dos plazos distintos."""
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    crew = _calls(journal, "fire_crew_dispatch")[0]
+    unidad = crew.facts["unit_id"]
+
+    await _feed(
+        core,
+        _ev(
+            EventType.CALL_STARTED,
+            {
+                "call_id": "hl_crew",
+                "task_id": crew.task_id,
+                "to": CREW,
+                "direction": "outbound",
+            },
+            source="call:hl_crew",
+            t_sim=3.0,
+        ),
+    )
+    # Pasado el plazo de SONAR, pero hablando: no se suelta a nadie.
+    await _feed(core, _tick(loop.DISPATCH_RING_S + 10.0))
+    assert _gotos(journal, unidad) == [], "cortaba la llamada a media frase"
+
+    await _hang_up(core, crew.task_id, t_sim=69.0)
+    salidas = _gotos(journal, unidad)
+    assert len(salidas) == 1
+    assert salidas[0].dispatch_confirmed is True

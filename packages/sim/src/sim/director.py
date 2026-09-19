@@ -43,7 +43,7 @@ Hay hitos que son un momento, no un estado —la llamada al pueblo, el replan, e
 pin del vecino—: cuando llega el evento, la cámara va allí y se queda este rato
 aunque el fuego siga ardiendo. Pasado el foco, vuelve a mandar lo que se mueve."""
 
-FOCO_LLAMADA_MAX_S = 75.0
+FOCO_LLAMADA_MAX_S = 180.0
 """Techo del plano que espera a que cuelguen.
 
 Una llamada de despacho no dura un momento, dura lo que dure: medido, treinta
@@ -51,7 +51,9 @@ segundos. `FOCO_S` caducaba a los doce y la cámara se iba al fuego con los cami
 todavía parados, que es justo el beat que hay que enseñar. Así que ese foco no vence
 por tiempo sino con el `call.ended` de su tarea — pero con techo, porque una llamada
 que no cierra nunca no puede dejar la cámara clavada. El core suelta a la unidad a
-los 45 s de sim (`core.loop.DISPATCH_HOLD_S`); esto va holgadamente por encima."""
+los 150 s de conversación (`core.loop.DISPATCH_TALK_S`); esto va por encima. Medido:
+la llamada real al retén duró 66 s, así que el techo de 75 que puse primero se
+quedaba a nueve segundos de cortarla."""
 
 DISPATCH_ROLES = {"fire_crew", "ambulance"}
 """Los `role` de llamada que retienen a su unidad en el core (`core.loop`). Son los

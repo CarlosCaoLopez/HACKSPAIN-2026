@@ -78,15 +78,22 @@ AT_WAYPOINT_M = 3.0
 """A menos de esto de un waypoint, la unidad está en él (el sim la deja clavada en
 sus coordenadas al llegar)."""
 
-DISPATCH_HOLD_S = 45.0
-"""Lo que una unidad espera, como mucho, a que la dotación conteste al teléfono antes
-de salir igual.
+DISPATCH_RING_S = 45.0
+"""Lo que se espera a que DESCUELGUEN, desde que se pide la llamada.
 
-Un medio no sale hasta que dice «vamos»: ese es el punto de llamarle. Pero si nadie
-coge el teléfono la unidad sale de todas formas y se anota
-(`ActionRequested.dispatch_confirmed=False`), porque una demo con los camiones
-congelados no es una degradación aceptable. Mismo plazo que el `no_answer` de una
-saliente en `docs/interfaces.md`."""
+Si en este plazo no ha llegado `call.started`, nadie va a coger: la unidad sale y se
+anota. Mismo plazo que el `no_answer` de una saliente en `docs/interfaces.md`."""
+
+DISPATCH_TALK_S = 150.0
+"""Lo que se espera a que CUELGUEN, desde que descuelgan.
+
+Un teléfono que suena sin que nadie lo coja y una conversación en curso no son lo
+mismo, y medirlos con la misma vara fue un error: medido en
+`runs/run_4699e9e46f2f.jsonl`, la llamada real al retén duró 66 s —descolgó a los 3 y
+colgó a los 69— y un plazo único de 45 la cortaba por la mitad, soltando los camiones
+con `dispatch_confirmed=False` mientras la dotación seguía hablando. Una llamada
+enlatada dura 30 s; una con una persona delante, el doble. Este plazo solo existe
+para que una sesión que se queda abierta no congele la demo."""
 
 DISPATCH_ROLES = frozenset({"fire_crew", "ambulance"})
 """Los `role` de llamada que retienen a su unidad. `ambulance_queued` no: esa unidad
@@ -106,8 +113,10 @@ cierra al llegar es también lo que hay que ejecutar al llegar."""
 
 SUBSCRIBED: tuple[EventType, ...] = tuple(
     t for t in EventType if t.value.startswith("world.")
-) + (EventType.CALL_ENDED, EventType.HUMAN_OVERRIDE)
-"""`world.*` (incluye `world.fact.asserted`), `call.ended` y `human.override`."""
+) + (EventType.CALL_STARTED, EventType.CALL_ENDED, EventType.HUMAN_OVERRIDE)
+"""`world.*` (incluye `world.fact.asserted`), `call.started`, `call.ended` y
+`human.override`. Las dos de llamada, porque una unidad retenida se suelta al colgar
+y el plazo cambia al descolgar."""
 
 
 class Core:
@@ -159,6 +168,9 @@ class Core:
         # unit_id → task_id de la llamada que la retiene, y t_sim en que empezó.
         self._held: dict[str, str] = {}
         self._held_since: dict[str, float] = {}
+        # task_ids cuya llamada ya está descolgada: a partir de ahí el plazo que
+        # aplica es el de conversación, no el de que suene.
+        self._talking: set[str] = set()
         # unit_id → (task_id, ruta) del `goto` que se le debe cuando se suelte. Se
         # sobreescribe en cada replan, así una unidad retenida sale por la ruta
         # buena y no por la que se calculó al descolgar.
@@ -197,6 +209,8 @@ class Core:
         # la suelta igual. Va antes de planificar para que el plan de este evento ya
         # vea las unidades liberadas.
         self._drop_unavailable_holds()
+        if ev.type == EventType.CALL_STARTED:
+            self._on_call_started(ev)
         if ev.type == EventType.CALL_ENDED:
             await self._on_call_ended(ev)
         await self._expire_holds(ev)
@@ -680,6 +694,7 @@ class Core:
             return
         self._held[unit_id] = task_id
         self._held_since[unit_id] = self._state.t_sim
+        self._talking.discard(task_id)
         self._dispatch_called.add(unit_id)
         log.info("%s retenida a la espera de la llamada de %s", unit_id, task_id)
 
@@ -718,12 +733,25 @@ class Core:
                 log.info("%s no puede salir: se retira su orden pendiente", unit_id)
                 self._drop_hold(unit_id)
 
+    def _on_call_started(self, ev: Event) -> None:
+        """Han descolgado: el plazo pasa a ser el de conversación y el reloj vuelve a
+        cero. Sin esto, los segundos que tardan en coger el teléfono se le descontaban
+        a la conversación y la llamada se cortaba a media frase."""
+        task_id = str(ev.payload.get("task_id") or "")
+        if not task_id or task_id not in set(self._held.values()):
+            return
+        self._talking.add(task_id)
+        for unit_id, t in self._held.items():
+            if t == task_id:
+                self._held_since[unit_id] = self._state.t_sim
+
     async def _on_call_ended(self, ev: Event) -> None:
         """Colgar suelta a las unidades de esa llamada. `call.ended` llevaba en
         `SUBSCRIBED` desde el principio y no lo trataba nadie."""
         result = CallResult.model_validate(ev.payload)
         if result.task_id is None:
             return
+        self._talking.discard(result.task_id)
         # Contestaron y no dijeron que no (un «no podemos» ya habrá quitado la
         # retención por `unit:<id>:available`): sale confirmada.
         confirmed = result.outcome in ("answered", "hung_up")
@@ -736,12 +764,15 @@ class Core:
         vencidas = [
             u
             for u, t0 in self._held_since.items()
-            if self._state.t_sim - t0 >= DISPATCH_HOLD_S
+            if self._state.t_sim - t0
+            >= (DISPATCH_TALK_S if self._held.get(u) in self._talking else DISPATCH_RING_S)
         ]
         for unit_id in vencidas:
+            hablando = self._held.get(unit_id) in self._talking
             log.warning(
-                "sin respuesta en %.0f s de sim: %s sale sin confirmar",
-                DISPATCH_HOLD_S,
+                "%s en %.0f s de sim: %s sale sin confirmar",
+                "la llamada no cerró" if hablando else "nadie descuelga",
+                DISPATCH_TALK_S if hablando else DISPATCH_RING_S,
                 unit_id,
             )
             await self._release_unit(unit_id, False, cause)
