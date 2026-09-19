@@ -21,7 +21,7 @@ origin: [0, 0]
 
 hazard:
   kind: wildfire
-  origin_cell: cell_18_7 # (72, 28): al oeste del desvío sur
+  origin_cell: cell_7_7 # (28,28): al oeste del desvío sur, NO encima
   cell_size: 4 # bloques por celda
   base_spread: 0.12 # celdas por minuto, isótropo
   wind:
@@ -45,7 +45,12 @@ pois:
     x: 187
     z: 11
     waypoint_id: wp_pueblo_a
-    min_coverage: 1
+    # Unidades que no se pueden retirar, restricción DURA en `coverage_maintained`:
+    # cuenta las que quedan en el POI o que el plan lleva allí. Con cuatro unidades y
+    # el incendio, cualquier reasignación la incumple, el verificador veta el plan y
+    # el core replanifica — 73 llamadas al LLM por run con Pueblo B a 1, y otras 147
+    # con Pueblo A. Ambos a 0 hasta que haya unidades de sobra para sostenerla.
+    min_coverage: 0
     contact_phone: "+34000000001"
   - id: poi_pueblo_b
     name: Pueblo B
@@ -54,7 +59,7 @@ pois:
     x: 187
     z: 94
     waypoint_id: wp_pueblo_b
-    min_coverage: 1
+    min_coverage: 0
     contact_phone: "+34000000002"
   - id: poi_hospital
     name: Hospital comarcal

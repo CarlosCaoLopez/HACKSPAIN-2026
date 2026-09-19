@@ -2,6 +2,7 @@
 `sim`, que valida, y el de `voice.pois`, que resuelve en caliente) leen el mismo
 YAML y tienen que ponerse de acuerdo sin que nadie mantenga una tabla aparte."""
 
+import math
 from pathlib import Path
 
 import pytest
@@ -91,4 +92,10 @@ async def test_el_core_tonto_manda_un_camion_al_fuego():
     ((unit_id, (movement, action_id)),) = sim._moving.items()
     assert unit_id.startswith("unit_truck")
     assert action_id == "act_dummy_0001"
-    assert movement.route[-1] == "wp_sur_01", "el waypoint más cercano al origen"
+    # Derivado del escenario, no escrito a mano: mover la ignición en el YAML es
+    # una decisión de P2 y no debería romper un test del core tonto.
+    ox, oz = (int(v) * sim.scenario.hazard.cell_size
+              for v in sim.scenario.hazard.origin_cell.split("_")[1:])
+    esperado = min(sim.graph.waypoint_ids,
+                   key=lambda w: math.dist(sim.graph.position_of(w), (ox, oz)))
+    assert movement.route[-1] == esperado, "el waypoint más cercano al origen"
