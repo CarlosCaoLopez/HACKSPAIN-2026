@@ -10,6 +10,7 @@ import { useMemo } from 'react'
 import type { Event } from '../types'
 import { Empty, Panel, Skeleton } from '../components/Panel'
 import { callCards, extracted, type Call } from '../story/calls'
+import { CompletenessPanel } from './CompletenessPanel'
 import { CALL_OUTCOME } from '../story/labels'
 import { factValue, mmss, pct, shortId } from '../story/format'
 
@@ -91,6 +92,8 @@ function CallCard({ call }: { call: Call }) {
         </ul>
       )}
 
+      {call.completeness && <CompletenessPanel completeness={call.completeness} />}
+
       {call.ended && !call.ended.facts && (
         <div className="mt-1">
           <p className="text-xs font-bold tracking-wide text-vela-warn">SIN EXTRAER</p>
@@ -117,8 +120,15 @@ function CallCard({ call }: { call: Call }) {
       {call.facts.length > 0 && (
         <ul className="mt-1 flex flex-col gap-0.5 border-t border-vela-edge pt-1">
           {call.facts.map((fact) => (
-            <li key={fact.key} className="text-xs text-vela-ink">
+            <li
+              key={fact.key}
+              className={`text-xs ${
+                fact.kind === 'observed' ? 'text-vela-ink' : 'text-vela-dim italic'
+              }`}
+            >
               {fact.key} = {factValue(fact.value)} · {pct(fact.confidence)}
+              {fact.kind !== 'observed' &&
+                ` · ${fact.kind === 'assumed_default' ? 'asumido' : 'inferido'}`}
             </li>
           ))}
         </ul>

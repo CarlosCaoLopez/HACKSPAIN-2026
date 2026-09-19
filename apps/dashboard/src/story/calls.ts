@@ -9,7 +9,7 @@
 //   hecho, así que no hace falta resolver `causes` para esto.
 // - **`facts: null` es un caso normal**, no un error: la extracción falla o tarda más
 //   de la cuenta. Entonces lo único que hay es lo que se dijo, y se enseña.
-import type { CallFacts, CallOutcome, Event, VelaEvent } from '../types'
+import type { CallCompleteness, CallFacts, CallOutcome, Event, FactAsserted, VelaEvent } from '../types'
 import { factValue } from './format'
 
 export interface Line {
@@ -36,8 +36,17 @@ export interface Call {
   poiId: string
   lines: Line[]
   ended: Ended | null
-  /** Hechos que entraron al estado con esta llamada como `source`. */
-  facts: { key: string; value: string | number | boolean; confidence: number }[]
+  /** Hechos que entraron al estado con esta llamada como `source`. `kind` es la regla 4:
+   *  un hecho asumido nunca se disfraza de observado. */
+  facts: {
+    key: string
+    value: string | number | boolean
+    confidence: number
+    kind: FactAsserted['kind']
+  }[]
+  /** El último vector de completitud de Jev (`call.completeness`), o `null` si la
+   *  llamada no pasó por Jev (mock, plan B). */
+  completeness: CallCompleteness | null
 }
 
 export function callCards(events: Event[]): Call[] {
@@ -61,6 +70,7 @@ export function callCards(events: Event[]): Call[] {
       lines: [],
       ended: null,
       facts: [],
+      completeness: null,
     }
     byId.set(callId, fresh)
     return fresh
@@ -109,11 +119,18 @@ export function callCards(events: Event[]): Call[] {
         break
       }
 
+      case 'call.completeness': {
+        // Cada tick sustituye al anterior: lo que se pinta es el estado de ahora.
+        get(ev.payload.call_id, ev.seq, ev.t_sim).completeness = ev.payload
+        break
+      }
+
       case 'world.fact.asserted': {
-        const { source, key, value, confidence } = ev.payload
+        const { source, key, value, confidence, kind } = ev.payload
         if (!source.startsWith('call:')) break
         const call = byId.get(source.slice('call:'.length))
-        if (call) call.facts.push({ key, value, confidence })
+        // Un journal anterior a Jev no trae `kind`: eran observados.
+        if (call) call.facts.push({ key, value, confidence, kind: kind ?? 'observed' })
         break
       }
 

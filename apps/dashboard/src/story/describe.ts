@@ -190,6 +190,21 @@ function describeNarrowed(ev: VelaEvent): Described {
       }
     }
 
+    case 'call.completeness': {
+      // Ambiente, como `call.affect`: un tick cada 5 s no es un cambio del mundo. Lo
+      // pinta `CompletenessPanel` dentro de la tarjeta de la llamada.
+      const { fields, call_id } = ev.payload
+      const done = fields.filter((f) => f.status === 'observed').length
+      const assumed = fields.filter((f) => f.status === 'assumed_default').length
+      return {
+        label: 'COMPLETITUD',
+        tone: 'call',
+        sentence: `${call_id} · ${done}/${fields.length} observados${
+          assumed ? ` · ${assumed} asumidos` : ''
+        }`,
+      }
+    }
+
     case 'call.signal.requested':
       return {
         label: 'SEÑAL PEDIDA',
