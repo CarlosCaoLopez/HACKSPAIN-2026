@@ -152,16 +152,16 @@ curl -s -X POST localhost:8000/dev/signal -H 'content-type: application/json' \
 
 ## Anexo · workflow saliente `test` → `evacuation_order` (montado por API el sábado)
 
-Estado: **borrador listo, sin publicar**, en la versión 2 (`9wsaydvqsgke`) del workflow `test` (`301cfio7aosi`). La versión 1, vacía, sigue viva en *development*. Lo único que bloquea la publicación es *Missing from number*: la organización no tiene ningún número (`GET /phone-numbers` → `[]`). En cuanto haya un número US *Synced*, se pone en *From number* del agente y se publica a *development* con `force`.
+Estado (sábado 11:06): **publicado y vivo en development, versión 5**, del workflow `test` (`301cfio7aosi`). Probado de punta a punta con el `trigger()` de Carlos: el hook acepta con la key `sk_live_` como `Bearer`, el agente resuelve el `to`, marca desde `+1 361 210 1724` y el webhook de fin llega a `/webhooks/happyrobot/call` con `run_id` (el de la plataforma, el mismo que devolvió el hook), `task_id`, `to`, `status` y transcripción. **La llamada la rechaza el operador: `sip_code 403 Forbidden`, `failure_reason: sip_call_never_connected`.** El trunk Telnyx del número US no tiene habilitadas las salientes internacionales a España. Hay que pedírselo al equipo de HappyRobot en el evento (habilitar internacional en ese trunk, o darnos un número Twilio con salida internacional). El fallo queda archivado como `call.ended` con `outcome: failed`, así que el core puede reintentar o escalar.
 
 Nodos (ids de la versión 2):
 
 | Nodo | Tipo | Detalle |
 | --- | --- | --- |
 | Receive external update | trigger Webhook | Variables bajo `data.*` (`data.to`, `data.poi_name`, `data.route_name`, `data.deadline_min`, `data.hazard_kind`, `data.severity`, `data.run_id`, `data.task_id`). Payload de ejemplo enviado a `hooks/301cfio7aosi/9wsaydvqsgke` |
-| Coordinador 112 | Outbound Voice Agent | `to` = `{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.to}}` (la forma cruda es la única que pasa la comprobación de publicación); voz Daniel HR, `es`, disclaimer UE, 180 s, buzón → colgar, `gracefully_handle_invalid_phone`, signals ON. **Falta `from_number`** |
+| Coordinador 112 | Outbound Voice Agent | `to` = objeto variable `{group_id: <persistent_id del trigger>, variable_id: "data.to"}` (la forma cruda `{{$var:…}}` **no** se resuelve en campos de párrafo; el aviso *missing variable* al publicar es solo un aviso). `from_number` = `{type: static, static: {id: "+13612101724", name: "+13612101724"}}`: la plataforma busca el **trunk por su nombre**, ni el id del número ni el uuid del trunk valen. Voz Daniel HR, `es`, disclaimer UE, 180 s, buzón → colgar, `gracefully_handle_invalid_phone`, signals ON |
 | Prompt | prompt | Orden de evacuación con las variables del trigger; modelo `gpt-5.6-luna`. Sale "incompleto" en el listado igual que el del entrante; no bloquea |
-| POST call end | Webhook POST | `@VELA_URL/webhooks/happyrobot/call` con `X-Vela-Token`, cuerpo `{type: end, session_id, run_id, task_id, direction: outbound, status, transcript}` |
+| POST call end | Webhook POST | `@VELA_URL/webhooks/happyrobot/call` con `X-Vela-Token`, cuerpo crudo con `{{$var:…}}`: `run_id` = `{{$var:current.run_id}}` (los campos del trigger en cuerpos crudos pueden resolver al payload de ejemplo), `session_id`/`status`/`transcript` del agente, `task_id`/`to` del trigger (`data.*`) |
 
 Cosas aprendidas de la API que no están en la documentación: las variables de un nodo se direccionan por su `persistent_id` (el de la versión original, no el de la bifurcación); los campos de un trigger Webhook cuelgan de `data.`; la API es la de la región de la organización (`platform.eu.happyrobot.ai`), la US rechaza la key; el hook responde `run_id`, no `call_id`; `update-a-node` es `PUT` y el `type` del cuerpo tiene que coincidir con el del nodo (el trigger creado en la UI es `action`).
 
