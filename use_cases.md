@@ -22,7 +22,7 @@ Red en Y: desvío **sur** (`wp_sur_01`/`wp_sur_02`, 162 m, el que se corta) y de
 | --- | --- | --- |
 | Qué información importa | `WhatChangedPanel` | filtra ruido (`isSignificant`), deja solo lo que cambia algo |
 | Qué va primero | `PriorityQueue` | rationale de la Policy + orden por severidad |
-| A quién se avisa y cuándo | `CallsPanel` | saliente (orden evac Pueblo A) + entrante (vecino Pueblo B) |
+| A quién se avisa y cuándo | `CallsPanel` | saliente (orden evac Pueblo A) + entrante (vecino Pueblo B, por voz y por Telegram) |
 | Dónde van los recursos | `MapPanel` | flechas de asignación del solver |
 | Qué se hace ahora | `ActionLog` | cada verbo (`goto`/`rescue`/`announce`) + latencia de respuesta |
 | Cuándo tirar el plan | `DivergenceChart` | cruza 0,25 → banner REPLAN |
@@ -33,6 +33,12 @@ Red en Y: desvío **sur** (`wp_sur_01`/`wp_sur_02`, 162 m, el que se corta) y de
   **quedan** (cuando truck2 se avería a 4:00).
 - **Coordinar** → llamadas en las dos direcciones + `action.*` que mueven el mundo, no solo lo proponen.
 - **Adaptarse** → replan en los tres injects (viento, corte, avería) + hecho crítico de la llamada.
+
+**El reporte ciudadano entra por dos canales**, no solo por voz: la **llamada** (HappyRobot) y
+**Telegram** (pin de ubicación + texto). Los dos son adaptadores de entrada que publican
+`world.fact.asserted` por el bus; el Core es agnóstico a si el mundo por debajo es el simulador
+(Minecraft) o datos reales de API. La voz aporta el *qué* (rápido, humano); Telegram aporta el
+*dónde* **exacto y observado** (un pin GPS no se adivina). Se complementan en el clímax de la demo.
 
 ## Apertura (−0:20 → 0:00) — el reencuadre
 
@@ -62,11 +68,12 @@ espectador vía OBS). Se narra desde el dashboard y se corta a Minecraft en los 
 | **1:45** | — | `CallsPanel`: tarjeta → *completed*; `WhatChangedPanel`: FACT "orden confirmada" | Cuelga | Cierre limpio del aviso saliente. |
 | **2:30** | **[MC]** El humo **gira**: viento 270→300, fuego vira al NE hacia Pueblo B | `DivergenceChart`: línea **cruza 0,25**, número rojo; banner REPLAN | — | **Cuándo tirar el plan** + **Adaptarse**: "cambia el viento y el plan de hace veinte minutos ya no vale. ¿Se da cuenta?" Sí: `plan.divergence` con `broken:[...]`. |
 | **2:35** | **[MC]** Camiones frenan y **cambian destino** | `PriorityQueue` recarga (nueva Policy); `MapPanel` flechas apuntan distinto | — | Una **sola** llamada al modelo por replan (invariante 7), solo por bandera. |
-| **3:30** | **[MC]** El desvío **sur** se pinta a rayas negro/amarillo, troncos cruzados (inject `road_cut`) | `CallsPanel`: tarjeta "AVISO DEL VECINO" · en curso; transcripción SSE en vivo, línea a línea | **Entrante real**: vecino de Pueblo B llama al 112. HappyRobot SSE stream | **Enterarse** por canal humano. El mundo **no se mueve** hasta que cuelgue (solo el Core trabaja). |
+| **3:30** | **[MC]** El desvío **sur** se pinta a rayas negro/amarillo, troncos cruzados (inject `road_cut`) | `CallsPanel`: tarjeta "AVISO DEL VECINO" (📞 voz) · en curso; transcripción SSE en vivo, línea a línea | **Entrante real**: vecino de Pueblo B llama al 112. HappyRobot SSE stream | **Enterarse** por canal humano. El mundo **no se mueve** hasta que cuelgue (solo el Core trabaja). |
 | **3:35** | — | `CompletenessPanel`: 5 campos en gris (open); barra de presupuesto | 1er tick de Jev sobre parcial: `urgency=critical` → presupuesto **8 s** | Jev (`jev-1.13`) cada 5 s manda **todas** las preguntas a la vez, devuelve vector de completitud sin texto. |
-| **3:50** | — | `CompletenessPanel`: `road_blocked` → **sólido** (observed ≥0,85); `people_immobile` sigue gris | Presupuesto obliga a **una** repregunta: "¿hay alguien que no pueda moverse?" (*signal* `kind: followup`, una a la vez) | **Priorizar la escucha**: agota presupuesto por gravedad, pregunta solo lo que más reduce incertidumbre. |
+| **3:50** | — | `CompletenessPanel`: `road_blocked` → **sólido** (observed ≥0,85); `people_immobile` y **`location_hint` siguen gris** | El vecino **no sabe ubicarse bien**: "estoy cerca de unas casas, al final de la pista, no sé el nombre". Jev fija `road_blocked` pero **no** `location_hint`. Presupuesto obliga a **una** repregunta: "¿hay alguien que no pueda moverse?" (*signal* `kind: followup`, una a la vez) | **Priorizar la escucha** + el límite del canal de voz: se pregunta lo que más reduce incertidumbre, pero la **ubicación precisa** no la puede dar. El hueco queda visible, no inventado. |
 | **4:00** | **[MC]** `unit_truck2` se para (inject `unit_failure`); marcador → `unavailable` | `CompletenessPanel`: `people_immobile` se rellena **gris cursiva** (`assumed_default`); `WhatChangedPanel`: FACT gris cursiva | Presupuesto agotado → `gapfill` (LLM) rellena `people_immobile` como `assumed_default`, **no** observado | **Invariante 8** en pantalla: "un hecho asumido nunca se disfraza de observado; va en gris y cursiva. Si ese número está mal, el plan falla y volvemos a replanificar." |
 | **4:10** | **[MC]** (truck2 caído) → truck1 y ambulance **giran al desvío norte** en <3 s | `DivergenceChart`: pico rojo + marca de replan; banner "pista sur cortada, confirmado por llamada entrante"; `PriorityQueue` reparte con los medios que **quedan** | Cuelga → `road_blocked` asertado como hard fact | **Adaptarse**: el `road_blocked` **observado** funda restricción dura (solo `observed` puede, inv. 8). `route_feasible` rechaza la ruta sur → replan. **SLA <1 s** de colgar a girar (backbone L122). **Priorizar con los medios que quedan, no los que harían falta.** |
+| **4:25** | **[MC]** Marcador del ciudadano cae en el mapa junto a Pueblo B | `MapPanel`: **pin del ciudadano** en su `(x,z)` exacto; `CallsPanel`: tarjeta "AVISO DEL VECINO" con badge **✈ Telegram**; `CompletenessPanel`: `location_hint` pasa de gris a **sólido** (observed) | **Telegram entrante**: ya colgado, el vecino **comparte su ubicación** por el bot. Pin GPS → `citizen.location` + `world.fact.asserted` anclado a `poi_pueblo_b` (`kind: observed`) | **La voz da el *qué*, Telegram da el *dónde* exacto.** Cierra el hueco de `location_hint` que la llamada dejó abierto **sin adivinar**: un pin no se resuelve por *fuzzy match*. Inv. 8: observado, funda/ancla la restricción dura. |
 | **5:00** | **[MC]** truck1 llega a Pueblo A; `rescue`: villagers `/tp` al `poi_refugio` con `glowing`; `poi_pueblo_b` → `safe` por ruta norte | `ActionLog`: `rescue shelter=poi_refugio` "hecha"; `DivergenceChart` baja | — | **Qué se hace ahora** cerrado. Meta cumplida. |
 
 ## Cierre de la parte Minecraft — de simulación a producción (5:00 → 5:45)
@@ -141,6 +148,8 @@ Guion idéntico, se degrada por capas (backbone L574–581) y se **anota** en el
   el endpoint `/webhooks/happyrobot/fact` sigue siendo real, budget+completeness intactos).
 - Minecraft cae → `--no-minecraft` (mapa 2D del `MapPanel` — que además ya es el cierre de sala de
   control, así que degradar no se nota).
+- Telegram cae / sin token → `VELA_NO_TELEGRAM=true` (canal ausente, badge lo anota en el header); el
+  guion no cambia, la ubicación se queda difusa como en el beat 3:50, igual que sin el canal.
 - Portátil cae → vídeo pregrabado + QR en el repo.
 
 ## Verificación (ensayo antes de la demo)
@@ -160,5 +169,10 @@ Guion idéntico, se degrada por capas (backbone L574–581) y se **anota** en el
    `memory/rules/` se puebla (un fichero por regla, con `trigger`/`support`/`confidence`/`lineage`) y
    que `select` inyecta al planner solo las reglas cuyo `trigger` casa con el estado. Correr los 12
    runs (backbone L537) para tener el run 1 vs run 12.
-8. Ensayar el corte MC↔dashboard en los beats **[MC]** (0:30, 1:00, 2:30, 3:30, 4:00, 4:10, 5:00) y el
-   cierre a `MapPanel` full-screen.
+8. Ensayar el corte MC↔dashboard en los beats **[MC]** (0:30, 1:00, 2:30, 3:30, 4:00, 4:10, 4:25, 5:00)
+   y el cierre a `MapPanel` full-screen.
+9. Telegram (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_SECRET_TOKEN` en `.env`, `setWebhook` sobre el mismo túnel
+   de las llamadas): desde el móvil, colgar la llamada y **compartir ubicación** + un texto; comprobar
+   en `runs/<run_id>.jsonl` que aparezcan `citizen.location`, `call.started` con `channel:telegram` y
+   `world.fact.asserted` anclado al `poi_pueblo_b` con `kind:observed`; y en el dashboard, el pin en
+   `MapPanel` y `location_hint` sólido en `CompletenessPanel`.
