@@ -58,6 +58,13 @@ TREES = ["oak", "oak", "birch", "spruce", "oak_bees_0002"]
 
 ROAD_BLOCK = "gray_concrete"
 ROAD_WIDTH = 3
+ROAD_CLEARANCE = 3
+"""Bloques a cada lado que la carretera despeja por encima.
+
+Sin esto, cualquier relieve que cruce un trazado lo entierra: la cresta se
+construye antes que las carreteras y dejaba la de Pueblo B sepultada, con el
+camión circulando por dentro de la roca. Abrir el desmonte es además lo que hace
+una carretera de verdad cuando se topa con un cerro."""
 GROUND_BLOCK = "grass_block"
 RIDGE_BLOCK = "stone"
 
@@ -321,10 +328,16 @@ def _strip(a: tuple[float, float], b: tuple[float, float]) -> list[str]:
     (x1, z1), (x2, z2) = a, b
     steps = max(int(max(abs(x2 - x1), abs(z2 - z1))), 1)
     half = ROAD_WIDTH // 2
+    wide = half + ROAD_CLEARANCE
     out = []
     for i in range(steps + 1):
         x = round(x1 + (x2 - x1) * i / steps)
         z = round(z1 + (z2 - z1) * i / steps)
+        # primero el desmonte, luego el firme: si no, la colina tapa la carretera
+        out.append(
+            f"fill {x - wide} {GROUND_Y + 1} {z - wide} "
+            + f"{x + wide} {RIDGE_Y + 6} {z + wide} air"
+        )
         out.append(
             f"fill {x - half} {GROUND_Y} {z - half} "
             + f"{x + half} {GROUND_Y} {z + half} {ROAD_BLOCK}"
@@ -392,17 +405,44 @@ def unit_commands(unit: Unit) -> list[str]:
     return out
 
 
+MAX_CIVILIANS = 40
+"""Tope de seguridad, no una muestra: se invocan **todos** los que declara el
+YAML. El backbone limita a seis las *entidades móviles*, y un aldeano con
+`NoAI:1b` no se mueve ni piensa; treinta y nueve estáticos no cuestan nada. El
+tope existe solo para que un cero de más en el YAML no llene el valle."""
+
 def civilian_commands(scenario: Scenario) -> list[str]:
-    """Aldeanos con `NoAI:1b`: son un indicador visual, no simulación."""
+    """Aldeanos con `NoAI:1b`: son un indicador visual, no simulación.
+
+    Se invocan **todos los que declara el YAML** —24 en Pueblo A, 15 en Pueblo B—
+    repartidos con dispersión sembrada, no en rejilla ni en arco perfecto:
+    cualquier patrón regular se lee como colocación automática. Se quedan del lado
+    por el que entra la carretera, que es por donde llega la ayuda y adonde miran,
+    y fuera de la huella del edificio para que no queden dentro de una pared.
+
+    Sin brillo: un aldeano brillando no parece un aldeano.
+    """
     pois = {p.id: p for p in scenario.pois}
+    rng = random.Random(scenario.seed + 3)
+    valle_x = sum(p.x for p in scenario.pois) / len(scenario.pois)
     out = []
     for group in scenario.civilians:
         poi = pois[group.poi_id]
-        for n in range(min(group.count, 8)):  # ocho bastan para leerlo; 24 arrastran
-            x = int(poi.x) + (n % 4) * 3 - 5
-            z = int(poi.z) + (n // 4) * 3 + 14
+        size = 10 if poi.kind == "village" else 7
+        # hacia el interior del valle: es de donde vienen las carreteras
+        hacia = -1.0 if poi.x > valle_x else 1.0
+        cuantos = min(group.count, MAX_CIVILIANS)
+        # la zona crece con el grupo: veinticuatro en el hueco de seis se apilan
+        ancho = size + 4 + cuantos * 0.7
+        for _ in range(cuantos):
+            x = poi.x + hacia * rng.uniform(size + 2, size + 4 + cuantos * 0.45)
+            z = poi.z + rng.uniform(-ancho, ancho)
+            # mirando al pueblo, con unos grados de desvío para que no formen
+            yaw = math.degrees(math.atan2(-(poi.x - x), poi.z - z))
+            yaw += rng.uniform(-35, 35)
             out.append(
-                f"summon villager {x} {GROUND_Y + 1} {z} "
-                f'{{Tags:["{VELA_TAG}","{group.id}"],NoAI:1b,NoGravity:1b}}'
+                f"summon villager {x:.1f} {GROUND_Y + 1} {z:.1f} "
+                + f'{{Tags:["{VELA_TAG}","{group.id}"],NoAI:1b,NoGravity:1b,'
+                + f"Rotation:[{yaw:.0f}f,0f]}}"
             )
     return out
