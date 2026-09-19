@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     vela_no_jev: bool = False  # P3 · fuerza el plan B: fenic con Literal, sin bucle
     happyrobot_webcall_url: str = ""  # P3/P4: enlace de la web call del workflow entrante
     judge_phone: str = ""
+    # P3 · Telegram: el «dónde» exacto tras la llamada. Sin token, canal ausente.
+    telegram_bot_token: str = ""
+    telegram_secret_token: str = ""  # `X-Telegram-Bot-Api-Secret-Token` del setWebhook
+    telegram_bot_username: str = ""  # sin @: lo que el agente de voz le dice al vecino
+    vela_no_telegram: bool = False
 
     # P3 y P4
     webhook_shared_token: str = ""

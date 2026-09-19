@@ -50,6 +50,9 @@ class EventType(StrEnum):
 
     TASK_CHANGED = "task.changed"  # core: una tarea nace, cambia de severidad o se cierra
 
+    CITIZEN_LOCATION = (
+        "citizen.location"  # Telegram: pin GPS del vecino, el «dónde» exacto
+    )
     CALL_REQUESTED = "call.requested"
     CALL_STARTED = "call.started"
     CALL_TRANSCRIPT_PARTIAL = "call.transcript.partial"
@@ -106,6 +109,9 @@ class CellChanged(BaseModel):
     cell_id: str
     state: CellState
     hazard: str
+    # Por qué cambió (opcional con default: libre). `extinguished` es un `burnt` que
+    # ha puesto un camión, no el fuego: el sim lo pinta distinto y el dashboard también.
+    cause: Literal["spread", "burnout", "extinguished", "inject", "at_risk"] | None = None
 
 
 class UnitPosition(BaseModel):
@@ -179,6 +185,27 @@ class CallStarted(BaseModel):
     task_id: str | None = None
     to: str
     direction: Literal["outbound", "inbound"]
+    channel: Literal["voice", "telegram"] = "voice"  # opcional con default: libre
+
+
+class CitizenLocation(BaseModel):
+    """Un vecino comparte su ubicación por Telegram, ya colgada la llamada (o sin ella).
+    `lat`/`lon` es lo que manda el móvil; `x`/`z` es su proyección al mundo del
+    escenario (`Scenario.geo`), y `poi_id` el POI al que se ancla si cae a menos de
+    `GeoAnchor.snap_m`. Sin anclaje, `poi_id=None`: el pin se pinta igual y el hueco
+    queda visible, no adivinado."""
+
+    call_id: str  # `tg_<chat_id>`: el canal Telegram es una «llamada» más para el journal
+    channel: Literal["telegram"] = "telegram"
+    chat_id: str
+    lat: float
+    lon: float
+    x: float | None = None
+    z: float | None = None
+    poi_id: str | None = None
+    poi_name: str | None = None
+    text: str | None = None  # el texto que acompaña al pin, si lo hay
+    live: bool = False  # ubicación en vivo (edited_message) o un pin suelto
 
 
 class TranscriptPartial(BaseModel):
@@ -253,7 +280,9 @@ class DivergenceReport(BaseModel):
 class ReplanStarted(BaseModel):
     reason: str
     trigger: str
-    fired_rules: list[str] = []  # slugs de reglas de memoria que casaron: lineage → dashboard
+    fired_rules: list[
+        str
+    ] = []  # slugs de reglas de memoria que casaron: lineage → dashboard
 
 
 # --- Payloads: action.* ----------------------------------------------------
@@ -316,6 +345,7 @@ PAYLOAD_MODELS: dict[EventType, type[BaseModel]] = {
     EventType.WORLD_INJECT: Inject,
     EventType.WORLD_FACT_ASSERTED: FactAsserted,
     EventType.TASK_CHANGED: TaskChanged,
+    EventType.CITIZEN_LOCATION: CitizenLocation,
     EventType.CALL_REQUESTED: CallRequest,
     EventType.CALL_STARTED: CallStarted,
     EventType.CALL_TRANSCRIPT_PARTIAL: TranscriptPartial,
