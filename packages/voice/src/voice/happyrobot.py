@@ -83,8 +83,10 @@ async def trigger(req: CallRequest, run_id: str) -> str:
         resp.raise_for_status()
         data = resp.json()
 
-    # La plataforma devuelve el identificador de la llamada recién arrancada.
-    call_id = data.get("call_id") or data.get("id")
+    # La plataforma devuelve el `run_id` del workflow recién arrancado (medido el
+    # sábado: `{"run_id": ..., "queued_run_ids": [...], "status": "workflow started"}`).
+    # Es lo que casa con el webhook de fin de llamada vía `trigger.run_id`.
+    call_id = data.get("call_id") or data.get("id") or data.get("run_id")
     if not call_id:
         raise ValueError(f"el hook no devolvió call_id: {data!r}")
     return str(call_id)

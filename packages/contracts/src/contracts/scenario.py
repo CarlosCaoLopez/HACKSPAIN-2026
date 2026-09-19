@@ -34,6 +34,27 @@ class HazardSpec(BaseModel):
     cell_size: int = 4  # bloques por celda
     base_spread: float = 0.1
     wind: Wind
+    # Sofocar (sim) y alcanzar (core) el fuego desde la carretera: un camión trabaja las
+    # celdas `burning` a menos de `suppress_reach_m` de su posición a `suppress_rate`
+    # celdas por minuto (repartidas entre las que tenga a tiro). Un frente más lejos de
+    # cualquier waypoint que el alcance no se puede atacar y el core lo baja de prioridad.
+    suppress_reach_m: float = 24.0
+    suppress_rate: float = 3.0
+
+
+class GeoAnchor(BaseModel):
+    """Proyección lat/lon → (x, z) del mundo: el punto `(lat, lon)` cae en `(x, z)`,
+    el eje x apunta al este y z al sur, `scale` metros de mundo por metro real
+    (1.0 = escala natural; 0.05 comprime un pueblo real en 200 bloques). Un pin a
+    menos de `snap_m` metros de mundo de un POI se ancla a él. Opcional: sin anclaje
+    el pin de Telegram no se proyecta y solo cuenta el texto."""
+
+    lat: float
+    lon: float
+    x: float = 0.0
+    z: float = 0.0
+    scale: float = 1.0
+    snap_m: float = 60.0
 
 
 class Scenario(BaseModel):
@@ -51,3 +72,10 @@ class Scenario(BaseModel):
     roads: list[RoadEdge] = []
     civilians: list[CivilianGroup] = []
     injects: list[InjectSpec] = []
+
+    # Cómo nombra la gente los sitios por teléfono → id del escenario. Los lee
+    # `voice.pois` para resolver "el molino viejo" o "la pista del sur" sin red.
+    # Opcionales con default: un escenario sin ellos sigue valiendo.
+    poi_aliases: dict[str, str] = {}  # "el molino" → "poi_molino"
+    road_aliases: dict[str, str] = {}  # "pista del sur" → "road:wp_sur_01-wp_sur_02"
+    geo: GeoAnchor | None = None  # Telegram: dónde cae un pin GPS en este mundo

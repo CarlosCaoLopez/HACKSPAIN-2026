@@ -218,7 +218,11 @@ async def gate(path: Path, scenario: Path) -> int:
     if not jev.enabled:
         print("Sin TYPESAFE_API_KEY (o VELA_NO_JEV): no hay puerta que pasar.")
         return 2
-    cases = [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    cases = [
+        json.loads(ln)
+        for ln in path.read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    ]
     hits: dict[str, int] = dict.fromkeys(questions, 0)
     total: dict[str, int] = dict.fromkeys(questions, 0)
     latencies: list[float] = []
@@ -228,7 +232,9 @@ async def gate(path: Path, scenario: Path) -> int:
             turns = [{"speaker": s, "text": t} for s, t in case["turns"]]
             perc = await jev.tick(build_state(turns), questions)
             if perc is None:
-                print(f"{case['id']:>3}  SIN RESPUESTA ({jev.failed_reason or 'timeout/red'})")
+                print(
+                    f"{case['id']:>3}  SIN RESPUESTA ({jev.failed_reason or 'timeout/red'})"
+                )
                 continue
             latencies.append(perc.latency_ms)
             line = [f"{case['id']:>3} {perc.latency_ms:5.0f} ms"]
@@ -238,7 +244,11 @@ async def gate(path: Path, scenario: Path) -> int:
                 ok = got is not None and _accepts(expected, val)
                 total[key] += 1
                 hits[key] += ok
-                line.append(f"{key}={val}({got.confidence:.2f}){'' if ok else ' ✗'}" if got else f"{key}=- ✗")
+                line.append(
+                    f"{key}={val}({got.confidence:.2f}){'' if ok else ' ✗'}"
+                    if got
+                    else f"{key}=- ✗"
+                )
             if (rb := perc.get("road_blocked")) and rb.value not in known_roads:
                 invented += 1
             print("  ".join(line))
@@ -260,7 +270,9 @@ async def gate(path: Path, scenario: Path) -> int:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    p = argparse.ArgumentParser(description="Puerta de Jev sobre transcripciones en español")
+    p = argparse.ArgumentParser(
+        description="Puerta de Jev sobre transcripciones en español"
+    )
     p.add_argument("--gate", action="store_true")
     p.add_argument("--file", type=Path, default=GATE_TRANSCRIPTS)
     p.add_argument("--scenario", type=Path, default=Path("scenarios/wildfire_ridge.yaml"))

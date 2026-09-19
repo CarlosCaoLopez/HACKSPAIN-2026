@@ -52,7 +52,9 @@ FOLLOWUP_DRAFT: dict[str, str] = {
 
 def threshold_for(field_key: str) -> float:
     """Cortar una arista cambia las rutas de los civiles: pide la barra alta."""
-    return THRESHOLDS["assert_hard_fact" if field_key == "road_blocked" else "assert_soft_fact"]
+    return THRESHOLDS[
+        "assert_hard_fact" if field_key == "road_blocked" else "assert_soft_fact"
+    ]
 
 
 @dataclass
@@ -109,7 +111,9 @@ class Completeness:
     def _maybe_start_clock(self, now: float) -> None:
         urg = self.fields["urgency"]
         if self.budget_s is None and urg.status == "observed" and urg.value:
-            self.budget_s = COMPLETION_BUDGET_S.get(urg.value, COMPLETION_BUDGET_S["medium"])
+            self.budget_s = COMPLETION_BUDGET_S.get(
+                urg.value, COMPLETION_BUDGET_S["medium"]
+            )
             self._started_at = now
 
     def elapsed_s(self, now: float) -> float:
@@ -126,7 +130,9 @@ class Completeness:
         if any(self.fields[k].status == "asked" for k in pending):
             return None, []  # una pregunta a la vez: la anterior sigue viva
         target = pending[0]
-        self.fields[target] = FieldState("asked", self.fields[target].value, self.fields[target].confidence)
+        self.fields[target] = FieldState(
+            "asked", self.fields[target].value, self.fields[target].confidence
+        )
         return target, []
 
     def assume(self, key: str, value: str) -> None:
@@ -146,7 +152,9 @@ class Completeness:
                     "key": k,
                     "status": st.status,
                     "value": st.value,
-                    "confidence": None if st.confidence is None else round(st.confidence, 3),
+                    "confidence": None
+                    if st.confidence is None
+                    else round(st.confidence, 3),
                 }
                 for k, st in self.fields.items()
             ],
@@ -171,12 +179,16 @@ class Completeness:
         source = f"call:{call_id}"
         sev = self.severity()
 
-        def add(key: str, value: str | float | bool, st: FieldState, kind: FactKind) -> None:
+        def add(
+            key: str, value: str | float | bool, st: FieldState, kind: FactKind
+        ) -> None:
             out.append(
                 Fact(
                     key=key,
                     value=value,
-                    confidence=st.confidence if st.confidence is not None else ASSUMED_CONFIDENCE,
+                    confidence=st.confidence
+                    if st.confidence is not None
+                    else ASSUMED_CONFIDENCE,
                     source=source,
                     severity=sev,
                     t_sim=t_sim,
@@ -186,7 +198,11 @@ class Completeness:
             )
 
         road = self.fields["road_blocked"]
-        if road.value and road.value != NOT_STATED and road.status in ("observed", "assumed_default"):
+        if (
+            road.value
+            and road.value != NOT_STATED
+            and road.status in ("observed", "assumed_default")
+        ):
             # Cortada es la dirección segura: un `assumed_default` puede cerrar, jamás abrir.
             add(road_cut_key(road.value), True, road, _kind(road))
 

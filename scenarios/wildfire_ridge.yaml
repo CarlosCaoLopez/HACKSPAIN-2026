@@ -21,7 +21,7 @@ origin: [0, 0]
 
 hazard:
   kind: wildfire
-  origin_cell: cell_18_7 # (72, 28): al oeste del desvío sur
+  origin_cell: cell_13_11 # (52,44): al suroeste del desvío sur, a 28 bloques
   cell_size: 4 # bloques por celda
   base_spread: 0.12 # celdas por minuto, isótropo
   wind:
@@ -45,7 +45,12 @@ pois:
     x: 187
     z: 11
     waypoint_id: wp_pueblo_a
-    min_coverage: 1
+    # Unidades que no se pueden retirar, restricción DURA en `coverage_maintained`:
+    # cuenta las que quedan en el POI o que el plan lleva allí. Con cuatro unidades y
+    # el incendio, cualquier reasignación la incumple, el verificador veta el plan y
+    # el core replanifica — 73 llamadas al LLM por run con Pueblo B a 1, y otras 147
+    # con Pueblo A. Ambos a 0 hasta que haya unidades de sobra para sostenerla.
+    min_coverage: 0
     contact_phone: "+34000000001"
   - id: poi_pueblo_b
     name: Pueblo B
@@ -54,7 +59,7 @@ pois:
     x: 187
     z: 94
     waypoint_id: wp_pueblo_b
-    min_coverage: 1
+    min_coverage: 0
     contact_phone: "+34000000002"
   - id: poi_hospital
     name: Hospital comarcal
@@ -71,6 +76,13 @@ pois:
     x: -33
     z: 77
     waypoint_id: wp_refugio
+  - id: poi_molino
+    name: El molino viejo
+    kind: landmark
+    description: "The old mill, a lone house on the south track just outside village A; callers name it by sight, not by village"
+    x: 162
+    z: 44
+    waypoint_id: wp_sur_02
 
 # 2 camiones, 1 ambulancia, 1 dron. `capabilities` es lo que el solver cruza con
 # `Task.required_capability` para poner coste infinito: una ambulancia no extingue.
@@ -144,3 +156,57 @@ injects:
   - at: 240
     type: unit_failure
     payload: {unit: unit_truck2, reason: "avería de bomba"}
+
+# Cómo dice la gente los sitios por teléfono → id. Los lee `voice.pois`
+# (`resolve_poi_local` / `resolve_edge_local`): alias exacto primero, y si no,
+# nombre por parecido. Se normaliza (minúsculas, sin tildes), así que "El Molino"
+# y "el molino" son el mismo alias. Un alias que apunte a un id que no existe
+# falla al cargar (`sim.scenario._check`).
+poi_aliases:
+  el molino: poi_molino
+  el molino viejo: poi_molino
+  molino viejo: poi_molino
+  el pueblo de arriba: poi_pueblo_a # el del norte (z pequeña) en el plano cenital
+  pueblo de arriba: poi_pueblo_a
+  pueblo a: poi_pueblo_a
+  el pueblo de abajo: poi_pueblo_b
+  pueblo de abajo: poi_pueblo_b
+  pueblo b: poi_pueblo_b
+  el hospital: poi_hospital
+  hospital comarcal: poi_hospital
+  el refugio: poi_refugio
+  refugio municipal: poi_refugio
+  la base: poi_base
+  el parque de bomberos: poi_base
+  los bomberos: poi_base
+
+# Las carreteras por su nombre de calle. "Pista del sur" es el tramo central del
+# desvío sur: el que corta el inject del segundo 210 y el que un vecino ve caer.
+road_aliases:
+  pista del sur: road:wp_sur_01-wp_sur_02
+  pista sur: road:wp_sur_01-wp_sur_02
+  carretera del sur: road:wp_sur_01-wp_sur_02
+  carretera sur: road:wp_sur_01-wp_sur_02
+  desvío sur: road:wp_sur_01-wp_sur_02
+  desvio del sur: road:wp_sur_01-wp_sur_02
+  pista del norte: road:wp_nor_01-wp_nor_02
+  pista norte: road:wp_nor_01-wp_nor_02
+  carretera del norte: road:wp_nor_01-wp_nor_02
+  carretera norte: road:wp_nor_01-wp_nor_02
+  desvío norte: road:wp_nor_01-wp_nor_02
+  desvio del norte: road:wp_nor_01-wp_nor_02
+  carretera del hospital: road:wp_cruce-wp_hospital
+  carretera del refugio: road:wp_base-wp_refugio
+  carretera de la base: road:wp_base-wp_cruce
+
+# Telegram: dónde cae un pin GPS en este valle. Un pin en Madrid (Puerta del Sol) cae en
+# Pueblo B; con `scale` 0.01 un kilómetro real son 10 m de mundo, así que cualquier pin de
+# la ciudad queda a menos de `snap_m` de Pueblo B y se ancla a él. Cambiad lat/lon al
+# sitio desde el que se vaya a mandar el pin en la demo si no es Madrid.
+geo:
+  lat: 40.4168
+  lon: -3.7038
+  x: 187
+  z: 94
+  scale: 0.01
+  snap_m: 80

@@ -215,10 +215,16 @@ async def test_road_cut_forces_replan(monkeypatch) -> None:
         return Policy(rationale="test")
 
     monkeypatch.setattr(planner, "plan", _plan)
-    # Primero un estado sano; luego uno con la arista cortada.
+    # Primero un estado sano; luego uno con la arista cortada. Solo los ticks
+    # avanzan el guion: los eventos que el core pliega de sí mismo (plan, tareas)
+    # dejan el estado tal cual.
     monkeypatch.setattr(belief, "initial_state", lambda run_id, sc: _state())
     states = iter([_state(), _state(cut=True)])
-    monkeypatch.setattr(belief, "apply", lambda state, ev: next(states))
+    monkeypatch.setattr(
+        belief,
+        "apply",
+        lambda state, ev: next(states) if ev.type == EventType.WORLD_TICK else state,
+    )
 
     bus = FakeBus()
     core = loop.Core(bus, _scenario())

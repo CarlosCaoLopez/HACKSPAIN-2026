@@ -73,7 +73,14 @@ class RconClient:
         self._req_id = 0
 
     async def connect(self) -> None:
-        """Abre la conexión. Reintenta con backoff: Paper tarda en arrancar."""
+        """Abre la conexión. Reintenta con backoff: Paper tarda en arrancar.
+
+        Idempotente: quien ya está conectado vuelve enseguida. `Sim.start` lo llama
+        siempre, y quien construye el cliente puede haberlo conectado ya; abrir un
+        segundo socket dejaría un worker huérfano quedándose respuestas.
+        """
+        if self._worker is not None and not self._worker.done():
+            return
         delay = 0.5
         for attempt in range(1, CONNECT_RETRIES + 1):
             try:
@@ -208,6 +215,9 @@ class FakeRcon:
     def __init__(self) -> None:
         self.commands: list[tuple[Priority, str]] = []
         self.connected = False
+        """Lo mira el test que comprueba que `Sim.start` conecta. El doble no
+        se queja de que lo usen sin conectar —demasiados tests llaman a `tick`
+        sin pasar por `start`— así que el descuido solo se ve si se asierta."""
 
     async def connect(self) -> None:
         self.connected = True
@@ -230,3 +240,39 @@ class FakeRcon:
     def sent(self, prefix: str = "") -> list[str]:
         """Los comandos, para aserciones: `assert fake.sent("tp") == [...]`."""
         return [c for _, c in self.commands if c.startswith(prefix)]
+
+
+class PrintRcon:
+    """Cumple `Rcon` y escribe los comandos por stdout en vez de enviarlos.
+
+    Es el `--dry-run` de `make world` y el `--no-minecraft` de `make dev-sim`:
+    ver qué mandaría el sim sin abrir un socket ni esperar los reintentos de
+    `connect`. `limit` acota lo que se imprime: los primeros comandos dicen si el
+    worldgen arranca; los cinco `/tp` por segundo de cada camión son ruido. Con
+    `None` se imprime todo.
+    """
+
+    def __init__(self, limit: int | None = None) -> None:
+        self.limit = limit
+        self.sent = 0
+
+    async def connect(self) -> None:
+        print("rcon: modo impresión, no se abre ninguna conexión")
+
+    async def close(self) -> None:
+        if self.limit is not None and self.sent > self.limit:
+            print(f"rcon: {self.sent} comandos en total ({self.sent - self.limit} sin imprimir)")
+
+    async def send(
+        self, command: str, priority: Priority = HIGH, timeout: float | None = None
+    ) -> str:
+        self.sent += 1
+        if self.limit is None or self.sent <= self.limit:
+            print(f"[{priority}] {command}")
+        return ""
+
+    async def send_many(
+        self, commands: list[str], priority: Priority = HIGH,
+        timeout: float | None = None,
+    ) -> list[str]:
+        return [await self.send(c, priority, timeout) for c in commands]

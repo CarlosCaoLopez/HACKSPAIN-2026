@@ -8,8 +8,10 @@ Es el único módulo de `sim` que habla con el mundo y con el bus. `graph`,
 dos cosas (D5): eso es lo que los hace testeables sin Paper y sin core.
 """
 
+import argparse
 import asyncio
 import contextlib
+import logging
 import math
 import uuid
 from datetime import UTC, datetime
@@ -22,7 +24,7 @@ from sim.graph import RoadGraph
 from sim.hazard import build_hazard, cell_id
 from sim.injects import ROAD_CUT, UNIT_FAILURE, WIND_SHIFT, InjectScheduler
 from sim.movement import TICK_HZ, Movement, tp_command
-from sim.rcon import HIGH, LOW, Rcon
+from sim.rcon import HIGH, LOW, PrintRcon, Rcon, RconClient
 from sim.scenario import load
 from sim.worldgen import (
     GROUND_Y,
@@ -31,6 +33,8 @@ from sim.worldgen import (
     road_cut_commands,
     teardown,
 )
+
+log = logging.getLogger("vela.sim")
 
 TICK_S = 1.0
 """Un segundo simulado por tick. La interpolación va a 5 Hz por dentro."""
@@ -60,23 +64,38 @@ MARKER_BLOCKS = {
 
 
 async def _publish(ev: Event) -> None:
-    """Publica al bus, o al fallback si P1 todavía no lo ha escrito.
+    """Publica al bus. La reserva es un espejo para depurar, no un desvío.
 
-    `contracts.bus.publish` es de P1 y hoy lanza `NotImplementedError`. La firma
-    está cerrada, así que `sim` escribe contra ella y no espera a nadie: en cuanto
-    exista, este rodeo deja de usarse sin tocar una línea.
+    Antes esto se saltaba el bus cuando `current_run_id()` venía vacío y lo metía
+    todo en `_FALLBACK`. La intención era no ensuciar un bus que nadie había
+    arrancado; el efecto fue que **el sistema entero corría sin publicar un solo
+    evento** y reportando `up`: journal a cero, el core sin recibir nada y el mundo
+    avanzando para nadie. Costó una mañana encontrarlo porque no había error en
+    ningún sitio.
+
+    Ahora se publica siempre y se avisa una vez si no hay run arrancado, que es una
+    anomalía y no un estado normal. `_FALLBACK` sigue recibiendo copia mientras no
+    haya run, porque es de donde leen los tests.
     """
     from contracts import bus
 
     try:
         if not bus.current_run_id():
-            # Bus implementado pero sin run arrancado (tests, `dev-sim` suelto):
-            # los eventos se quedan en la reserva, igual que cuando no existía.
+            global _WARNED_NO_RUN
+            if not _WARNED_NO_RUN:
+                _WARNED_NO_RUN = True
+                log.warning(
+                    "publicando sin run arrancado: ¿falta bus.configure()? "
+                    "los eventos van al bus igualmente"
+                )
             _FALLBACK.append(ev)
-            return
         await bus.publish(ev)
     except NotImplementedError:
         _FALLBACK.append(ev)
+
+
+_WARNED_NO_RUN = False
+"""Un aviso, no uno por evento: son mil por run."""
 
 
 _FALLBACK: list[Event] = []
@@ -106,12 +125,30 @@ def _run_id() -> str:
         return f"run_{uuid.uuid4().hex[:8]}"
 
 
+BURNABLE_MARGIN_M = 30.0
+"""Cuánto se extiende lo quemable más allá de POIs y waypoints.
+
+El incendio se para donde se acaba el valle. Justo lo suficiente para que el
+frente pueda amenazar un pueblo del borde sin seguir ardiendo detrás en hierba
+vacía, que no cuenta nada y llena el journal."""
+
+
+def _burnable(scenario) -> tuple[float, float, float, float]:
+    """La caja de lo que puede arder: todo lo que el escenario declara, con margen."""
+    xs = [p.x for p in scenario.pois] + [w.x for w in scenario.waypoints]
+    zs = [p.z for p in scenario.pois] + [w.z for w in scenario.waypoints]
+    m = BURNABLE_MARGIN_M
+    return min(xs) - m, min(zs) - m, max(xs) + m, max(zs) + m
+
+
 class Sim:
     def __init__(self, scenario_path: Path, rcon: Rcon) -> None:
         self.scenario = load(scenario_path)
         self.rcon = rcon
         self.graph = RoadGraph.from_scenario(self.scenario)
-        self.hazard = build_hazard(self.scenario.hazard, self.scenario.seed)
+        self.hazard = build_hazard(
+            self.scenario.hazard, self.scenario.seed, _burnable(self.scenario)
+        )
         self.injects = InjectScheduler(self.scenario.injects)
 
         self.t_sim = 0.0
@@ -132,7 +169,16 @@ class Sim:
     # --- ciclo de vida ---
 
     async def start(self) -> None:
-        """Worldgen + tick loop. Publica `world.*` hasta que alguien pare."""
+        """Worldgen + tick loop. Publica `world.*` hasta que alguien pare.
+
+        Conecta el RCON él mismo. Quien construye el cliente no lo conecta a
+        propósito —`connect` reintenta con backoff y un puerto muerto serían varios
+        segundos de bloqueo al arrancar el run—, así que le toca a quien tiene el
+        ciclo de vida. Sin esto el primer comando del worldgen muere con
+        "RconClient sin conectar" y la task del sim se cae entera dos segundos
+        después de arrancar, con el resto del sistema corriendo en vacío.
+        """
+        await self.rcon.connect()
         await build(self.scenario, self.rcon)
         self._running = True
         await self._emit(
@@ -142,6 +188,19 @@ class Sim:
         )
         self._loop_task = asyncio.create_task(self._loop(), name="sim-tick")
         self._watch_task = asyncio.create_task(self._watch_roads(), name="sim-roads")
+
+    def set_speed(self, speed: float) -> None:
+        """Multiplicador del reloj de pared (D3). Lo llama el gateway con `--speed`.
+
+        `t_sim` no cambia: un tick sigue siendo un segundo simulado y el journal
+        sale idéntico. Lo único que se acorta es la espera entre ticks, así que a
+        10× los seis minutos de demo se corren en 36 s — que es lo que hace
+        viables los doce runs del domingo para el bonus de aprendizaje. A 1× no
+        pasa nada: es como se ensaya.
+        """
+        if speed <= 0:
+            raise ValueError(f"velocidad no positiva: {speed}")
+        self.speed = speed
 
     async def stop(self) -> None:
         self._running = False
@@ -205,6 +264,7 @@ class Sim:
         )
         await self._advance_hazard(dt)
         await self._advance_units(dt)
+        await self._suppress(dt)
         await self._update_markers()
         for spec in self.injects.due(self.t_sim):
             await self.inject(spec.type, spec.payload)
@@ -214,10 +274,31 @@ class Sim:
             await self._emit(
                 EventType.WORLD_CELL_CHANGED,
                 {"cell_id": change.cell_id, "state": change.state,
-                 "hazard": change.hazard},
+                 "hazard": change.hazard, "cause": change.cause},
             )
             # Render en el carril lento (D7): el frente puede ir un tick tarde,
             # el `/tp` de un replan no.
+            for cmd in self.hazard.render_commands(change):
+                await self.rcon.send(cmd, LOW)
+
+    async def _suppress(self, dt: float) -> None:
+        """Las unidades con `extinguish` apagan lo que tienen a tiro.
+
+        Es física, no una orden: el core manda el camión al frente con un `goto`
+        y el mundo responde. Sin esto un camión de bomberos llegaba al fuego, se
+        paraba al lado y no pasaba nada — el jurado lo nota.
+        """
+        posiciones = [
+            (u.x, u.z)
+            for u in self.units.values()
+            if "extinguish" in u.capabilities and u.status != "unavailable"
+        ]
+        for change in self.hazard.suppress(posiciones, dt):
+            await self._emit(
+                EventType.WORLD_CELL_CHANGED,
+                {"cell_id": change.cell_id, "state": change.state,
+                 "hazard": change.hazard, "cause": change.cause},
+            )
             for cmd in self.hazard.render_commands(change):
                 await self.rcon.send(cmd, LOW)
 
@@ -541,3 +622,128 @@ class Sim:
                 payload=payload,
             )
         )
+
+
+# --- `make dev-sim`: el sim solo, con un core tonto ---
+
+DUMMY_EVERY_TICKS = 20
+"""Cada cuántos ticks el core tonto manda un `goto`. Suficiente para ver un camión
+salir, llegar y volver a salir en un minuto de reloj."""
+
+
+async def dummy_core_step(sim: Sim, n: int) -> str | None:
+    """Manda el camión libre más cercano al waypoint más próximo a la primera
+    celda que arde. Devuelve el `action_id` o `None` si no había nada que mandar.
+
+    No es un core: no hay `Policy`, ni solver, ni evento `action.requested`. Es lo
+    mínimo para que `make dev-sim` enseñe unidades moviéndose sin que P1 exista.
+    """
+    burning = getattr(sim.hazard, "active", [])
+    if not burning:
+        return None
+    x1, z1, x2, z2 = sim.hazard.bounds(burning[0])
+    target = ((x1 + x2) / 2, (z1 + z2) / 2)
+    trucks = [
+        u for u in sim.units.values()
+        if u.kind == "fire_truck" and u.status != "unavailable"
+    ]
+    if not trucks:
+        return None
+    truck = min(trucks, key=lambda u: math.dist((u.x, u.z), target))
+    waypoint = min(
+        sim.graph.waypoint_ids,
+        key=lambda w: math.dist(sim.graph.position_of(w), target),
+    )
+    action_id = f"act_dummy_{n:04d}"
+    await sim.execute(action_id, "goto", {"unit_id": truck.id, "waypoint_id": waypoint})
+    return action_id
+
+
+async def run_headless(
+    scenario: Path,
+    rcon: Rcon,
+    *,
+    ticks: int = 0,
+    speed: float = 1.0,
+    dummy_core: bool = False,
+    every: int = DUMMY_EVERY_TICKS,
+) -> Sim:
+    """Worldgen + tick loop hasta `ticks` (0 = hasta Ctrl-C). El `run_id` ya tiene
+    que estar configurado en el bus: es lo que manda los eventos al journal."""
+    await rcon.connect()
+    sim = Sim(scenario, rcon)
+    sim.speed = speed
+    await sim.start()
+    n = 0
+    try:
+        while ticks <= 0 or n < ticks:
+            await asyncio.sleep(TICK_S / speed)
+            n += 1
+            if n % every == 0:
+                if dummy_core:
+                    await dummy_core_step(sim, n)
+                snap = sim.snapshot()
+                print(
+                    f"t_sim={snap['t_sim']:.0f}s ardiendo={len(snap['burning'])} "
+                    f"moviendose={sorted(snap['moving'])} cortadas={snap['cut_roads']}"
+                )
+    finally:
+        await sim.stop()
+        await rcon.close()
+    return sim
+
+
+def main() -> None:
+    """`make dev-sim`: `python -m sim.runner --scenario ... --dummy-core`."""
+    from contracts import bus
+
+    parser = argparse.ArgumentParser(description="El sim solo: tick loop + RCON + journal.")
+    parser.add_argument("--scenario", default="scenarios/wildfire_ridge.yaml")
+    parser.add_argument(
+        "--dummy-core", action="store_true",
+        help=f"un core tonto que manda un goto cada {DUMMY_EVERY_TICKS} ticks",
+    )
+    parser.add_argument(
+        "--no-minecraft", action="store_true",
+        help="sin RCON: los primeros comandos se imprimen y el resto se cuentan",
+    )
+    parser.add_argument("--ticks", type=int, default=0, help="parar tras N ticks (0 = nunca)")
+    parser.add_argument(
+        "--speed", type=float, default=1.0, help="multiplicador del reloj (1 = tiempo real)"
+    )
+    parser.add_argument(
+        "--every", type=int, default=DUMMY_EVERY_TICKS,
+        help="ticks entre órdenes del core tonto (y entre líneas de estado)",
+    )
+    parser.add_argument("--run-id", default=None, help="por defecto, run_<8 hex>")
+    parser.add_argument("--journal-dir", default="runs")
+    args = parser.parse_args()
+    if args.speed <= 0:
+        raise SystemExit("--speed tiene que ser > 0")
+
+    run_id = bus.configure(
+        args.run_id or f"run_{uuid.uuid4().hex[:8]}", journal_dir=args.journal_dir
+    )
+    print(f"run {run_id} · journal en {args.journal_dir}/{run_id}.jsonl")
+    rcon: Rcon
+    if args.no_minecraft:
+        rcon = PrintRcon(limit=20)
+    else:
+        from contracts.settings import settings
+
+        rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
+    try:
+        asyncio.run(
+            run_headless(
+                Path(args.scenario), rcon, ticks=args.ticks, speed=args.speed,
+                dummy_core=args.dummy_core, every=args.every,
+            )
+        )
+    except KeyboardInterrupt:
+        print("parado")
+    finally:
+        bus.close()
+
+
+if __name__ == "__main__":
+    main()

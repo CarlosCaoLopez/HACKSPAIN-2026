@@ -27,6 +27,7 @@ class Settings(BaseSettings):
 
     # P3 · telefonía
     happyrobot_api_key: str = ""
+    happyrobot_api_base: str = "https://platform.eu.happyrobot.ai/api/v2"  # P3: región EU
     happyrobot_hook_evacuation: str = ""  # la URL del incoming hook
     humalike_api_key: str = ""
     typesafe_api_key: str = ""  # P3 · percepción en llamada (Jev). Sin ella: --no-jev
@@ -34,6 +35,11 @@ class Settings(BaseSettings):
     vela_no_jev: bool = False  # P3 · fuerza el plan B: fenic con Literal, sin bucle
     happyrobot_webcall_url: str = ""  # P3/P4: enlace de la web call del workflow entrante
     judge_phone: str = ""
+    # P3 · Telegram: el «dónde» exacto tras la llamada. Sin token, canal ausente.
+    telegram_bot_token: str = ""
+    telegram_secret_token: str = ""  # `X-Telegram-Bot-Api-Secret-Token` del setWebhook
+    telegram_bot_username: str = ""  # sin @: lo que el agente de voz le dice al vecino
+    vela_no_telegram: bool = False
 
     # P3 y P4
     webhook_shared_token: str = ""
@@ -47,10 +53,11 @@ class Settings(BaseSettings):
     vela_replay_speed: float = 1.0  # 0 = tan rápido como pueda
     vela_replay_loop: bool = False  # útil mientras se pintan paneles
 
-    # P4 · los puentes `action.requested` → sim y `call.requested` → voice. Apagados
-    # hasta que P2 y P3 confirmen que no se suscriben ellos: si lo hacen los dos,
-    # cada acción se ejecuta dos veces y la unidad se mueve doble en la demo.
-    vela_bridges: bool = False
+    # P4 · los puentes `action.requested` → sim y `call.requested` → voice. Encendidos:
+    # ni `Sim` ni `VoiceGateway` se suscriben a esos eventos, así que sin ellos ninguna
+    # orden llega al mundo. `VELA_BRIDGES=false` los apaga si P2 o P3 suscriben ellos
+    # (si no, cada acción se ejecutaría dos veces; `/api/health` lo cuenta).
+    vela_bridges: bool = True
 
     # P4 · fuentes reales (SPEC-007): datos de APIs públicas que entran como
     # `world.fact.asserted` con procedencia. `off` deja la demo exactamente como estaba.

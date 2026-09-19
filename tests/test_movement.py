@@ -16,8 +16,8 @@ WAYPOINTS = [
     Waypoint(id="wp_c", x=300, z=0),
 ]
 ROADS = [
-    RoadEdge(id="road:wp_a-wp_b", a="wp_a", b="wp_b", length_m=100),
-    RoadEdge(id="road:wp_b-wp_c", a="wp_b", b="wp_c", length_m=200),
+    RoadEdge(id="wp_a-wp_b", a="wp_a", b="wp_b", length_m=100),
+    RoadEdge(id="wp_b-wp_c", a="wp_b", b="wp_c", length_m=200),
 ]
 RUTA = ["wp_a", "wp_b", "wp_c"]
 

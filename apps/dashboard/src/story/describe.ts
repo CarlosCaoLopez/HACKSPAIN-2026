@@ -63,6 +63,16 @@ function describeNarrowed(ev: VelaEvent): Described {
       }
     }
 
+    case 'task.changed': {
+      const { task } = ev.payload
+      const target = task.target_poi ?? task.target_cell
+      return {
+        label: task.done ? 'TAREA ✓' : 'TAREA',
+        tone: 'decision',
+        sentence: `${task.kind}${target ? ` · ${shortId(target)}` : ''} · ${task.severity}`,
+      }
+    }
+
     case 'plan.divergence':
       return {
         label: 'DIVERGENCIA',
@@ -276,6 +286,18 @@ function describeNarrowed(ev: VelaEvent): Described {
           ev.payload.score != null ? ` · ${ev.payload.score.toFixed(2)}` : ''
         }`,
       }
+
+    case 'citizen.location': {
+      // La ubicación que el vecino manda por Telegram tras colgar. Se dice dónde cae —el
+      // POI si se resolvió, si no las coordenadas reales— y de qué llamada viene.
+      const { call_id, poi_id, poi_name, lat, lon, live } = ev.payload
+      const where = poi_name ?? (poi_id ? shortId(poi_id) : `${lat.toFixed(4)}, ${lon.toFixed(4)}`)
+      return {
+        label: 'UBICACIÓN',
+        tone: 'call',
+        sentence: `${call_id} · ${where}${live ? ' · en directo' : ''}`,
+      }
+    }
 
     case 'event.malformed':
       return {

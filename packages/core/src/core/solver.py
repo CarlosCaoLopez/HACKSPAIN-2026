@@ -18,6 +18,8 @@ import heapq
 import math
 from itertools import pairwise
 
+from contracts.calls import Fact
+from contracts.factkeys import road_open_key
 from contracts.plan import (
     UNKNOWN_CONSTRAINT,
     Assignment,
@@ -29,18 +31,29 @@ from contracts.plan import (
     is_known_constraint,
     parse_constraint,
 )
-from contracts.calls import Fact
-from contracts.factkeys import road_open_key
 from contracts.scenario import Scenario
 from contracts.world import POI, Cell, Task, Unit, WorldState
 
 INFEASIBLE = float("inf")
 
-UNIT_SPEED_MPS = 8.0
+UNIT_SPEED_MPS = 4.0
 """Velocidad plana para pasar de metros de ruta a `eta_s`. No es física, es un
-orden de magnitud estable para que `response_time` compare peras con peras."""
+orden de magnitud estable para que `response_time` compare peras con peras. Va
+igualada a `sim.runner.DEFAULT_SPEED_MPS` (4 m/s): el `eta_s` se le dice al vecino
+por teléfono («llega en 33 s») y con 8 m/s la ambulancia tardaba el doble."""
 
 WEIGHT_DISCOUNT = 0.35
+
+SEVERITY_FACTOR: dict[str, float] = {
+    "critical": 0.25,
+    "high": 0.5,
+    "medium": 1.0,
+    "low": 1.5,
+}
+"""Multiplicador del coste por `Task.severity`. Sin él, dejar una tarea sin cubrir es
+gratis para la asignación 1:1 y la ambulancia se quedaba en una evacuación de mobiles
+con tres inmóviles esperando en el molino: un rescate crítico tiene que ganar a una
+evacuación `high` aunque esté algo más lejos."""
 """Cada peso pertinente abarata la tarea multiplicando el coste por este factor.
 Menor = el LLM manda más. El solver sigue siendo quien asigna."""
 
@@ -187,7 +200,7 @@ def _is_windward(state: WorldState, task: Task) -> bool:
 def _weighted_cost(base: float, state: WorldState, task: Task, policy: Policy) -> float:
     """Aplica los pesos del catálogo que abaratan esta tarea. Peso desconocido se
     ignora aquí (lo caza `make check` contra los prompts, no el solver en runtime)."""
-    cost = base
+    cost = base * SEVERITY_FACTOR.get(task.severity, 1.0)
     civs = [c for c in state.civilians.values() if c.poi_id == task.target_poi]
     poi = state.pois.get(task.target_poi) if task.target_poi else None
 
@@ -293,16 +306,20 @@ def apply_hard_constraints(
 
         if name == "no_unit_into_burning_cell":
             for i, _u in enumerate(units):
-                for j, _t in enumerate(tasks):
+                for j, task in enumerate(tasks):
                     route = routes[i][j]
-                    if route and _route_crosses_burning(route, state, graph):
+                    if route and _route_crosses_burning(
+                        route, state, graph, skip_last=task.kind == "extinguish"
+                    ):
                         matrix[i][j] = INFEASIBLE
 
         elif name == "no_civilian_route_through":
             (wp_id,) = args
             for i, _u in enumerate(units):
                 for j, task in enumerate(tasks):
-                    if task.kind == "evacuate" and wp_id in routes[i][j]:
+                    # `[1:]`: el primer waypoint es donde YA está la unidad; salir de
+                    # él no es "pasar por" él.
+                    if task.kind == "evacuate" and wp_id in routes[i][j][1:]:
                         matrix[i][j] = INFEASIBLE
 
         # `hospital_min_coverage:n` y `reserve_capability:cap:n` son restricciones de
@@ -312,8 +329,16 @@ def apply_hard_constraints(
     return violations
 
 
-def _route_crosses_burning(route: list[str], state: WorldState, graph: RoadGraph) -> bool:
-    for wid in route:
+def _route_crosses_burning(
+    route: list[str], state: WorldState, graph: RoadGraph, skip_last: bool = False
+) -> bool:
+    """¿Entra la ruta en una celda en llamas? El primer waypoint no cuenta: es donde la
+    unidad ya está, y si el fuego le llega, salir de ahí es justo lo que hay que poder
+    hacer (con el origen contando, un camión alcanzado por el frente no podía ir a
+    ningún sitio y el plan salía vacío). Con `skip_last`, tampoco el destino: una
+    tarea `extinguish` apunta por definición a la celda que arde."""
+    body = route[1:-1] if skip_last else route[1:]
+    for wid in body:
         if wid not in graph.coords:
             continue
         wx, wz = graph.coords[wid]
@@ -377,13 +402,33 @@ def solve(
     """El plan óptimo bajo esos pesos. Lo que no se pudo cubrir sale en
     `unassigned_tasks`, y se muestra: un hueco visible es información.
 
+    Firma de contrato (`solve(state, policy) -> Plan`). Las violaciones blandas por
+    restricción desconocida las devuelve `solve_with_violations`, que es lo que usa
+    `loop.py` para publicarlas: aquí se descartan solo porque la firma no tiene
+    dónde ponerlas."""
+    plan, _violations = solve_with_violations(state, policy, graph, vetoes)
+    return plan
+
+
+def solve_with_violations(
+    state: WorldState,
+    policy: Policy,
+    graph: RoadGraph | None = None,
+    vetoes: set[tuple[str, str]] | None = None,
+) -> tuple[Plan, list[Violation]]:
+    """`solve` más las `Violation(verifier=UNKNOWN_CONSTRAINT, severity="soft")` que
+    levantó `apply_hard_constraints`. Una restricción desconocida no se ignora: sale
+    en el dashboard y vuelve al planner como crítica.
+
     `graph` lo inyecta `loop.py` desde el escenario; si falta, se cae a un grafo vacío
     y la asignación degrada a lo que permita el estado (la demo nunca se queda sin
     plan). `vetoes` son los pares vetados por un humano (coste infinito)."""
     live_graph = (graph or RoadGraph({}, {})).with_cuts(state)
 
     matrix, units, tasks, routes = cost_matrix(state, policy, live_graph, vetoes)
-    apply_hard_constraints(matrix, state, policy, live_graph, units, tasks, routes)
+    violations = apply_hard_constraints(
+        matrix, state, policy, live_graph, units, tasks, routes
+    )
 
     assignments: list[Assignment] = []
     for i, j in _match(matrix):
@@ -403,7 +448,7 @@ def solve(
     unassigned = [t.id for t in tasks if t.id not in assigned_tasks]
 
     context = build_context(state, assignments, live_graph)
-    return Plan(
+    plan = Plan(
         id=f"plan_{state.run_id}_{state.seq}",
         run_id=state.run_id,
         created_t=state.t_sim,
@@ -412,6 +457,7 @@ def solve(
         unassigned_tasks=unassigned,
         context=context,
     )
+    return plan, violations
 
 
 def _match(matrix: list[list[float]]) -> list[tuple[int, int]]:

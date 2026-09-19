@@ -17,6 +17,11 @@ Tres decisiones que explican la forma del fichero:
    no se llena de journals vacíos por levantar el servidor.
 3. **`VELA_MODE=replay` no necesita a nadie**: ni sim, ni core, ni voz, ni RCON.
    Lee un journal y lo empuja por el WS. Es `make dev-dash`.
+4. **El bus se configura ANTES de construir nada.** `Sim` y `Core` leen
+   `bus.current_run_id()` en su `__init__`, y `sim._publish` guarda los eventos en
+   una reserva si no hay run: sin `bus.configure(run_id)` primero no fluye nada y
+   el dashboard se queda en blanco. El journal `runs/<run_id>.jsonl` lo abre el
+   propio bus (`contracts.bus.configure`), no un writer inyectado.
 """
 
 from __future__ import annotations
@@ -35,7 +40,6 @@ from pydantic import BaseModel
 
 from contracts.events import EventType, RunEnded, RunStarted
 from contracts.settings import settings
-
 from gateway import replay_source
 from gateway.bridges import mount_bridges
 from gateway.control import router as control_router
@@ -106,12 +110,13 @@ def _start_bus(rt: Runtime) -> None:
 
 
 def _check_journal(rt: Runtime) -> None:
-    """El writer se crea por run (necesita `run_id`); aquí solo se comprueba que
-    el paquete está y se avisa de si hay dónde inyectarlo."""
+    """El journal del run lo escribe el bus (`contracts.bus.configure`); `journal` se
+    usa aquí para puntuar (`journal.score` en `GET /api/runs`). Solo se comprueba que
+    el paquete está."""
     with rt.guard("journal"):
-        from journal import JournalWriter  # noqa: F401
+        from journal import score  # noqa: F401
 
-        rt.mark("journal", "up")
+        rt.mark("journal", "up", "el journal del run lo abre el bus al arrancar")
 
 
 def _check_sim(rt: Runtime) -> None:
@@ -129,11 +134,19 @@ def _check_core(rt: Runtime) -> None:
 
 
 def _check_voice(rt: Runtime) -> None:
+    """`VoiceGateway` y, una vez por proceso, el despachador de señales de P3:
+    `call.signal.requested` → el monitor de esa llamada (`voice.humanlike`). No es un
+    puente del gateway: lo suscribe `voice`, aquí solo se le da la task."""
     with rt.guard("voice"):
         from voice import VoiceGateway
 
         rt.voice = VoiceGateway()
         rt.mark("voice", "up")
+    with rt.guard("voice"):
+        from voice import humanlike
+
+        if "voice-signals" not in rt.tasks:
+            rt.spawn("voice-signals", humanlike.signal_dispatcher())
 
 
 async def _shutdown(rt: Runtime) -> None:
@@ -147,16 +160,15 @@ async def _shutdown(rt: Runtime) -> None:
         with contextlib.suppress(Exception):
             await stop_run(rt)
 
-    await rt.stop_tasks("feeds", "voice", "core")
+    await rt.stop_tasks("feeds", "voice-signals", "voice", "bridges", "core")
     if rt.sim is not None:
         with contextlib.suppress(Exception):
             await asyncio.wait_for(rt.sim.stop(), timeout=SHUTDOWN_GRACE_S)
     await rt.stop_tasks("sim", "replay")
 
-    if rt.writer is not None:
-        with contextlib.suppress(Exception):
-            rt.writer.close()
-        rt.writer = None
+    # Idempotente: `stop_run` ya lo cerró si había run. Un Ctrl-C antes del primer
+    # run no deja nada abierto, pero cerrar dos veces no cuesta nada.
+    _close_journal(rt)
 
     await rt.stop_tasks("bus")
     for c in list(rt.hub.clients):
@@ -185,20 +197,18 @@ async def start_run(
     rt.scenario_id = scenario_id
     rt.minecraft, rt.calls_mocked = minecraft, mock_calls
 
+    # PRIMERO el bus, y no es estilo: `Sim.__init__` y `Core.__init__` leen
+    # `bus.current_run_id()`, y `sim._publish` guarda en una reserva todo lo que emite
+    # sin run. Configurado aquí, el bus abre `runs/<run_id>.jsonl` él mismo y cada
+    # `publish` escribe antes de repartir (invariante 3).
     with rt.guard("journal"):
-        from journal import JournalWriter
+        from contracts import bus
 
-        rt.writer = JournalWriter(rt.run_id)
-        # El writer se inyecta en el bus (contracts no importa de journal). El punto
-        # de inyección lo define P1: si aparece, se usa; si no, queda anotado.
-        import contracts.bus as bus
+        bus.configure(run_id=rt.run_id, journal_dir=RUNS_DIR)
+        rt.journal_path = RUNS_DIR / f"{rt.run_id}.jsonl"
+        rt.mark("journal", "up", str(rt.journal_path))
 
-        setter = getattr(bus, "set_writer", None)
-        if setter is not None:
-            setter(rt.writer)
-        else:
-            rt.notes["journal"] = "falta el punto de inyección del writer en el bus (P1)"
-        rt.mark("journal", "up", str(getattr(rt.writer, "path", "")))
+    _load_voice_scenario(rt, scenario_id)
 
     with rt.guard("sim"):
         from sim import RconClient, Sim
@@ -234,7 +244,7 @@ async def start_run(
                 rt.mark("voice", "up", "llamadas simuladas · guiones enlatados (P4)")
 
     with rt.guard("core"):
-        import contracts.bus as bus
+        from contracts import bus
         from core import Core
 
         # `Core.__init__(bus, scenario)` pide un objeto `bus`, pero `contracts.bus`
@@ -242,7 +252,7 @@ async def start_run(
         # tres firmas) hasta que P1 decida si publica una clase `Bus`.
         rt.core = Core(bus, load_scenario(scenario_id))
         rt.spawn("core", rt.core.run())
-        rt.mark("core", "up")
+        rt.mark("core", "up", f"run {rt.run_id} · suscrito al bus")
 
     mount_bridges(rt)
     await rt.publish(EventType.RUN_STARTED, RunStarted(scenario_id=scenario_id), "core")
@@ -272,25 +282,58 @@ def _start_feeds(rt: Runtime, scenario_id: str) -> None:
         rt.mark("feeds", "up", settings.vela_feeds)
 
 
-async def _ask_for_speed(rt: Runtime, speed: float) -> None:
-    """`--speed` en modo demo: se le pide al sim, que puede no saber.
+_voice_warmed = False
+"""`voice.warmup()` levanta la sesión de fenic en un hilo: una vez por proceso."""
 
-    `Sim` expone `start`, `stop`, `execute`, `inject` y `snapshot`, y **nada de
-    velocidad** (`sim/runner.py`). Se pide por pato y, si no está, se anota y el mundo va
-    a 1×. Es la misma degradación explícita que `Sim.pause()` en el H4: ni se inventa el
-    método ni se entra en el fichero de P2.
+
+def _load_voice_scenario(rt: Runtime, scenario_id: str) -> None:
+    """La tabla de POIs y carreteras que `voice` resuelve en caliente, y el prewarm.
+
+    `voice` no importa de `sim` (invariante 4): la tabla se la da el gateway. Primero
+    el YAML tal cual (trae los alias, si los hay); si no se puede leer o no tiene
+    `pois`, el `Scenario` ya validado, sin alias. Sin esto, cada hecho de una llamada
+    sale «sin ubicar» y no entra al estado.
+    """
+    global _voice_warmed
+    with rt.guard("voice"):
+        import voice
+        from voice import pois
+
+        path = scenario_path(scenario_id)
+        if pois.load_scenario_yaml(path) and pois.pois():
+            rt.notes["voice-pois"] = f"{len(pois.pois())} POIs de {path}"
+        else:
+            scenario = load_scenario(scenario_id)
+            pois.set_scenario(scenario.pois, scenario.roads)
+            rt.notes["voice-pois"] = f"{len(scenario.pois)} POIs del Scenario, sin alias"
+        if not _voice_warmed:
+            _voice_warmed = True
+            voice.warmup()
+
+
+async def _ask_for_speed(rt: Runtime, speed: float) -> None:
+    """`--speed`: se le pide al sim, que puede no saber.
+
+    `Sim` no expone `set_speed()`, pero su tick loop lee `self.speed`
+    (`sim/runner.py`, D3): si hay método se usa; si no, se fija el atributo; y si no
+    hay ni eso, se anota y el mundo va a 1×. Es la misma degradación explícita que
+    `Sim.pause()` en el H4: ni se inventa el método ni se entra en el fichero de P2.
     """
     if speed == 1.0 or rt.sim is None:
         return
     setter = getattr(rt.sim, "set_speed", None)
-    if setter is None:
-        rt.notes["speed"] = f"el sim no acepta velocidad: {speed}× ignorado, el mundo va a 1×"
-        log.info("%s", rt.notes["speed"])
+    if setter is not None:
+        result = setter(speed)
+        if inspect.isawaitable(result):  # valen las dos formas
+            await result
+        rt.notes["speed"] = f"{speed}×"
         return
-    result = setter(speed)
-    if inspect.isawaitable(result):  # P2 aún no lo ha escrito: valen las dos formas
-        await result
-    rt.notes["speed"] = f"{speed}×"
+    if isinstance(getattr(rt.sim, "speed", None), int | float):
+        rt.sim.speed = float(speed)
+        rt.notes["speed"] = f"{speed}× (atributo `Sim.speed`, sin set_speed())"
+        return
+    rt.notes["speed"] = f"el sim no acepta velocidad: {speed}× ignorado, el mundo va a 1×"
+    log.info("%s", rt.notes["speed"])
 
 
 async def stop_run(rt: Runtime) -> dict:
@@ -313,18 +356,25 @@ async def stop_run(rt: Runtime) -> dict:
             await asyncio.wait_for(rt.sim.stop(), timeout=SHUTDOWN_GRACE_S)
     await rt.stop_tasks("sim")
 
-    journal_path = None
-    if rt.writer is not None:
-        journal_path = str(getattr(rt.writer, "path", "") or "") or None
-        with contextlib.suppress(Exception):
-            rt.writer.close()
+    journal_path = str(rt.journal_path) if rt.journal_path is not None else None
+    _close_journal(rt)
 
-    rt.writer, rt.core, rt.sim = None, None, None
+    rt.core, rt.sim = None, None
     rt.run_id, rt.scenario_id = None, None
     rt.mark("sim", "degraded", "run parado")
     rt.mark("core", "degraded", "run parado")
     log.info("run %s parado", run_id)
     return {"run_id": run_id, "stopped": True, "journal": journal_path}
+
+
+def _close_journal(rt: Runtime) -> None:
+    """Cierra el fichero del bus. Después de esto ningún evento llega al journal, así
+    que va SIEMPRE después de `run.ended` y de parar sim y core."""
+    with rt.guard("journal"):
+        from contracts import bus
+
+        bus.close()
+    rt.journal_path = None
 
 
 # --- La app ----------------------------------------------------------------------
@@ -475,10 +525,12 @@ async def get_runs(rt: Rt) -> list[dict]:
     """Runs pasados con su puntuación, para el run 1 vs run 12.
 
     Tres estados posibles por run, y el dashboard los pinta distintos porque son cosas
-    distintas: **puntuado** por `journal.score` (P1), **provisional** cuando lo ha contado
-    el gateway (`score_fallback`), e **incompleto** cuando el journal no llega a
-    `run.ended` —cada Ctrl-C deja uno—. Un run sintético (`run_fake*`) se marca aparte:
-    lo genero yo para desarrollar y no puede colarse en una comparación del pitch.
+    distintas: **puntuado** por `journal.score` (P1, el normal), **provisional** cuando
+    lo ha contado el gateway (`score_fallback`: solo si el puntuador de P1 no puede leer
+    el journal), e **incompleto** cuando el journal no llega a `run.ended` —cada Ctrl-C
+    deja uno, y `journal.replay.read` revienta en la línea cortada—. Un run sintético
+    (`run_fake*`) se marca aparte: lo genero yo para desarrollar y no puede colarse en
+    una comparación del pitch.
     """
     out: list[dict] = []
     for path in sorted(
@@ -501,11 +553,13 @@ async def get_runs(rt: Rt) -> list[dict]:
             item["score"] = score(path).model_dump(mode="json")
             item["partial"] = False
         except (ImportError, NotImplementedError):
-            rt.notes["score"] = "journal.score sin cuerpo: cuenta el gateway (provisional)"
+            rt.notes["score"] = "journal.score no disponible: cuenta el gateway (provisional)"
             _count_here(item, path)
         except Exception as exc:  # noqa: BLE001
-            # Un journal a medias es la norma: cada Ctrl-C deja uno. No rompe.
+            # Un journal a medias es la norma: cada Ctrl-C deja uno. `journal.score` no
+            # lo lee (línea cortada); el contador del gateway sí, y lo dice.
             item["error"] = repr(exc)
+            _count_here(item, path)
         out.append(item)
     return out
 

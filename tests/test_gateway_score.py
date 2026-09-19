@@ -1,7 +1,8 @@
 """La puntuación provisional y el número del pitch. P4.
 
-`journal/score.py` es de P1 y no tiene cuerpo, así que esto prueba el contador de
-reserva del gateway. Lo que tiene lógica de verdad y se cubre aquí:
+`journal.score` (P1) es quien puntúa en `GET /api/runs`; el contador de reserva del
+gateway queda para los journals que P1 no puede leer (los cortados por un Ctrl-C) y
+para si `journal.score` volviera a no estar. Lo que tiene lógica de verdad y se cubre:
 
 - **Se cuenta el estado final, no los cambios.** Una celda que arde y se apaga no es una
   celda quemada, y un grupo de civiles que pasa por tres estados cuenta una vez.

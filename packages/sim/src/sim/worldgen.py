@@ -16,12 +16,18 @@ La secuencia fija:
 7. Por cada grupo de civiles, aldeanos con `NoAI:1b`.
 """
 
+import argparse
+import asyncio
 import math
+import os
 import random
+import sys
+from pathlib import Path
 
 from contracts.scenario import Scenario
 from contracts.world import POI, Unit
-from sim.rcon import LOW, Rcon
+from sim.hazard import MAX_RADIUS_CELLS, parse_cell
+from sim.rcon import LOW, PrintRcon, Rcon, RconClient
 
 VELA_TAG = "vela"
 """Todo lo que invocamos lleva este tag: `kill @e[tag=vela]` y vuelve a lanzarse."""
@@ -164,9 +170,28 @@ SCAR_Y = (GROUND_Y - 2, RIDGE_Y + 4)
 """Franja vertical que puede haber tocado el fuego, con holgura."""
 
 
+def scar_bounds(scenario: Scenario) -> tuple[int, int, int, int]:
+    """El área a limpiar: el valle **y** todo lo que el incendio pueda alcanzar.
+
+    No basta con `bounds`. El hazard se propaga hasta `MAX_RADIUS_CELLS` desde la
+    ignición, y ese círculo se sale del rectángulo del escenario: medido en
+    `wildfire_ridge`, 52 bloques por el sur. Lo que arde ahí fuera sobrevive al
+    `teardown` y reaparece en el run siguiente como una mancha suelta, sin nada
+    quemado alrededor — porque el camino que la unía sí se limpió y ella no.
+    """
+    x1, z1, x2, z2 = bounds(scenario)
+    cx, cz = parse_cell(scenario.hazard.origin_cell)
+    size = scenario.hazard.cell_size
+    r = MAX_RADIUS_CELLS * size + size
+    return (
+        min(x1, cx * size - r), min(z1, cz * size - r),
+        max(x2, cx * size + r), max(z2, cz * size + r),
+    )
+
+
 def scar_commands(scenario: Scenario) -> list[str]:
     """`fill ... replace` por losas, respetando el límite de bloques por comando."""
-    x1, z1, x2, z2 = bounds(scenario)
+    x1, z1, x2, z2 = scar_bounds(scenario)
     out = []
     for block, replacement in SCAR_BLOCKS.items():
         out += tiled_fill(
@@ -501,3 +526,49 @@ def civilian_commands(scenario: Scenario) -> list[str]:
                 + f"Rotation:[{yaw:.0f}f,0f]}}"
             )
     return out
+
+
+def main() -> None:
+    """`make world`: construye el mundo por RCON desde el YAML. `--dry-run`
+    imprime los comandos en vez de mandarlos, para revisar sin Paper."""
+    from sim.scenario import load
+
+    parser = argparse.ArgumentParser(description="Levanta el mundo del escenario por RCON.")
+    parser.add_argument("--scenario", default="scenarios/wildfire_ridge.yaml")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="imprime los comandos por stdout y no abre ninguna conexión",
+    )
+    parser.add_argument(
+        "--teardown", action="store_true",
+        help="solo limpia: /kill @e[tag=vela] y borra la cicatriz del fuego",
+    )
+    args = parser.parse_args()
+    scenario = load(Path(args.scenario))
+
+    async def run() -> None:
+        rcon: Rcon
+        if args.dry_run:
+            rcon = PrintRcon()
+        else:
+            from contracts.settings import settings
+
+            rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
+        await rcon.connect()
+        try:
+            if args.teardown:
+                await teardown(rcon, scenario)
+            else:
+                await build(scenario, rcon)
+        finally:
+            await rcon.close()
+
+    try:
+        asyncio.run(run())
+    except BrokenPipeError:
+        # `--dry-run | head`: quien lee cerró la tubería, no hay nada que avisar.
+        sys.stdout = open(os.devnull, "w")  # noqa: SIM115 — evita el aviso al cerrar
+
+
+if __name__ == "__main__":
+    main()

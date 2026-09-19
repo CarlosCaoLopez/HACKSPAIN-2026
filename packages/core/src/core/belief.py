@@ -12,10 +12,9 @@ import logging
 from contracts.calls import Fact
 from contracts.events import Event, EventType
 from contracts.factkeys import validate_fact_key
-from contracts.world import RoadEdge
 from contracts.plan import Plan
 from contracts.scenario import Scenario
-from contracts.world import Cell, CivilianGroup, Wind, WorldState
+from contracts.world import Cell, CivilianGroup, RoadEdge, Task, Wind, WorldState
 
 log = logging.getLogger("core.belief")
 
@@ -137,6 +136,10 @@ def apply(state: WorldState, ev: Event) -> WorldState:
                 t_sim=ev.t_sim,
             )
             return apply_fact(state.model_copy(update=update), fact)
+        case EventType.TASK_CHANGED:
+            # `core.tasks` decide qué tarea nace o se cierra; aquí solo se pliega.
+            task = Task.model_validate(p["task"])
+            update["tasks"] = {**state.tasks, task.id: task}
         case EventType.PLAN_EMITTED:
             plan = Plan.model_validate(p)
             units = dict(state.units)

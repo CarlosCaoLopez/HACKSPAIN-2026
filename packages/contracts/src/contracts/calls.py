@@ -53,6 +53,9 @@ class CallFacts(BaseModel):
         None, description="personas que no pueden moverse solas"
     )
     injuries: int | None = None
+    headcount: int | None = Field(
+        None, description="cuántas personas hay en total en el lugar, si lo dice"
+    )
     confirmed_order: bool | None = Field(
         None, description="si acepta la instrucción dada"
     )

@@ -28,7 +28,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from contracts.events import EventType, HumanOverride, OverrideKind
-
 from gateway.runtime import Rt
 
 log = logging.getLogger("vela.control")

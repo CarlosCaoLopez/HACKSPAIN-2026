@@ -64,5 +64,5 @@ docs/carlos/
 *.duckdb.wal
 .DS_Store
 
-# worktrees de Claude Code: copias del repo, no contenido
+# worktrees de los subagentes de Claude
 .claude/worktrees/

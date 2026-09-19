@@ -14,6 +14,7 @@ como esquema (`Policy.model_json_schema()`): el mismo contrato es el esquema.
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -21,6 +22,8 @@ from openai import AsyncOpenAI
 from contracts.plan import Policy, Violation
 from contracts.settings import settings
 from contracts.world import WorldState
+
+log = logging.getLogger("core.planner")
 
 MODEL = "gpt-5.6-luna"
 """OpenAI. Se cambia aquí y en ningún otro sitio."""
@@ -95,13 +98,9 @@ def _summarize(state: WorldState) -> str:
 
     lines.append("POIs:")
     for p in state.pois.values():
-        lines.append(
-            f"  {p.id} '{p.name}' {p.kind} cobertura_mínima={p.min_coverage}"
-        )
+        lines.append(f"  {p.id} '{p.name}' {p.kind} cobertura_mínima={p.min_coverage}")
 
-    hot = [
-        c.id for c in state.cells.values() if c.state in ("burning", "at_risk")
-    ]
+    hot = [c.id for c in state.cells.values() if c.state in ("burning", "at_risk")]
     if hot:
         lines.append("Celdas en llamas/en riesgo: " + ", ".join(sorted(hot)))
 
@@ -129,22 +128,25 @@ def render_prompt(state: WorldState, reason: str, rules: str) -> str:
 def _render_critique(state: WorldState, violations: list[Violation]) -> str:
     template = (_PROMPTS / "replan_critique.md").read_text()
     viol_text = "\n".join(f"- {v.message}" for v in violations) or "(ninguna)"
-    return (
-        template.replace("<<STATE>>", _summarize(state))
-        .replace("<<VIOLATIONS>>", viol_text)
+    return template.replace("<<STATE>>", _summarize(state)).replace(
+        "<<VIOLATIONS>>", viol_text
     )
 
 
 async def _call(prompt: str) -> Policy:
     """Una llamada a OpenAI con tool-use forzado, dentro del presupuesto de tiempo.
     Cualquier fallo (timeout, red, JSON inválido, validación, sin key) cae a pesos
-    neutros: la demo nunca se queda sin `Policy`."""
+    neutros: la demo nunca se queda sin `Policy`. Pero se anota siempre: un servicio
+    caído se degrada y se registra, nunca un `except: pass`."""
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         resp = await asyncio.wait_for(
             client.chat.completions.create(
                 model=MODEL,
-                max_tokens=MAX_TOKENS,
+                max_completion_tokens=MAX_TOKENS,
+                # gpt-5.6-luna rechaza tools con razonamiento en chat.completions
+                # (400: «use /v1/responses or set reasoning_effort to 'none'»).
+                reasoning_effort="none",
                 tools=[_POLICY_TOOL],
                 tool_choice=_TOOL_CHOICE,
                 messages=[{"role": "user", "content": prompt}],
@@ -153,7 +155,8 @@ async def _call(prompt: str) -> Policy:
         )
         args = resp.choices[0].message.tool_calls[0].function.arguments
         return Policy.model_validate(json.loads(args))
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — degradar a pesos neutros es el diseño
+        log.error("planner %s falló; se cae a la política neutra: %r", MODEL, exc)
         return neutral_policy()
 
 

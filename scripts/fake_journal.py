@@ -48,13 +48,14 @@ from contracts.events import (
     CallCompleteness,
     CallStarted,
     CellChanged,
+    CitizenLocation,
     CiviliansChanged,
     DivergenceReport,
     Emotion,
     Event,
-    FieldCompleteness,
     EventType,
     FactAsserted,
+    FieldCompleteness,
     FireDetected,
     HumanOverride,
     Inject,
@@ -65,6 +66,7 @@ from contracts.events import (
     RunStarted,
     SignalRequested,
     SignalSent,
+    TaskChanged,
     TranscriptPartial,
     UnitArrived,
     UnitPosition,
@@ -81,7 +83,7 @@ from contracts.plan import (
     Violation,
 )
 from contracts.scenario import Scenario
-from contracts.world import Wind
+from contracts.world import Task, Wind
 from gateway.scenarios import load_scenario
 
 # v1 (`run_fake.jsonl`, H2/H3) y v2 (`run_fake_v2.jsonl`, H4) están CONGELADOS: los
@@ -201,7 +203,9 @@ _declared("la carretera", ROAD_CUT, set(_ROADS.values()))
 
 # El desvío sur (corto, expuesto) es el de la primera orden; el norte es el rodeo cuando
 # se corta. A Pueblo B solo se llega por `wp_sur_02`, es decir, pasando por Pueblo A.
-ROUTE_EVAC_A = _check_route(["wp_base", "wp_cruce", "wp_sur_01", "wp_sur_02", "wp_pueblo_a"])
+ROUTE_EVAC_A = _check_route(
+    ["wp_base", "wp_cruce", "wp_sur_01", "wp_sur_02", "wp_pueblo_a"]
+)
 ROUTE_EXTINGUISH = _check_route(["wp_base", "wp_cruce", "wp_sur_01"])
 ROUTE_RECON = _check_route(["wp_base", "wp_cruce", "wp_sur_01", "wp_sur_02"])
 ROUTE_NOTIFY_B = _check_route(
@@ -222,7 +226,9 @@ TASK_NOTIFY_B = "task_notify_b"
 
 CALL_OUT = "hl_8821"  # la orden: llamamos al agente (HappyRobot) y nos la dicta
 CALL_IN = "vh_1074"  # el vecino: info del terreno, humalike · dispara el clímax
-CALL_NO_ANSWER = "hl_9002"  # la orden que no se completa · la orden a Pueblo B que no contesta
+CALL_NO_ANSWER = (
+    "hl_9002"  # la orden que no se completa · la orden a Pueblo B que no contesta
+)
 
 
 # --- El armazón -----------------------------------------------------------------
@@ -411,6 +417,43 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
         causes=("fire",),
     )
 
+    # El core mantiene `WorldState.tasks`: cada alta se publica como `task.changed`
+    # (el estado es inmutable y el journal append-only) antes del primer plan.
+    tl.add(
+        3.0,
+        EventType.TASK_CHANGED,
+        TaskChanged(
+            task=Task(
+                id=TASK_EXTINGUISH,
+                kind="extinguish",
+                target_cell=origin,
+                required_capability="extinguish",
+                severity="high",
+                created_t=3.0,
+            )
+        ),
+        "core",
+        label="task_ext",
+        causes=("fire",),
+    )
+    tl.add(
+        3.5,
+        EventType.TASK_CHANGED,
+        TaskChanged(
+            task=Task(
+                id=TASK_EVAC_A,
+                kind="evacuate",
+                target_poi=PUEBLO_A,
+                required_capability="transport",
+                severity="critical",
+                created_t=3.5,
+            )
+        ),
+        "core",
+        label="task_evac",
+        causes=("fire",),
+    )
+
     # El viento sopla O→E hasta el inject de t=150: el fuego avanza en +x. Hasta dónde
     # llega es lo que distingue un run bueno de uno malo (`Variation.spread`).
     for i in range(1, var.spread + 1):
@@ -501,7 +544,9 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
         context=PlanContext(
             assumptions=[
                 Assumption(key=f"{ROAD_CUT}:open", expected=True, weight=1.0),
-                Assumption(key=f"poi:{PUEBLO_A}:immobile", expected=CIV_A_IMMOBILE, weight=0.8),
+                Assumption(
+                    key=f"poi:{PUEBLO_A}:immobile", expected=CIV_A_IMMOBILE, weight=0.8
+                ),
                 Assumption(key="wind:bearing_deg", expected=wind.bearing_deg, weight=0.6),
             ],
             world_seq=8,
@@ -513,7 +558,9 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
         8.0,
         EventType.ACTION_REQUESTED,
         ActionRequested(
-            action_id="act_0001", verb="goto", args={"unit_id": TRUCK1, "to": ROUTE_EVAC_A[-1]}
+            action_id="act_0001",
+            verb="goto",
+            args={"unit_id": TRUCK1, "to": ROUTE_EVAC_A[-1]},
         ),
         "core",
         label="act1",
@@ -540,7 +587,9 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
     tl.add(
         10.0,
         EventType.WORLD_UNIT_STATUS,
-        UnitStatusChanged(unit_id=TRUCK1, status="moving", reason=f"goto {ROUTE_EVAC_A[-1]}"),
+        UnitStatusChanged(
+            unit_id=TRUCK1, status="moving", reason=f"goto {ROUTE_EVAC_A[-1]}"
+        ),
         "sim",
         causes=("act1",),
     )
@@ -667,14 +716,18 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
     tl.add(
         78.0,
         EventType.WORLD_CIVILIANS_CHANGED,
-        CiviliansChanged(group_id=CIV_A, count=CIV_A_COUNT, state="warned", poi_id=PUEBLO_A),
+        CiviliansChanged(
+            group_id=CIV_A, count=CIV_A_COUNT, state="warned", poi_id=PUEBLO_A
+        ),
         "sim",
         causes=("callend",),
     )
     tl.add(
         110.0,
         EventType.WORLD_CIVILIANS_CHANGED,
-        CiviliansChanged(group_id=CIV_A, count=CIV_A_COUNT, state="evacuating", poi_id=PUEBLO_A),
+        CiviliansChanged(
+            group_id=CIV_A, count=CIV_A_COUNT, state="evacuating", poi_id=PUEBLO_A
+        ),
         "sim",
         causes=("arrived1",),
     )
@@ -725,9 +778,7 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
     tl.add(
         241.0,
         EventType.WORLD_UNIT_STATUS,
-        UnitStatusChanged(
-            unit_id=TRUCK2, status="unavailable", reason="avería de bomba"
-        ),
+        UnitStatusChanged(unit_id=TRUCK2, status="unavailable", reason="avería de bomba"),
         "sim",
         label="truck2down",
         causes=("inject_240",),
@@ -747,7 +798,9 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
     tl.add(
         212.0,
         EventType.CALL_STARTED,
-        CallStarted(call_id=CALL_IN, task_id=None, to="+34999000111", direction="inbound"),
+        CallStarted(
+            call_id=CALL_IN, task_id=None, to="+34999000111", direction="inbound"
+        ),
         f"call:{CALL_IN}",
         label="inbound",
     )
@@ -769,7 +822,14 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
     # lo del árbol, alivio cuando el agente le dice que ya hay unidad en camino.
     for t, emotions, risk in [
         (216.0, [Emotion(type="fear", intensity=0.8)], 0.45),
-        (224.0, [Emotion(type="fear", intensity=0.7), Emotion(type="frustration", intensity=0.2)], 0.3),
+        (
+            224.0,
+            [
+                Emotion(type="fear", intensity=0.7),
+                Emotion(type="frustration", intensity=0.2),
+            ],
+            0.3,
+        ),
         (235.0, [Emotion(type="relief", intensity=0.6)], 0.1),
     ]:
         tl.add(
@@ -799,6 +859,26 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
         causes=("inbound",),
     )
     _completitud_de_la_llamada(tl)
+    # Ya colgado, el vecino comparte su ubicación por Telegram: el «dónde» exacto y
+    # observado que la voz no pudo dar. Es el canal segundo del reporte ciudadano.
+    tl.add(
+        246.0,
+        EventType.CITIZEN_LOCATION,
+        CitizenLocation(
+            call_id="tg_4471123",
+            chat_id="4471123",
+            lat=40.4168,
+            lon=-3.7038,
+            x=184.0,
+            z=90.0,
+            poi_id="poi_pueblo_b",
+            poi_name="Pueblo B",
+            text="Estoy aquí, al final de la pista, junto a las casas",
+        ),
+        "voice",
+        label="telegram_pin",
+        causes=("inbound",),
+    )
     tl.add(
         229.5,
         EventType.PLAN_VIOLATION,
@@ -902,7 +982,9 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
     tl.add(
         234.0,
         EventType.WORLD_UNIT_STATUS,
-        UnitStatusChanged(unit_id=AMBULANCE, status="moving", reason=f"goto {ROUTE_NOTIFY_B[-1]}"),
+        UnitStatusChanged(
+            unit_id=AMBULANCE, status="moving", reason=f"goto {ROUTE_NOTIFY_B[-1]}"
+        ),
         "sim",
         causes=("act4",),
     )
@@ -1036,7 +1118,9 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
         280.0,
         EventType.ACTION_REQUESTED,
         ActionRequested(
-            action_id="act_0006", verb="rescue", args={"group_id": CIV_A, "count": CIV_A_IMMOBILE}
+            action_id="act_0006",
+            verb="rescue",
+            args={"group_id": CIV_A, "count": CIV_A_IMMOBILE},
         ),
         "core",
         label="act6",
@@ -1066,13 +1150,17 @@ def build(sc: Scenario, *, var: Variation = BASELINE) -> list[Event]:
     tl.add(
         330.0,
         EventType.WORLD_CIVILIANS_CHANGED,
-        CiviliansChanged(group_id=CIV_A, count=CIV_A_COUNT, state="safe", poi_id=PUEBLO_A),
+        CiviliansChanged(
+            group_id=CIV_A, count=CIV_A_COUNT, state="safe", poi_id=PUEBLO_A
+        ),
         "sim",
     )
     tl.add(
         332.0,
         EventType.WORLD_CIVILIANS_CHANGED,
-        CiviliansChanged(group_id=CIV_B, count=CIV_B_COUNT, state="warned", poi_id=PUEBLO_B),
+        CiviliansChanged(
+            group_id=CIV_B, count=CIV_B_COUNT, state="warned", poi_id=PUEBLO_B
+        ),
         "sim",
     )
     tl.add(
@@ -1125,27 +1213,56 @@ def _completitud_de_la_llamada(tl: Timeline) -> None:
     def f(key: str, status: str, value: str | None = None, conf: float | None = None):
         return FieldCompleteness(key=key, status=status, value=value, confidence=conf)
 
-    tick(216.0, None, [
-        f("location_hint", "open"), f("road_blocked", "open"),
-        f("people_immobile", "open"), f("urgency", "open"),
-    ])
-    tick(221.0, 8.0, [
-        f("location_hint", "open"), f("road_blocked", "open", None, 0.61),
-        f("people_immobile", "open"), f("urgency", "observed", "critical", 0.92),
-    ])
-    tick(226.0, 8.0, [
-        f("location_hint", "open"), f("road_blocked", "asked", None, 0.61),
-        f("people_immobile", "open"), f("urgency", "observed", "critical", 0.92),
-    ])
-    tick(229.0, 8.0, [
-        f("location_hint", "open"), f("road_blocked", "observed", ROAD_CUT, 0.93),
-        f("people_immobile", "asked"), f("urgency", "observed", "critical", 0.92),
-    ])
-    tick(234.0, 8.0, [
-        f("location_hint", "open"), f("road_blocked", "observed", ROAD_CUT, 0.93),
-        f("people_immobile", "assumed_default", "1", 0.3),
-        f("urgency", "observed", "critical", 0.92),
-    ])
+    tick(
+        216.0,
+        None,
+        [
+            f("location_hint", "open"),
+            f("road_blocked", "open"),
+            f("people_immobile", "open"),
+            f("urgency", "open"),
+        ],
+    )
+    tick(
+        221.0,
+        8.0,
+        [
+            f("location_hint", "open"),
+            f("road_blocked", "open", None, 0.61),
+            f("people_immobile", "open"),
+            f("urgency", "observed", "critical", 0.92),
+        ],
+    )
+    tick(
+        226.0,
+        8.0,
+        [
+            f("location_hint", "open"),
+            f("road_blocked", "asked", None, 0.61),
+            f("people_immobile", "open"),
+            f("urgency", "observed", "critical", 0.92),
+        ],
+    )
+    tick(
+        229.0,
+        8.0,
+        [
+            f("location_hint", "open"),
+            f("road_blocked", "observed", ROAD_CUT, 0.93),
+            f("people_immobile", "asked"),
+            f("urgency", "observed", "critical", 0.92),
+        ],
+    )
+    tick(
+        234.0,
+        8.0,
+        [
+            f("location_hint", "open"),
+            f("road_blocked", "observed", ROAD_CUT, 0.93),
+            f("people_immobile", "assumed_default", "1", 0.3),
+            f("urgency", "observed", "critical", 0.92),
+        ],
+    )
     tl.add(
         234.5,
         EventType.WORLD_FACT_ASSERTED,
@@ -1362,7 +1479,9 @@ def main() -> None:
         print(f"✓ {out} · {lines} eventos · {len(PAYLOAD_MODELS)} tipos del catálogo")
         return
 
-    sc = Scenario.model_validate(yaml.safe_load(args.scenario.read_text(encoding="utf-8")))
+    sc = Scenario.model_validate(
+        yaml.safe_load(args.scenario.read_text(encoding="utf-8"))
+    )
     ents = _entities(sc)
     events = build(sc)
     write(events, out)

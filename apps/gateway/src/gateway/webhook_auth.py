@@ -37,11 +37,14 @@ async def webhook_token_guard(
     cuál de los dos modos está.
     """
     expected = settings.webhook_shared_token
-    if expected and request.url.path.startswith(PREFIX):
-        if request.headers.get(TOKEN_HEADER, "") != expected:
-            rt = getattr(request.app.state, "runtime", None)
-            if rt is not None:
-                rt.webhook_rejected += 1
-            log.warning("webhook rechazado en %s desde %s", request.url.path, request.client)
-            return JSONResponse(status_code=401, content={"detail": "token inválido"})
+    if (
+        expected
+        and request.url.path.startswith(PREFIX)
+        and request.headers.get(TOKEN_HEADER, "") != expected
+    ):
+        rt = getattr(request.app.state, "runtime", None)
+        if rt is not None:
+            rt.webhook_rejected += 1
+        log.warning("webhook rechazado en %s desde %s", request.url.path, request.client)
+        return JSONResponse(status_code=401, content={"detail": "token inválido"})
     return await call_next(request)

@@ -13,7 +13,6 @@ banner rojo.
 from contracts.calls import Fact
 from contracts.plan import DIVERGENCE_THRESHOLD, PlanContext
 from contracts.world import WorldState
-
 from core.belief import road_of
 
 WIND_TOLERANCE_DEG = 20.0
