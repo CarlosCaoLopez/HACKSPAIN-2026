@@ -49,6 +49,13 @@ demo: ## todo de verdad, 6 minutos · make demo FLAGS="--mock-calls --no-minecra
 #   nivel 3 (falla Minecraft):   make demo FLAGS="--no-minecraft"
 # Se ensayan los dos, de punta a punta. Un plan B que no se ha corrido es una intención.
 
+levanta: ## comprobación previa + levanta lo que falte · make levanta [PLAYER=<u>]
+	uv run python scripts/levanta.py --scenario $(SCENARIO) $(if $(PLAYER),--player $(PLAYER),)
+# Antes de cada ensayo. Caza lo que no da error y arruina el run: un gateway huérfano
+# en el 8000 (se mide contra código viejo), dos directores peleándose por la cámara,
+# la URL de ngrok desincronizada de HappyRobot, el mundo vacío y nadie conectado.
+# `--check` solo diagnostica; `--demo` lanza además la demo con llamadas reales.
+
 server: ## levanta Paper 1.21 en local (jar pelado, sin Docker). Déjalo en su terminal
 	./infra/server/start.sh
 
