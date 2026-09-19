@@ -223,3 +223,27 @@ def test_no_jev_extract_model_is_closed_over_the_scenario(journal):
     cf = to_call_facts(ok.model_dump(), {"poi_molino": "Molino viejo"})
     assert cf.resolved_poi_id == "poi_molino" and cf.location_hint == "Molino viejo"
     assert pois.resolve_edge_local(EDGE) == EDGE
+
+
+async def test_synthetic_calls_are_scored_by_jev_without_touching_the_world(journal):
+    from types import SimpleNamespace as NS
+
+    from voice import synthetic
+
+    class Scorer:
+        enabled = True
+        failed_reason = None
+
+        async def tick(self, state, questions):
+            text = state["transcript"][0]["text"]
+            hot = "cortada" in text
+            return jev.Perception(
+                answers={"relevant": jev.Answer(hot, 0.9)}, latency_ms=1.0
+            ) if questions else NS()
+
+    jev.configure(Scorer())  # type: ignore[arg-type]
+    calls = synthetic.generate(20, 0.0, seed=1)
+    await synthetic.score_relevance(calls)
+    scored = [c.analysis["jev_relevance"] for c in calls]
+    assert len(scored) == 20 and all(0 <= p <= 1 for p in scored)
+    assert facts_of(journal) == {}  # etiquetar no publica hechos

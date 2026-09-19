@@ -26,6 +26,7 @@ import httpx
 from contracts.bus import make_event, publish
 from contracts.calls import CallFacts, CallResult
 from contracts.events import EventType
+from contracts.questions import QuestionSpec
 from contracts.settings import settings
 
 log = logging.getLogger("voice.synthetic")
@@ -154,11 +155,46 @@ def generate(n: int, t_sim: float, seed: int = 0) -> list[CallResult]:
     return out
 
 
+RELEVANCE = QuestionSpec(
+    "noul",
+    "The caller reports a concrete hazard at a specific place (a cut road, trapped or "
+    "immobile people, injuries) that would change an emergency response plan. General "
+    "worry, questions and hearsay do not count.",
+)
+JEV_CONCURRENCY = 4
+"""Veinte llamadas a la vez caben de sobra en el límite de TypeSafe (1.200 req/min),
+pero no hay motivo para lanzarlas de golpe."""
+
+
+async def score_relevance(calls: list[CallResult]) -> None:
+    """Jev puntúa cuánto mueve el plan cada llamada (`analysis.jev_relevance`, 0..1).
+    Solo etiqueta: no publica hechos, así que el ruido nunca toca el estado del mundo.
+    Sin Jev, las llamadas van sin puntuar."""
+    from voice import humanlike, jev
+
+    client = jev.get_jev()
+    if not client.enabled:
+        return
+    gate = asyncio.Semaphore(JEV_CONCURRENCY)
+
+    async def one(c: CallResult) -> None:
+        async with gate:
+            state = jev.build_state(humanlike.turns_from_text(c.transcript))
+            perc = await client.tick(state, {"relevant": RELEVANCE})
+        ans = perc.get("relevant") if perc else None
+        if ans is not None:
+            p = ans.confidence if ans.value else 1.0 - ans.confidence
+            c.analysis = {**(c.analysis or {}), "jev_relevance": round(p, 3)}
+
+    await asyncio.gather(*(one(c) for c in calls))
+
+
 async def burst(n: int, over_s: float = 30.0, seed: int = 0) -> None:
     """Las publica repartidas en el tiempo, como llegarían de verdad."""
     from contracts.bus import current_t_sim
 
     calls = generate(n, current_t_sim(), seed)
+    await score_relevance(calls)
     gap = over_s / max(n, 1)
     for c in calls:
         await publish(

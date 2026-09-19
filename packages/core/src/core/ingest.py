@@ -1,25 +1,22 @@
-"""Nivel 1 · ingesta: texto sucio a hechos tipados con procedencia y confianza.
+"""Nivel 1 · ingesta, camino frío.
 
-`fenic` como capa de construcción de contexto: `semantic.extract` con esquema
-Pydantic, `semantic.classify` sin datos de entrenamiento, `semantic.join` para
-casar texto sucio contra datos limpios. No determinista, pero acotado por esquema.
+La percepción en llamada ya no vive aquí ni usa `fenic`: es TypeSafe `jev-1.13` y está
+en `voice` (`voice.jev`, `voice.perception`), que elige entre opciones cerradas del
+escenario. El `semantic.join` de POIs desapareció: ya es el `Choice`.
 
-Aquí vive lo que el core necesita clasificar por su cuenta. La extracción de
-transcripciones es de P3 (`voice`): ningún paquete la duplica. Todo lo de aquí es
-camino frío (fin de llamada, lote sintético); si `fenic` no está, cae a heurísticas
-deterministas para que la demo siga.
+Lo que queda es lo que el core necesita clasificar por su cuenta y sin Jev: severidad
+de un texto y orden de un lote. `fenic` (`semantic.classify`) como capa de contexto en
+el camino frío; si no está, heurísticas deterministas para que la demo siga.
 """
 
 from __future__ import annotations
 
-import difflib
 import logging
 import os
 import re
 import unicodedata
 
 from contracts.settings import settings
-from contracts.world import POI
 
 log = logging.getLogger("core.ingest")
 
@@ -49,27 +46,6 @@ def _norm(text: str) -> str:
     text = unicodedata.normalize("NFKD", text.lower())
     text = "".join(c for c in text if not unicodedata.combining(c))
     return re.sub(r"[^a-z0-9 ]+", " ", text).strip()
-
-
-def resolve_poi(location_hint: str, pois: list[POI]) -> str | None:
-    """`semantic.join` de "el molino viejo" contra la tabla de POIs.
-
-    Devuelve el `poi_id` o None. None no es un fallo: es un hecho sin ubicar, y
-    se muestra igual con su procedencia."""
-    if not location_hint or not pois:
-        return None
-    joined = _fenic_join(location_hint, pois)
-    if joined is not None:
-        return joined
-    names = {_norm(p.name): p.id for p in pois}
-    match = difflib.get_close_matches(_norm(location_hint), list(names), n=1, cutoff=0.6)
-    if match:
-        return names[match[0]]
-    hint = set(_norm(location_hint).split())
-    best = max(names.items(), key=lambda kv: len(hint & set(kv[0].split())), default=None)
-    if best and len(hint & set(best[0].split())) > 0:
-        return best[1]
-    return None
 
 
 def classify_severity(text: str) -> str:
@@ -152,25 +128,6 @@ def _session():
         _fenic_failed = str(exc)[:200]
         log.warning("fenic sin sesión (no se reintenta): %s", _fenic_failed)
         return None, None
-
-
-def _fenic_join(location_hint: str, pois: list[POI]) -> str | None:
-    fc, session = _session()
-    if fc is None:
-        return None
-    try:
-        left = session.create_dataframe([{"hint": location_hint}])
-        right = session.create_dataframe([{"poi_id": p.id, "name": p.name} for p in pois])
-        rows = left.semantic.join(
-            right,
-            "El lugar {{left_on}} se refiere al punto de interés {{right_on}}",
-            left_on=fc.col("hint"),
-            right_on=fc.col("name"),
-        ).to_pylist()
-        return str(rows[0]["poi_id"]) if rows else None
-    except Exception as exc:  # noqa: BLE001
-        log.warning("semantic.join: %s", exc)
-        return None
 
 
 def _fenic_classify(text: str) -> str | None:
