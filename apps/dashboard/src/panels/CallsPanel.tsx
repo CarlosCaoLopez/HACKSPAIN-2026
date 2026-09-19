@@ -8,12 +8,18 @@
 import { useMemo } from 'react'
 
 import type { Event } from '../types'
-import { Panel } from '../components/Panel'
+import { Empty, Panel, Skeleton } from '../components/Panel'
 import { callCards, extracted, type Call } from '../story/calls'
 import { CALL_OUTCOME } from '../story/labels'
 import { factValue, mmss, pct, shortId } from '../story/format'
 
-export function CallsPanel({ events }: { events: Event[] }) {
+export function CallsPanel({
+  events,
+  awaitingSnapshot,
+}: {
+  events: Event[]
+  awaitingSnapshot: boolean
+}) {
   const calls = useMemo(() => callCards(events), [events])
   const enCurso = calls.filter((call) => !call.ended).length
 
@@ -23,8 +29,12 @@ export function CallsPanel({ events }: { events: Event[] }) {
       count={calls.length}
       note={enCurso ? `${enCurso} en curso` : undefined}
     >
-      {calls.length === 0 ? (
-        <p>sin datos</p>
+      {awaitingSnapshot ? (
+        <Skeleton rows={3} />
+      ) : calls.length === 0 ? (
+        <Empty>
+          Sin llamadas. Entrantes y salientes se listan aquí con su transcripción.
+        </Empty>
       ) : (
         <ol className="flex flex-col gap-3">
           {calls.map((call) => (
@@ -45,13 +55,15 @@ function CallCard({ call }: { call: Call }) {
     <li className="border border-vela-edge p-2">
       <div className="flex items-baseline gap-2">
         <span className="tabular-nums text-vela-dim">{mmss(call.t_sim)}</span>
-        <span className="text-xs font-bold tracking-wide text-vela-accent">
+        {/* Las llamadas tienen su propio tono (REQ-200): el cian era suyo y de las
+            decisiones a la vez, y son las dos voces que cuentan la historia. */}
+        <span className="text-xs font-bold tracking-wide text-vela-call">
           {entrante ? 'ENTRANTE' : 'SALIENTE'}
         </span>
         <span className="truncate text-vela-ink">{call.to || call.callId}</span>
         <span
           className={`ml-auto shrink-0 text-xs ${
-            fallida ? 'font-bold text-amber-400' : 'text-vela-dim'
+            fallida ? 'font-bold text-vela-warn' : 'text-vela-dim'
           }`}
         >
           {call.ended ? CALL_OUTCOME[call.ended.outcome] : 'en curso'}
@@ -81,7 +93,7 @@ function CallCard({ call }: { call: Call }) {
 
       {call.ended && !call.ended.facts && (
         <div className="mt-1">
-          <p className="text-xs font-bold tracking-wide text-amber-400">SIN EXTRAER</p>
+          <p className="text-xs font-bold tracking-wide text-vela-warn">SIN EXTRAER</p>
           <p className="max-h-20 overflow-auto text-xs text-vela-ink italic">
             «{call.ended.transcript}»
           </p>
@@ -113,7 +125,7 @@ function CallCard({ call }: { call: Call }) {
       )}
 
       {/* La procedencia, literal y siempre: es lo que separa esto de una demo de mentira. */}
-      <p className="mt-1 text-[10px] text-vela-dim">source: call:{call.callId}</p>
+      <p className="mt-1 text-xs text-vela-dim">source: call:{call.callId}</p>
     </li>
   )
 }

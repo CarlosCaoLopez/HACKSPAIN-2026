@@ -16,7 +16,7 @@
 import { useRef, useState } from 'react'
 
 import type { OverrideKind, Plan, WorldState } from '../types'
-import { Panel } from '../components/Panel'
+import { Empty, Panel, Skeleton } from '../components/Panel'
 import { useControl, type OverrideRequest } from '../hooks/useControl'
 import { SEVERITY } from '../story/labels'
 import { seconds, shortId } from '../story/format'
@@ -36,9 +36,11 @@ const ASSERT_KEY = 'assert_fact'
 export function PriorityQueue({
   plan,
   state,
+  awaitingSnapshot,
 }: {
   plan: Plan | null
   state: WorldState | null
+  awaitingSnapshot: boolean
 }) {
   const { override, pending, sent, failed } = useControl()
   // El plan vigente cuando se mandó cada override: con eso se sabe si el sistema ya ha
@@ -53,7 +55,7 @@ export function PriorityQueue({
   /** Qué enseñar debajo de los botones de una asignación: error, eco o pendiente. */
   const mark = (key: string): { text: string; tone: string } | null => {
     const error = failed.get(key)
-    if (error) return { text: error, tone: 'text-amber-400' }
+    if (error) return { text: error, tone: 'text-vela-warn' }
     const done = sent.get(key)
     if (!done) return null
     if (done.response.echo) {
@@ -81,8 +83,14 @@ export function PriorityQueue({
 
   if (!plan) {
     return (
-      <Panel title="Cola de prioridad" note="sin plan todavía">
-        <p>sin datos</p>
+      // `count={0}` y no un hueco (REQ-194): un contador ausente se lee como fallo del
+      // panel, y un cero se lee como lo que es — todavía no hay nada que repartir.
+      <Panel title="Cola de prioridad" count={0}>
+        {awaitingSnapshot ? (
+          <Skeleton rows={3} />
+        ) : (
+          <Empty>Sin plan todavía. El solver publica uno en cuanto hay tareas.</Empty>
+        )}
       </Panel>
     )
   }
@@ -165,8 +173,9 @@ export function PriorityQueue({
                       <button
                         key={kind}
                         type="button"
-                        // h-8 = 32 px: se pulsa con el ratón y se lee de lejos.
-                        className="h-8 border border-vela-edge px-3 text-xs tracking-wide text-vela-ink uppercase hover:border-vela-accent hover:text-vela-accent disabled:opacity-40"
+                        // h-8 = 32 px (REQ-148) y `text-sm` en caja baja (REQ-197): esto
+                        // se pulsa en directo y la sala tiene que leer qué se ha pulsado.
+                        className="h-8 border border-vela-edge px-3 text-sm tracking-wide text-vela-ink hover:border-vela-accent hover:text-vela-accent disabled:opacity-40"
                         disabled={pending.has(key)}
                         onClick={() =>
                           send(key, {
@@ -201,10 +210,10 @@ export function PriorityQueue({
             con un camión averiado, alguien tiene que ver qué se ha quedado sin nadie. */}
         {plan.unassigned_tasks.length > 0 && (
           <div>
-            <p className="text-xs font-bold tracking-wide text-amber-400">SIN CUBRIR</p>
+            <p className="text-xs font-bold tracking-wide text-vela-warn">SIN CUBRIR</p>
             <ul className="flex flex-col gap-1">
               {plan.unassigned_tasks.map((taskId) => (
-                <li key={taskId} className="text-amber-400">
+                <li key={taskId} className="text-vela-warn">
                   {shortId(taskId)}
                   {tasks?.[taskId] && ` · ${SEVERITY[tasks[taskId]!.severity]}`}
                 </li>
@@ -235,7 +244,7 @@ function AssertFact({
   const [value, setValue] = useState('')
 
   const input =
-    'h-8 flex-1 border border-vela-edge bg-vela-bg px-2 text-xs text-vela-ink placeholder:text-vela-dim'
+    'h-8 flex-1 border border-vela-edge bg-vela-bg px-2 text-sm text-vela-ink placeholder:text-vela-dim'
 
   return (
     <div className="border-t border-vela-edge pt-2">
@@ -269,7 +278,7 @@ function AssertFact({
         />
         <button
           type="submit"
-          className="h-8 border border-vela-edge px-3 text-xs tracking-wide text-vela-ink uppercase hover:border-vela-accent hover:text-vela-accent disabled:opacity-40"
+          className="h-8 border border-vela-edge px-3 text-sm tracking-wide text-vela-ink hover:border-vela-accent hover:text-vela-accent disabled:opacity-40"
           disabled={pending || !key.trim()}
         >
           {pending ? '…' : 'asertar'}

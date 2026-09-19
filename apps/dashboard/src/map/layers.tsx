@@ -9,15 +9,28 @@ import { CIV_STATE } from '../story/labels'
 import { seconds } from '../story/format'
 import { cellCenter, projectCell, type Box, type Geo } from './project'
 
+/** Los colores del mapa salen de `@theme` y no hay un solo literal en este fichero
+ *  (REQ-199): un valor suelto aquí dentro no se puede comparar con el del banner sin
+ *  abrir dos ficheros, y esa comparación —que `burning` y `vela-replan` no se confundan a
+ *  diez metros— es la que decide si el banner sigue siendo un acontecimiento. */
+const INK = 'var(--color-vela-ink)'
+const DIM = 'var(--color-vela-dim)'
+const EDGE = 'var(--color-vela-edge)'
+const ACCENT = 'var(--color-vela-accent)'
+const WARN = 'var(--color-vela-warn)'
+
 /** El fuego va en ámbar y naranja, nunca en rojo: `vela-replan` está reservado al
- *  banner de replan y si el mapa lo gasta, el banner deja de significar nada. */
+ *  banner de replan y si el mapa lo gasta, el banner deja de significar nada.
+ *
+ *  Sigue siendo una tabla explícita sobre `CellState` y no una plantilla de nombres: así
+ *  un estado nuevo de P1 rompe la compilación en vez de pintar una celda transparente. */
 const CELL_FILL: Record<CellState, string> = {
   intact: 'transparent',
-  at_risk: 'rgba(251, 191, 36, 0.18)',
-  burning: 'rgba(249, 115, 22, 0.55)',
-  burnt: 'rgba(120, 113, 108, 0.35)',
-  flooded: 'rgba(56, 189, 248, 0.30)',
-  dark: 'rgba(30, 41, 59, 0.60)',
+  at_risk: 'var(--color-vela-cell-at-risk)',
+  burning: 'var(--color-vela-cell-burning)',
+  burnt: 'var(--color-vela-cell-burnt)',
+  flooded: 'var(--color-vela-cell-flooded)',
+  dark: 'var(--color-vela-cell-dark)',
 }
 
 export function CellsLayer({ cells, geo }: { cells: Map<string, CellState>; geo: Geo }) {
@@ -67,7 +80,7 @@ export function RoadsLayer({
               y1={a.z}
               x2={b.x}
               y2={b.z}
-              stroke={cut ? '#f59e0b' : '#223041'}
+              stroke={cut ? WARN : EDGE}
               strokeWidth={cut ? stroke * 1.6 : stroke}
               strokeDasharray={cut ? `${stroke * 3} ${stroke * 2}` : undefined}
             />
@@ -76,7 +89,7 @@ export function RoadsLayer({
                 <text
                   x={(a.x + b.x) / 2}
                   y={(a.z + b.z) / 2 - stroke * 3}
-                  fill="#f59e0b"
+                  fill={WARN}
                   fontSize={stroke * 9}
                   textAnchor="middle"
                 >
@@ -88,7 +101,7 @@ export function RoadsLayer({
                   <text
                     x={(a.x + b.x) / 2}
                     y={(a.z + b.z) / 2 + stroke * 9}
-                    fill="#f59e0b"
+                    fill={WARN}
                     fontSize={stroke * 7}
                     textAnchor="middle"
                   >
@@ -126,17 +139,17 @@ export function PoisLayer({
               width={stroke * 6}
               height={stroke * 6}
               fill="none"
-              stroke="#7d8da1"
+              stroke={DIM}
               strokeWidth={stroke}
             />
-            <text x={poi.x + stroke * 5} y={poi.z} fill="#e6ecf3" fontSize={stroke * 9}>
+            <text x={poi.x + stroke * 5} y={poi.z} fill={INK} fontSize={stroke * 9}>
               {poi.name}
             </text>
             {civ && (
               <text
                 x={poi.x + stroke * 5}
                 y={poi.z + stroke * 9}
-                fill={civ.state === 'safe' ? '#38bdf8' : '#fbbf24'}
+                fill={civ.state === 'safe' ? ACCENT : WARN}
                 fontSize={stroke * 8}
               >
                 {civ.count} {CIV_STATE[civ.state]}
@@ -176,7 +189,7 @@ export function AssignmentsLayer({
             <polyline
               points={points.map((p) => `${p.x},${p.z}`).join(' ')}
               fill="none"
-              stroke="#38bdf8"
+              stroke={ACCENT}
               strokeWidth={stroke * 1.4}
               markerEnd="url(#vela-arrow)"
             />
@@ -184,7 +197,7 @@ export function AssignmentsLayer({
               <text
                 x={last.x + stroke * 3}
                 y={last.z - stroke * 4}
-                fill="#38bdf8"
+                fill={ACCENT}
                 fontSize={stroke * 8}
               >
                 {seconds(assignment.eta_s)}
@@ -213,7 +226,7 @@ export function UnitsLayer({ units, stroke }: { units: UnitView[]; stroke: numbe
             <g transform={`rotate(${unit.heading})`}>
               <path
                 d={`M 0 ${-stroke * 4} L ${stroke * 2.6} ${stroke * 3} L ${-stroke * 2.6} ${stroke * 3} Z`}
-                fill={down ? '#7d8da1' : '#e6ecf3'}
+                fill={down ? DIM : INK}
                 opacity={down ? 0.5 : 1}
               />
             </g>
@@ -223,14 +236,14 @@ export function UnitsLayer({ units, stroke }: { units: UnitView[]; stroke: numbe
                 y1={-stroke * 4}
                 x2={stroke * 4}
                 y2={stroke * 4}
-                stroke="#f59e0b"
+                stroke={WARN}
                 strokeWidth={stroke}
               />
             )}
             <text
               x={stroke * 5}
               y={stroke * 3}
-              fill={down ? '#f59e0b' : '#7d8da1'}
+              fill={down ? WARN : DIM}
               fontSize={stroke * 7}
             >
               {unit.id.replace('unit_', '')}
@@ -258,13 +271,13 @@ export function WindLegend({
   return (
     <g>
       <g transform={`translate(${x} ${y}) rotate(${bearing})`}>
-        <line y1={stroke * 6} y2={-stroke * 6} stroke="#38bdf8" strokeWidth={stroke} />
+        <line y1={stroke * 6} y2={-stroke * 6} stroke={ACCENT} strokeWidth={stroke} />
         <path
           d={`M 0 ${-stroke * 8} L ${stroke * 2} ${-stroke * 4} L ${-stroke * 2} ${-stroke * 4} Z`}
-          fill="#38bdf8"
+          fill={ACCENT}
         />
       </g>
-      <text x={x} y={y + stroke * 12} fill="#7d8da1" fontSize={stroke * 7} textAnchor="middle">
+      <text x={x} y={y + stroke * 12} fill={DIM} fontSize={stroke * 7} textAnchor="middle">
         viento {Math.round(bearing)}° · {speed}
       </text>
     </g>
@@ -284,7 +297,7 @@ export function ArrowMarker({ stroke }: { stroke: number }) {
         markerHeight={stroke * 4}
         orient="auto-start-reverse"
       >
-        <path d="M 0 0 L 10 5 L 0 10 z" fill="#38bdf8" />
+        <path d="M 0 0 L 10 5 L 0 10 z" fill={ACCENT} />
       </marker>
     </defs>
   )

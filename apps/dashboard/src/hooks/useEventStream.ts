@@ -17,9 +17,21 @@ export interface EventStream {
   plan: Plan | null
   events: Event[]
   connected: boolean
+  /** Socket abierto Y snapshot recibido. No es lo mismo que `connected`: `onopen` llega
+   *  antes que el primer frame, y en ese hueco la pantalla no tiene nada que pintar
+   *  todavía pero tampoco está vacía de verdad. Es lo que separa el esqueleto de la
+   *  reconexión (REQ-202) del estado vacío de un run que aún no ha empezado (REQ-193):
+   *  dos cosas distintas que sin esta bandera se ven igual. */
+  hydrated: boolean
 }
 
-const INERT: EventStream = { state: null, plan: null, events: [], connected: false }
+const INERT: EventStream = {
+  state: null,
+  plan: null,
+  events: [],
+  connected: false,
+  hydrated: false,
+}
 
 // --- Los frames del WS ---------------------------------------------------------
 //
@@ -91,7 +103,13 @@ export function useEventStream(url = '/ws'): EventStream {
       // Se descartan los eventos anteriores a propósito: tras un hueco o una
       // reconexión, el histórico que hay en pantalla ya no es de fiar y enseñar un
       // log incompleto como si fuera completo es peor que no enseñarlo.
-      setStream({ state: snap.state, plan: snap.plan, events: [], connected: true })
+      setStream({
+        state: snap.state,
+        plan: snap.plan,
+        events: [],
+        connected: true,
+        hydrated: true,
+      })
     }
 
     const applyEvent = (ev: Event) => {
@@ -108,6 +126,9 @@ export function useEventStream(url = '/ws'): EventStream {
         state: prev.state ? { ...prev.state, seq: ev.seq, t_sim: ev.t_sim } : null,
         events: [...trim(prev.events), ev],
         connected: true,
+        // Si llega un evento en orden es que el snapshot ya pasó: un hueco en `seq` no
+        // llega aquí, lo desvía `recover()`.
+        hydrated: true,
       }))
     }
 
@@ -136,7 +157,9 @@ export function useEventStream(url = '/ws'): EventStream {
 
       ws.onopen = () => {
         attempt = 0
-        if (!stopped) setStream((prev) => ({ ...prev, connected: true }))
+        // Conectado pero todavía sin snapshot: es el hueco del esqueleto, y dura lo que
+        // tarde el servidor en mandar el primer frame.
+        if (!stopped) setStream((prev) => ({ ...prev, connected: true, hydrated: false }))
       }
 
       ws.onmessage = (msg) => {
@@ -165,7 +188,11 @@ export function useEventStream(url = '/ws'): EventStream {
 
       ws.onclose = () => {
         if (stopped) return
-        setStream((prev) => ({ ...prev, connected: false }))
+        // Socket caído: se apaga también el esqueleto. Uno que se queda pulsando mientras
+        // el servidor no vuelve se lee como *roto*, que es el fallo que los estados
+        // vacíos de REQ-193 existen para evitar. Aquí manda el vacío, y el aviso de la
+        // cabecera dice por qué no llega nada.
+        setStream((prev) => ({ ...prev, connected: false, hydrated: false }))
         scheduleReconnect()
       }
 

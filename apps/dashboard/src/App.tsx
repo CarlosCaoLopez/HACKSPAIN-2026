@@ -17,14 +17,14 @@ import { WhatChangedPanel } from './panels/WhatChangedPanel'
  *  REPLAN y de nada más, y esto no es una alarma — es una aclaración. */
 function Badge({ children }: { children: string }) {
   return (
-    <span className="rounded border border-amber-500/40 px-2 py-0.5 text-xs text-amber-400">
+    <span className="rounded border border-vela-warn/40 px-2 py-0.5 text-xs text-vela-warn">
       {children}
     </span>
   )
 }
 
 export default function App() {
-  const { state, plan, events, connected } = useEventStream()
+  const { state, plan, events, connected, hydrated } = useEventStream()
   // La geometría del mapa no viaja por eventos: se pide por HTTP, y el run en curso
   // decide de qué escenario (H3).
   const scenarioId = useScenarioId(events)
@@ -35,6 +35,11 @@ export default function App() {
   // El run ha terminado: es cuando la comparación tiene algo nuevo que decir, y cuando
   // yo la abro en el pitch.
   const finished = events.some((ev) => ev.type === 'run.ended')
+  // Socket abierto y snapshot en vuelo: el hueco del esqueleto (REQ-202). Se calcula
+  // aquí una vez y baja como una sola prop, porque con el socket CAÍDO no hay esqueleto
+  // que valga — ahí mandan los estados vacíos, y uno que se quedara pulsando para
+  // siempre volvería a leerse como *roto*.
+  const awaitingSnapshot = connected && !hydrated
 
   return (
     // REQ-018: entra completo en 1920×1080 sin scroll vertical. La rejilla es
@@ -49,17 +54,24 @@ export default function App() {
     <div className="relative grid h-screen grid-rows-[auto_auto_1fr] bg-vela-bg">
       <header className="flex items-baseline gap-4 px-4 py-2">
         <span className="text-lg font-bold tracking-widest text-vela-ink">VELA</span>
-        <span className="text-xs text-vela-dim">
-          ver · establecer prioridad · llamar · adaptar
+        {/* Estado, no promesa (REQ-198). Aquí estaba el eslogan, que es marketing en una
+            pantalla sin sitio y que además digo yo en voz alta en el minuto 0. Lo que
+            hace falta saber de un vistazo es qué escenario corre y si sigue vivo. */}
+        <span className="text-sm text-vela-dim">
+          {scenarioId ?? 'sin escenario'} · {finished ? 'run terminado' : 'run en curso'}
         </span>
         {health?.calls === 'simuladas' && <Badge>llamadas simuladas</Badge>}
         {health?.minecraft === 'apagado' && <Badge>sin Minecraft</Badge>}
         <span className="ml-auto text-xs tabular-nums text-vela-dim">
-          t_sim {state?.t_sim.toFixed(1) ?? '—'} · seq {state?.seq ?? '—'} ·{' '}
-          {events.length} eventos
+          t_sim {state?.t_sim.toFixed(1) ?? '—'} · seq {state?.seq ?? '—'}
         </span>
-        <span className={connected ? 'text-xs text-vela-accent' : 'text-xs text-vela-dim'}>
-          {connected ? 'conectado' : 'sin conexión'}
+        {/* El estado del socket va PEGADO al contador que lo valida (REQ-201): si el WS
+            cae, el número que deja de subir y el aviso que lo explica tienen que estar
+            en el mismo sitio, no uno en cada punta de la cabecera. */}
+        <span
+          className={`text-xs tabular-nums ${connected ? 'text-vela-dim' : 'text-vela-warn'}`}
+        >
+          ● {events.length} eventos{connected ? '' : ' · sin conexión'}
         </span>
         <button
           type="button"
@@ -81,19 +93,25 @@ export default function App() {
 
       <main className="grid min-h-0 grid-cols-12 grid-rows-3 gap-3 p-3 pt-0">
         <div className="col-span-7 row-span-2 min-h-0">
-          <MapPanel state={state} plan={plan} events={events} scenarioId={scenarioId} />
+          <MapPanel
+            state={state}
+            plan={plan}
+            events={events}
+            scenarioId={scenarioId}
+            awaitingSnapshot={awaitingSnapshot}
+          />
         </div>
         <div className="col-span-5 min-h-0">
-          <WhatChangedPanel events={events} />
+          <WhatChangedPanel events={events} awaitingSnapshot={awaitingSnapshot} />
         </div>
         <div className="col-span-5 min-h-0">
-          <PriorityQueue plan={plan} state={state} />
+          <PriorityQueue plan={plan} state={state} awaitingSnapshot={awaitingSnapshot} />
         </div>
         <div className="col-span-4 min-h-0">
-          <ActionLog events={events} />
+          <ActionLog events={events} awaitingSnapshot={awaitingSnapshot} />
         </div>
         <div className="col-span-4 min-h-0">
-          <CallsPanel events={events} />
+          <CallsPanel events={events} awaitingSnapshot={awaitingSnapshot} />
         </div>
         <div className="col-span-4 min-h-0">
           <DivergenceChart events={events} />

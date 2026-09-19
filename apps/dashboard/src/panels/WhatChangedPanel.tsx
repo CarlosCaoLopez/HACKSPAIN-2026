@@ -8,41 +8,53 @@
 import { useEffect, useMemo, useRef } from 'react'
 
 import type { Event } from '../types'
-import { Panel } from '../components/Panel'
+import { Empty, Panel, Skeleton, Truncated } from '../components/Panel'
 import { chain, extend, type CauseIndex } from '../story/causes'
 import { describe, type Tone } from '../story/describe'
 import { mmss } from '../story/format'
 import { isSignificant } from '../story/significant'
 
-/** Filas en pantalla. Más allá de esto no se lee nada y solo cuesta render. */
+/** Filas en pantalla. Más allá de esto no se lee nada y solo cuesta render. Lo que se
+ *  corta se dice al pie: cortar en silencio deja abierta la pregunta «¿lo estás
+ *  enseñando todo?» (REQ-195). */
 const MAX_ROWS = 120
 
 const TONE: Record<Tone, string> = {
-  // El rojo está reservado al replan. Si algo más lo usa, el banner deja de significar
-  // nada (index.css lo dice y esta tabla es donde se respeta).
+  // Un color, un trabajo (REQ-200). El rojo está reservado al replan —si algo más lo usa,
+  // el banner deja de significar nada—, el cian es la voz del sistema (decidir) y las
+  // llamadas, que son la otra voz de la historia, tienen la suya.
   replan: 'text-vela-replan',
   decision: 'text-vela-accent',
   fact: 'text-vela-ink',
   world: 'text-vela-ink',
-  call: 'text-vela-accent',
+  call: 'text-vela-call',
   human: 'text-vela-ink',
-  error: 'text-amber-400',
+  error: 'text-vela-warn',
   muted: 'text-vela-dim',
 }
 
-export function WhatChangedPanel({ events }: { events: Event[] }) {
+export function WhatChangedPanel({
+  events,
+  awaitingSnapshot,
+}: {
+  events: Event[]
+  awaitingSnapshot: boolean
+}) {
   // El índice vive en un ref y se extiende con lo nuevo. `extend` solo añade, así que
   // es idempotente y el doble render de StrictMode no lo estropea.
   const indexRef = useRef<CauseIndex>(new Map())
   const bodyRef = useRef<HTMLDivElement>(null)
 
-  const rows = useMemo(() => {
+  const { rows, total } = useMemo(() => {
     const index = extend(indexRef.current, events)
-    return events
-      .filter(isSignificant)
-      .slice(-MAX_ROWS)
-      .reverse() // lo último arriba: es donde miro cuando estoy hablando
-      .map((ev) => ({ ev, ...describe(ev), causes: chain(ev, index) }))
+    const significant = events.filter(isSignificant)
+    return {
+      total: significant.length,
+      rows: significant
+        .slice(-MAX_ROWS)
+        .reverse() // lo último arriba: es donde miro cuando estoy hablando
+        .map((ev) => ({ ev, ...describe(ev), causes: chain(ev, index) })),
+    }
   }, [events])
 
   // Auto-scroll SOLO si el panel está arriba: si me he desplazado a mirar algo, no me
@@ -53,11 +65,18 @@ export function WhatChangedPanel({ events }: { events: Event[] }) {
   }, [rows])
 
   return (
-    <Panel title="Qué ha cambiado" count={rows.length} bodyRef={bodyRef}>
-      {rows.length === 0 ? (
-        <p>sin datos</p>
+    // El contador cuenta el TOTAL, no lo que cabe: si dice 120 cuando hay 157, el
+    // truncado sigue siendo silencioso aunque haya un número (REQ-195).
+    <Panel title="Qué ha cambiado" count={total} bodyRef={bodyRef}>
+      {awaitingSnapshot ? (
+        <Skeleton rows={5} />
+      ) : rows.length === 0 ? (
+        <Empty>
+          Aquí aparece cada cambio con su causa: llamada → hecho → replan → orden.
+        </Empty>
       ) : (
-        <ol className="flex flex-col gap-2">
+        <>
+          <ol className="flex flex-col gap-2">
           {rows.map(({ ev, label, sentence, tone, causes }) => (
             <li key={ev.seq} className="border-l-2 border-vela-edge pl-2">
               <div className="flex items-baseline gap-2">
@@ -66,10 +85,13 @@ export function WhatChangedPanel({ events }: { events: Event[] }) {
                   {label}
                 </span>
               </div>
+              {/* Nivel *sala* (REQ-197): esta frase es la que tiene que leerse a diez
+                  metros mientras narro, y la del replan un escalón por encima. El cuerpo
+                  del panel ya es `text-base`, así que aquí solo sube el replan. */}
               <p
                 className={
                   tone === 'replan'
-                    ? 'text-base font-semibold text-vela-replan'
+                    ? 'text-lg font-semibold text-vela-replan'
                     : 'text-vela-ink'
                 }
               >
@@ -84,12 +106,16 @@ export function WhatChangedPanel({ events }: { events: Event[] }) {
                 // Honestidad: hubo una causa declarada pero ya no está en memoria.
                 <p className="text-xs text-vela-dim italic">← causa fuera de ventana</p>
               )}
-              <p className="text-[10px] text-vela-dim">
+              {/* Nivel *registro*: es para mí y para la grabación, pero no se quita —
+                  ningún hecho se pinta sin su procedencia (REQ-090). */}
+              <p className="text-xs text-vela-dim">
                 seq {ev.seq} · {ev.source}
               </p>
             </li>
           ))}
-        </ol>
+          </ol>
+          <Truncated n={total - rows.length} />
+        </>
       )}
     </Panel>
   )

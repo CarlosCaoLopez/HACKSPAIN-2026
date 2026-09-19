@@ -8,7 +8,7 @@
 // El umbral viene de `types.ts` (`DIVERGENCE_THRESHOLD`), generado desde `contracts`: si
 // P1 lo mueve, la línea se mueve con él. Escrito a mano aquí, el panel mentiría el día
 // que cambiara y no se vería hasta que el banner saliera antes que el cruce.
-import { Panel } from '../components/Panel'
+import { Empty, Panel } from '../components/Panel'
 import { path, series, xOf, yOf } from '../story/divergence'
 import { mmss } from '../story/format'
 import { DIVERGENCE_THRESHOLD } from '../types'
@@ -33,10 +33,10 @@ export function DivergenceChart({ events }: { events: Event[] }) {
       {s.last === null ? (
         // El vacío dice qué va a aparecer y qué lo dispara, no "sin datos": en el
         // segundo cero del pitch esto enseña al jurado qué mirar antes de que ocurra.
-        <p className="text-vela-dim">
-          Midiendo. La línea cruza {DIVERGENCE_THRESHOLD.toString().replace('.', ',')}{' '}
-          cuando el mundo se aleja del plan.
-        </p>
+        // Fue el primero de los seis (REQ-155) y ahora es uno de los seis (REQ-193).
+        <Empty>
+          {`Midiendo. La línea cruza ${DIVERGENCE_THRESHOLD.toString().replace('.', ',')} cuando el mundo se aleja del plan.`}
+        </Empty>
       ) : (
         <div className="flex h-full min-h-0 flex-col gap-2">
           <div className="flex items-baseline gap-2">

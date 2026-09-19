@@ -3,15 +3,44 @@
 /* Tailwind v4: la config es CSS, no hay tailwind.config.js ni array `content`.
    Se proyecta en una sala grande: fondo oscuro, texto legible a 10 metros, y el
    rojo RESERVADO a REPLAN. Si algo más usa `vela-replan`, el banner deja de
-   significar nada. */
+   significar nada.
+
+   Cada color tiene UN trabajo (REQ-200). El cian era el contador de panel, el tono
+   de decisión, el de llamada y el indicador de conexión a la vez: cuando todo es
+   acento, nada lo es. Ahora:
+
+     replan  el banner, y nada más
+     accent  la voz del sistema: decidir y ordenar
+     call    las llamadas, que son la otra voz
+     warn    los avisos y los planes B: cortes, fallos, sin conexión, sin cubrir
+     dim     el nivel *registro*: seq, source, contadores, metadatos */
 @theme {
   --color-vela-bg: #0a0d12;
   --color-vela-panel: #121821;
   --color-vela-edge: #223041;
+  /* El borde del panel de nivel 1 (REQ-196). El mapa es el nivel 1 y los otros cinco
+     el 2: sin navegación que jerarquice, el borde es la única jerarquía que queda. */
+  --color-vela-edge-bright: #3d5470;
   --color-vela-ink: #e6ecf3;
   --color-vela-dim: #7d8da1;
   --color-vela-accent: #38bdf8;
+  --color-vela-call: #a78bfa;
+  --color-vela-warn: #fbbf24;
   --color-vela-replan: #ef4444;
+  /* El par de la comparación de runs, y solo eso: un run peor no es una emergencia, es
+     un dato, así que ninguno de los dos es el rojo del banner. */
+  --color-vela-good: #34d399;
+
+  /* La rampa de peligro del mapa (REQ-199). Era literales `rgba()` dentro de
+     `map/layers.tsx`; aquí arriba es la única escala secuencial del dashboard, se
+     inspecciona de un vistazo y —lo que importa— `burning` y `vela-replan` se pueden
+     comparar sin abrir dos ficheros. Si a diez metros se confunden, el banner deja de
+     ser un acontecimiento: es la cuarta pregunta de la prueba del proyector. */
+  --color-vela-cell-at-risk: rgba(251, 191, 36, 0.18);
+  --color-vela-cell-burning: rgba(249, 115, 22, 0.55);
+  --color-vela-cell-burnt: rgba(120, 113, 108, 0.35);
+  --color-vela-cell-flooded: rgba(56, 189, 248, 0.3);
+  --color-vela-cell-dark: rgba(30, 41, 59, 0.6);
 
   --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', monospace;
 }
@@ -73,12 +102,31 @@ body {
   }
 }
 
+/* Esqueleto de la reconexión (REQ-202). Un spinner dice "espera"; un esqueleto dice
+   "esto va aquí y ya casi está". El pulso es lento a propósito: es un hueco que se va a
+   llenar en menos de un segundo, no algo que pida atención. */
+.vela-skeleton {
+  background-color: var(--color-vela-edge);
+  animation: vela-skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes vela-skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
 /* El proyector de la sala no tiene por qué respetar esto, pero una máquina con
    "reducir movimiento" activado sí. */
 @media (prefers-reduced-motion: reduce) {
   .vela-unit,
   .vela-plan-enter,
-  .vela-replan-enter {
+  .vela-replan-enter,
+  .vela-skeleton {
     transition: none;
     animation: none;
   }

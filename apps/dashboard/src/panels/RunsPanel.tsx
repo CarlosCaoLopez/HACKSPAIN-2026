@@ -59,7 +59,7 @@ export function RunsPanel({ events, onClose }: { events: Event[]; onClose: () =>
         </button>
       </header>
 
-      {error && <p className="mt-4 text-base text-amber-400">{error}</p>}
+      {error && <p className="mt-4 text-base text-vela-warn">{error}</p>}
 
       {rows.length === 0 && !loading && !error ? (
         // El estado vacío dice qué va a aparecer y cómo llenarlo, no "sin datos".
@@ -141,9 +141,9 @@ function Row({
   // no es una emergencia, es un dato.
   const tone =
     verdict === 'mejor'
-      ? 'text-emerald-400'
+      ? 'text-vela-good'
       : verdict === 'peor'
-        ? 'text-amber-400'
+        ? 'text-vela-warn'
         : 'text-vela-dim'
   return (
     <>
