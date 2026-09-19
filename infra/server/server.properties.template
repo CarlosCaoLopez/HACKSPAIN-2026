@@ -1,0 +1,15 @@
+# Paper 1.21 · las seis claves que importan. El resto, por defecto.
+# PLANTILLA: `make server` la renderiza a server.properties inyectando la
+# contraseña desde el .env de la raíz. Paper expande este fichero al arrancar,
+# por eso el de ejecución está gitignorado y el versionado es este.
+online-mode=false
+enable-rcon=true
+rcon.port=25575
+rcon.password=__RCON_PASSWORD__
+view-distance=24
+simulation-distance=4
+spawn-protection=0
+level-type=minecraft:flat
+level-name=world
+generator-settings={"biome"\:"minecraft\:plains","lakes"\:false,"features"\:false,"layers"\:[{"block"\:"minecraft\:bedrock","height"\:1},{"block"\:"minecraft\:stone","height"\:127},{"block"\:"minecraft\:grass_block","height"\:1}]}
+entity-broadcast-range-percentage=500
