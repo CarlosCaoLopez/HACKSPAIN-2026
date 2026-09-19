@@ -14,6 +14,7 @@ como esquema (`Policy.model_json_schema()`): el mismo contrato es el esquema.
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 
 from openai import AsyncOpenAI
@@ -21,6 +22,8 @@ from openai import AsyncOpenAI
 from contracts.plan import Policy, Violation
 from contracts.settings import settings
 from contracts.world import WorldState
+
+log = logging.getLogger("core.planner")
 
 MODEL = "gpt-5.6-luna"
 """OpenAI. Se cambia aquí y en ningún otro sitio."""
@@ -153,7 +156,8 @@ async def _call(prompt: str) -> Policy:
         )
         args = resp.choices[0].message.tool_calls[0].function.arguments
         return Policy.model_validate(json.loads(args))
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — degradar a pesos neutros es el diseño
+        log.warning("planner sin modelo, pesos neutros: %r", exc)
         return neutral_policy()
 
 
