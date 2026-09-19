@@ -55,6 +55,9 @@ Recibirás señales durante la llamada:
   solo una muletilla corta como «sí, le escucho». Si es `speak` y trae `say`, dilo.
   En todos los casos, en los siguientes turnos adapta el tono (`tone`: calm,
   firm, warm) y el ritmo (`pace`: si es `slow`, frases más cortas y más pausa).
+- `followup`: el sistema no ha entendido un dato y te pide que lo preguntes:
+  haz al vecino exactamente la pregunta del campo `message`, una sola vez, y
+  sigue escuchando.
 Nunca repitas una señal ya dicha ni menciones que recibes señales.
 ```
 
@@ -63,6 +66,7 @@ Nunca repitas una señal ya dicha ni menciones que recibes señales.
 ## 4. Tool `report_fact` (dentro del agente)
 
 - *Description*: «Usa esta herramienta en cuanto sepas dónde está el vecino y al menos un dato más: carretera cortada, personas que no pueden moverse, heridos. Registra el incidente en el centro de coordinación y devuelve lo que debes decirle al vecino.»
+- Desde el sábado el tool es **solo un disparador**: lo que entra al estado lo decide la percepción (Jev, cada 5 s y al colgar), no los parámetros. Los parámetros siguen siendo útiles como texto para el ack y como red de seguridad sin Jev.
 - *Message*: *AI*, descripción «Dile al vecino que lo estás anotando, en una frase corta». Ejemplo: «Un momento, lo anoto.»
 - *Hold music*: *None*. *Execution*: *Blocking*. *End call after this tool*: OFF.
 - *Parameters*:
