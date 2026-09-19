@@ -1,20 +1,31 @@
 # Ancla de `wildfire_ridge` (SPEC-007). Dónde del mundo real está el valle.
 #
-# ESTO ES UN MARCADOR: `fixed: false` deja todas las fuentes `off` con la nota
-# «ancla sin fijar». Las coordenadas de abajo NO son un sitio elegido, solo hacen válido
-# el fichero. Se fija con `make feeds-probe` (F5 del plan): el primer incendio real que dé
-# >= 5 focos FIRMS n/h y un giro de viento visible. Entonces se cambia `fixed` a true y se
-# rellenan `place`, `lat0`, `lon0`, `reference_start` y `edges`.
+# Elegida con `make feeds-probe` y datos reales de NASA FIRMS y Open-Meteo el 2026-09-19: es
+# el candidato que mejor cuenta la historia del guion entre los grandes incendios de agosto
+# de 2025 (`--anchor-override` sobre cinco candidatos, ver docs-nacho/specs/007).
+#
+#   - 76 focos VIIRS n/h dentro del valle entre las 01:30 y las 03:00 UTC (el fuego arranca),
+#   - el viento gira de 74 a 156 grados a las 08:00 UTC (~82 grados, como el «giro de 90» del
+#     guion), y
+#   - 15 focos n/h más en el pase de las 11:30-14:00 UTC, ya con el viento nuevo.
+#
+# `lat0`/`lon0` es la esquina NO del valle (su (0,0)): está desplazada 2,5 km al oeste y 1,2 km
+# al norte del centro de los focos para que caigan a mitad de valle. No es un sitio inventado,
+# pero la correspondencia valle a terreno es DECLARADA y el dashboard lo dice.
 id: wildfire_ridge
-place: "SIN FIJAR (ver make feeds-probe)"
-fixed: false
-lat0: 40.0
-lon0: -4.0
+place: "Boca de Huérgano (León) · focos VIIRS del 16 ago 2025"
+fixed: true
+lat0: 43.0408
+lon0: -4.8708
 meters_per_block: 25
-# reference_start: 2025-08-14T12:00:00+02:00   # con fecha = modo fechado; sin ella, en vivo
-time_scale: 60 # segundos reales por segundo de t_sim
+# Un día real reproducido a velocidad de demo: 120 s reales por segundo de t_sim. Con esto los
+# focos de la noche caen en t_sim 45-90 s, el giro de viento en 240 s y el pase del día a partir
+# de 345 s. Se ajusta aquí si el guion pide otro ritmo.
+reference_start: 2025-08-16T00:00:00+00:00
+time_scale: 120
 spread_ratio: 0.10
 firms_radius_km: 10
-edges: {}
-# Ejemplo de una arista declarada equivalente a un tramo real:
+# DGT no tiene histórico: con un día fechado queda `off` («sin histórico»). Para el modo en vivo,
+# declarar aquí una arista equivalente a un tramo real:
 #   road:wp_sur_03-wp_sur_04: { road_name: N-400, pk_from: 36.0, pk_to: 38.5 }
+edges: {}

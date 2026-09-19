@@ -25,6 +25,7 @@ from gateway.feeds.anchor import (
     load_anchor,
     to_geo,
     to_world,
+    world_box,
 )
 from gateway.feeds.clock import Schedule, due_t_sim
 
@@ -88,10 +89,16 @@ def test_meters_per_block_tiene_que_ser_positivo():
         make_anchor(meters_per_block=0)
 
 
-def test_el_ancla_marcador_del_repo_carga_y_esta_sin_fijar():
+def test_el_ancla_del_repo_carga_esta_fijada_y_es_un_sitio_de_verdad():
+    """Si alguien deja `fixed: true` con las coordenadas del marcador, las fuentes consultarían
+    un punto inventado y lo presentarían como real: por eso se comprueba que el sitio existe
+    dentro de España y que el día está fijado (SPEC-007 REQ-238, modo fechado)."""
     a = load_anchor("wildfire_ridge")
-    assert a is not None
-    assert a.fixed is False, "un marcador con coordenadas inventadas no puede consultar APIs"
+    assert a is not None and a.fixed is True
+    assert 35.5 < a.lat0 < 44.5 and -10.0 < a.lon0 < 5.0, "fuera de la península: un marcador"
+    assert (a.lat0, a.lon0) != (40.0, -4.0), "son las coordenadas del marcador"
+    assert a.reference_start is not None and a.reference_start.tzinfo is not None
+    assert a.place and "SIN FIJAR" not in a.place
 
 
 def test_un_escenario_sin_ancla_devuelve_none():
@@ -126,6 +133,18 @@ def test_sin_la_celda_en_el_estado_se_formatea_como_el_origin_cell_con_ceros():
 def test_fuera_de_la_rejilla_no_es_una_celda():
     assert cell_id_at(-1, 10, 4, {}, "cell_18_7") is None
     assert cell_id_at(10, -0.5, 4, {}, "cell_18_7") is None
+
+
+def test_la_caja_del_valle_sale_de_los_waypoints_y_pois_con_margen():
+    from gateway.scenarios import load_scenario
+
+    sc = load_scenario("wildfire_ridge")
+    x0, x1, z0, z1 = world_box(sc, margin=0)
+    xs = [p.x for p in sc.pois] + [w.x for w in sc.waypoints]
+    zs = [p.z for p in sc.pois] + [w.z for w in sc.waypoints]
+    assert (x0, x1, z0, z1) == (min(xs), max(xs), min(zs), max(zs))
+    wide = world_box(sc, margin=20)
+    assert wide == (x0 - 20, x1 + 20, z0 - 20, z1 + 20)
 
 
 # --- aristas en ruta --------------------------------------------------------------------

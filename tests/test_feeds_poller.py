@@ -307,6 +307,28 @@ async def test_los_focos_de_firms_salen_como_hechos_y_como_detecciones_del_mapa(
     assert feeds.states["firms"].malformed >= 1  # la fila de confianza `x`
 
 
+async def test_firms_fechado_pide_nrt_y_estandar_solo_donde_el_estandar_existe():
+    """`VIIRS_NOAA21_SP` no existe: FIRMS contesta 400 (comprobado contra la API real)."""
+    urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        urls.append(str(request.url))
+        return httpx.Response(200, content=FIRMS, request=request)
+
+    feeds = make_feeds(
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        anchor=anchor(edges={}, reference_start=datetime(2025, 8, 14, tzinfo=UTC)),
+        firms_key="k",
+        only=frozenset({"firms"}),
+    )
+    await run_source_once(feeds, "firms")
+    asked = {u.split("/csv/k/")[1].split("/")[0] for u in urls}
+    assert asked == {
+        "VIIRS_NOAA21_NRT", "VIIRS_NOAA20_NRT", "VIIRS_NOAA20_SP", "VIIRS_SNPP_NRT", "VIIRS_SNPP_SP",
+    }
+    assert feeds.states["firms"].status == "ok"
+
+
 async def test_una_parte_ilegible_no_tumba_a_las_buenas_pero_todas_ilegibles_si():
     good, bad = FIRMS, b"Invalid MAP_KEY."
     routes = {"VIIRS_NOAA21_NRT": good, "VIIRS_NOAA20_NRT": bad, "VIIRS_SNPP_NRT": good}

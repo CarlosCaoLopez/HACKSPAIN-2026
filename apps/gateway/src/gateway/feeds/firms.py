@@ -25,8 +25,9 @@ from gateway.feeds.anchor import GeoAnchor, bbox, cell_id_at, to_world
 AREA_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 # Del más reciente al más antiguo: cada satélite pasa por la zona a horas distintas.
 SOURCES = ("VIIRS_NOAA21_NRT", "VIIRS_NOAA20_NRT", "VIIRS_SNPP_NRT")
+# El procesado estándar solo existe para SNPP y NOAA-20: `VIIRS_NOAA21_SP` no existe y FIRMS
+# contesta 400 (comprobado contra la API real). NOAA-21 solo tiene NRT.
 SP_FALLBACK = {
-    "VIIRS_NOAA21_NRT": "VIIRS_NOAA21_SP",
     "VIIRS_NOAA20_NRT": "VIIRS_NOAA20_SP",
     "VIIRS_SNPP_NRT": "VIIRS_SNPP_SP",
 }
@@ -113,6 +114,34 @@ def source_of(rec: FirmsRecord) -> str:
     return f"api:firms:{rec.satellite}:{rec.t:%Y-%m-%dT%H%M}:{rec.lat:.4f},{rec.lon:.4f}"
 
 
+def _in_valley(ctx: FeedContext, x: float, z: float) -> bool:
+    """El cuadro del ancla (10 km de radio) es mucho más grande que el valle: sobre el
+    ancla real, la sonda publicaba focos a 5-10 km de distancia (`cell_97_10`, fuera de la
+    rejilla real pero dentro del cuadro). `ctx.world_box` es la caja del escenario; sin ella
+    (un adaptador probado suelto) no se filtra."""
+    if ctx.world_box is None:
+        return True
+    x0, x1, z0, z1 = ctx.world_box
+    return x0 <= x <= x1 and z0 <= z <= z1
+
+
+def _severity(rec: FirmsRecord, ctx: FeedContext) -> str:
+    """`critical` solo para el primer foco n/h de cada pase de satélite.
+
+    El core replanifica ante CADA hecho crítico y no los agrupa: contra la API real, un solo
+    día de incendio grande dio ~390 focos n/h en el valle, y con un crítico por foco eso son
+    ~390 llamadas al modelo por un solo suceso (invariante 7). Un pase de satélite es un
+    suceso: el primer foco avisa, el resto es detalle y entra como `medium`.
+    """
+    if rec.confidence == "l":
+        return "low"
+    pass_key = f"firms-pass:{rec.satellite}:{rec.t:%Y-%m-%dT%H%M}"
+    if pass_key in ctx.seen:
+        return "medium"
+    ctx.seen.add(pass_key)
+    return "critical"
+
+
 def to_facts(records: list[FirmsRecord], anchor: GeoAnchor, ctx: FeedContext) -> list[Observation]:
     out: list[Observation] = []
     for rec in records:
@@ -123,6 +152,8 @@ def to_facts(records: list[FirmsRecord], anchor: GeoAnchor, ctx: FeedContext) ->
         if dedup in ctx.seen:
             continue
         x, z = to_world(anchor, rec.lat, rec.lon)
+        if not _in_valley(ctx, x, z):  # a varios km del valle no es un hecho de este mundo
+            continue
         cell = cell_id_at(x, z, ctx.cell_size, ctx.cells, ctx.origin_cell)
         if cell is None:  # cae fuera de la rejilla del valle: no hay celda que encender
             continue
@@ -134,7 +165,7 @@ def to_facts(records: list[FirmsRecord], anchor: GeoAnchor, ctx: FeedContext) ->
                     value="burning",
                     confidence=CONFIDENCE[rec.confidence],
                     source=source,
-                    severity="low" if rec.confidence == "l" else "critical",
+                    severity=_severity(rec, ctx),
                     kind="observed",
                 ),
             )
@@ -144,12 +175,10 @@ def to_facts(records: list[FirmsRecord], anchor: GeoAnchor, ctx: FeedContext) ->
 
 
 def detections(records: list[FirmsRecord], anchor: GeoAnchor) -> list[dict[str, Any]]:
-    """Para el mapa (`/api/feeds`): el foco con el tamaño de su píxel.
-
-    No entra en el hecho porque `FactAsserted` no tiene dónde llevarlo. Un satélite no
-    localiza un foco a un bloque: enseñar un punto sería una precisión falsa, así que se
-    enseña el cuadrado de 375 m con su incertidumbre.
-    """
+    """Para el mapa real (`/api/feeds`): la posición geográfica de cada foco del cuadro,
+    esté o no dentro de la rejilla del valle (a diferencia de `to_facts`, que solo publica
+    los de dentro). Sin huella de píxel: Minecraft no tiene un equivalente de 375 m que
+    mostrar, y el mapa real dibuja el cuadrado con su propia constante (SPEC-008 REQ-288)."""
     out = []
     for rec in records:
         if not _inside(anchor, rec):

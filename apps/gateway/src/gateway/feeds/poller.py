@@ -33,7 +33,7 @@ import httpx
 from contracts.events import EventType
 from contracts.scenario import Scenario
 from gateway.feeds import FeedContext, Observation, capture, dgt, firms, open_meteo
-from gateway.feeds.anchor import GeoAnchor, anchor_view, edges_on_route
+from gateway.feeds.anchor import GeoAnchor, anchor_view, edges_on_route, world_box
 from gateway.feeds.clock import Schedule
 
 if TYPE_CHECKING:
@@ -148,7 +148,9 @@ class Feeds:
     def __post_init__(self) -> None:
         self.states = {n: FeedState() for n in NAMES}
         self.ctx = FeedContext(
-            origin_cell=self.scenario.hazard.origin_cell, cell_size=self.scenario.hazard.cell_size
+            origin_cell=self.scenario.hazard.origin_cell,
+            cell_size=self.scenario.hazard.cell_size,
+            world_box=world_box(self.scenario),
         )
 
     # --- qué fuentes arrancan ------------------------------------------------------------
@@ -231,7 +233,8 @@ class Feeds:
                 # En un día viejo el NRT no da error: da un CSV vacío. Por eso, en modo
                 # fechado se piden el NRT **y** el procesado estándar, y la deduplicación por
                 # `source` une los focos que salgan en los dos.
-                candidates = (source,) if date is None else (source, firms.SP_FALLBACK[source])
+                fallback = firms.SP_FALLBACK.get(source)
+                candidates = (source,) if date is None or fallback is None else (source, fallback)
                 for candidate in candidates:
                     try:
                         parts.append(

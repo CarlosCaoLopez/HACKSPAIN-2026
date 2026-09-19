@@ -73,10 +73,44 @@ def test_los_focos_dentro_del_cuadro_y_de_la_rejilla_dan_hechos_burning():
         assert validate_fact_key(o.fact.key) is str
 
 
-def test_confianza_y_severidad_salen_de_l_n_h():
+def test_la_confianza_sale_de_l_n_h():
     obs = to_facts(parse_csv(CSV).records, anchor(), ctx())
-    by_conf = {(o.fact.confidence, o.fact.severity) for o in obs}
-    assert by_conf == {(0.7, "critical"), (0.9, "critical"), (0.4, "low")}
+    assert sorted(o.fact.confidence for o in obs) == [0.4, 0.7, 0.9]
+
+
+def test_solo_el_primer_foco_n_h_de_cada_pase_es_critico():
+    """El core replanifica ante cada hecho crítico y no los agrupa: con un crítico por foco, un
+    incendio grande (cientos de focos por pase) serían cientos de llamadas al modelo. Visto con
+    la API real: ~390 críticos en un solo día sobre el valle."""
+    obs = to_facts(parse_csv(CSV).records, anchor(), ctx())
+    by_conf = {o.fact.confidence: o.fact.severity for o in obs}
+    # r1 (n) y r2 (h) son del mismo pase (N, 10:30): el primero avisa, el otro es detalle.
+    assert by_conf == {0.7: "critical", 0.9: "medium", 0.4: "low"}
+
+
+def test_un_pase_ya_avisado_no_vuelve_a_ser_critico_en_el_siguiente_sondeo():
+    c = ctx()
+    to_facts(parse_csv(CSV).records[:1], anchor(), c)  # avisa el pase N de las 10:30
+    second = to_facts(parse_csv(CSV).records[1:2], anchor(), c)  # otro foco del mismo pase
+    assert second[0].fact.severity == "medium"
+
+
+def test_un_pase_distinto_vuelve_a_avisar():
+    rows = parse_csv(CSV).records
+    same_pass = [r for r in rows if r.satellite == "N"]
+    other = [r for r in rows if r.satellite == "1"]
+    c = ctx()
+    critical = [o for o in to_facts(same_pass + other, anchor(), c) if o.fact.severity == "critical"]
+    assert len(critical) == 1  # `l` es `low`: de los n/h solo el pase N tiene uno crítico
+
+
+def test_solo_se_publican_los_focos_de_la_caja_del_valle():
+    """Con la API real la sonda publicaba focos a 5-10 km del valle (`cell_97_10`)."""
+    everywhere = to_facts(parse_csv(CSV).records, anchor(), ctx())
+    boxed = FeedContext(origin_cell="cell_18_7", cell_size=4, world_box=(0.0, 60.0, 0.0, 30.0))
+    inside = to_facts(parse_csv(CSV).records, anchor(), boxed)
+    assert len(everywhere) == 3 and len(inside) == 1  # solo (x~51, z~22) cae en la caja
+    assert inside[0].fact.confidence == 0.4
 
 
 def test_la_celda_sale_de_la_proyeccion_y_del_formato_del_escenario():

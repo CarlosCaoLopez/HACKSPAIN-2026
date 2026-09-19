@@ -44,7 +44,7 @@ async def fetch_hourly(client: httpx.AsyncClient, anchor: GeoAnchor, day: dateti
     """La serie horaria del día de `day`, en bruto. Archivo si tiene más de 5 días; forecast si no."""
     age_days = (datetime.now(UTC) - day).days
     url = ARCHIVE_URL if age_days > ARCHIVE_DELAY_DAYS else FORECAST_URL
-    params = {
+    params: dict[str, str | float] = {
         "latitude": anchor.lat0,
         "longitude": anchor.lon0,
         "hourly": "wind_speed_10m,wind_direction_10m",
@@ -59,7 +59,7 @@ async def fetch_hourly(client: httpx.AsyncClient, anchor: GeoAnchor, day: dateti
 
 
 async def fetch_current(client: httpx.AsyncClient, anchor: GeoAnchor) -> bytes:
-    params = {
+    params: dict[str, str | float] = {
         "latitude": anchor.lat0,
         "longitude": anchor.lon0,
         "current": "wind_speed_10m,wind_direction_10m",

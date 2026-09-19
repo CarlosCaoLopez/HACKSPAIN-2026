@@ -60,6 +60,9 @@ class FeedContext:
     origin_cell: str = ""
     cell_size: int = 4
     route_edges: frozenset[str] = frozenset()  # ids de aristas que recorre el plan vigente
+    # (x_min, x_max, z_min, z_max) en bloques: lo que es «el valle». Fuera de esto un foco no es
+    # un hecho de este mundo. `None` = sin límite (los tests de un adaptador suelto).
+    world_box: tuple[float, float, float, float] | None = None
     last_wind: dict[str, float] = field(default_factory=dict)  # lo último publicado
     seen: set[str] = field(default_factory=set)  # `<fuente>:<id>` ya publicados
 

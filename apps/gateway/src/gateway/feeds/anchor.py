@@ -23,6 +23,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from contracts.scenario import Scenario
 from contracts.world import Cell, RoadEdge
 
 log = logging.getLogger("vela.feeds")
@@ -161,6 +162,16 @@ def cell_id_at(
     return f"{match['prefix']}{cx:0{wx}d}_{cz:0{wz}d}"
 
 
+WORLD_BOX_MARGIN_BLOCKS = 20.0  # medio kilómetro a 25 m/bloque: un píxel VIIRS mide 375 m
+
+
+def world_box(scenario: Scenario, margin: float = WORLD_BOX_MARGIN_BLOCKS) -> tuple[float, float, float, float]:
+    """La caja del valle: la extensión de sus waypoints y POIs, con un margen."""
+    points = [(w.x, w.z) for w in scenario.waypoints] + [(p.x, p.z) for p in scenario.pois]
+    xs, zs = [p[0] for p in points], [p[1] for p in points]
+    return min(xs) - margin, max(xs) + margin, min(zs) - margin, max(zs) + margin
+
+
 def edges_on_route(routes: Iterable[Sequence[str]], roads: Iterable[RoadEdge]) -> set[str]:
     """Los ids de las aristas que recorre alguna ruta del plan, en cualquier sentido.
 
@@ -187,4 +198,5 @@ __all__ = [
     "load_anchor",
     "to_geo",
     "to_world",
+    "world_box",
 ]
