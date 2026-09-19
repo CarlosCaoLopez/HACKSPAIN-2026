@@ -40,6 +40,10 @@
   --color-vela-cell-at-risk: rgba(251, 191, 36, 0.55);
   --color-vela-cell-burning: rgba(249, 115, 22, 0.7);
   --color-vela-cell-burnt: rgba(28, 25, 23, 0.6);
+  /* «Mojada»: la apagó un camión (`cause: extinguished`). Azul grisáceo, a medio camino
+     entre el negro de `burnt` y el celeste de `flooded`, para que se lea como «aquí
+     hubo fuego y lo paramos nosotros» y no como agua ni como ceniza. */
+  --color-vela-cell-wet: rgba(100, 130, 160, 0.62);
   --color-vela-cell-flooded: rgba(56, 189, 248, 0.5);
   --color-vela-cell-dark: rgba(15, 23, 42, 0.72);
   /* Halo de los rótulos y fondo de las insignias del mapa real. Tokens y no literales. */

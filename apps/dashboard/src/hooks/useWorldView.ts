@@ -2,13 +2,14 @@
 //
 // `docs/interfaces.md` lo autoriza en una frase: «no dupliquéis belief.apply a mano en
 // TypeScript: reimplementad solo lo que necesitéis pintar». Esto es esa lista, y es
-// CERRADA — cinco cosas:
+// CERRADA — seis cosas:
 //
 //   1. posición y rumbo de unidad     (world.unit.position)
 //   2. estado de unidad               (world.unit.status)
-//   3. estado de celda                (world.cell.changed, world.fire.detected)
+//   3. estado de celda y su causa     (world.cell.changed, world.fire.detected)
 //   4. corte de carretera             (world.road.changed)
 //   5. grupos de civiles              (world.civilians.changed)
+//   6. pin del vecino por Telegram    (citizen.location)
 //
 // Fuera de eso no se deriva NADA: ni tareas, ni acumulación de hechos con confianzas,
 // ni propagación de fuego, ni ETAs, ni costes. Eso es el modelo de creencia y es de P1;
@@ -19,7 +20,30 @@
 // la vista desde el snapshot y los eventos solo rellenan lo que el estado no traiga.
 import { useMemo, useRef } from 'react'
 
-import type { CellState, CivState, Event, UnitStatus, VelaEvent, Wind, WorldState } from '../types'
+import type {
+  CellChanged,
+  CellState,
+  CivState,
+  Event,
+  UnitStatus,
+  VelaEvent,
+  Wind,
+  WorldState,
+} from '../types'
+
+export type CellCause = NonNullable<CellChanged['cause']>
+
+/** El pin GPS de un vecino, ya proyectado a (x, z) por el core. Uno por chat: un pin
+ *  nuevo del mismo chat sustituye al anterior (es donde está AHORA). */
+export interface CitizenView {
+  callId: string
+  x: number
+  z: number
+  poiId: string | null
+  poiName: string | null
+  live: boolean
+  tSim: number
+}
 
 export interface UnitView {
   id: string
@@ -44,6 +68,12 @@ export interface CivilianView {
 export interface WorldView {
   units: Map<string, UnitView>
   cells: Map<string, CellState>
+  /** Por qué cambió cada celda la última vez, si el evento lo dijo. `extinguished` es la
+   *  que importa pintar: una celda que apagó un camión no es una que se quemó sola. El
+   *  snapshot no trae causa (`Cell` no la lleva), así que tras un `seed` se parte de cero. */
+  cellCauses: Map<string, CellCause>
+  /** Pins de vecinos por Telegram, por `call_id` (`tg_<chat>`). Solo los que traen (x, z). */
+  citizens: Map<string, CitizenView>
   /** `edge_id` → causa del corte (`null` si no se dijo). Solo los cortados. */
   cutRoads: Map<string, string | null>
   civilians: Map<string, CivilianView>
@@ -68,6 +98,8 @@ function empty(): Derived {
   return {
     units: new Map(),
     cells: new Map(),
+    cellCauses: new Map(),
+    citizens: new Map(),
     cutRoads: new Map(),
     civilians: new Map(),
     wind: null,
@@ -142,12 +174,33 @@ function fold(d: Derived, envelope: Event): void {
       if (before) d.units.set(p.unit_id, { ...before, status: p.status })
       break
     }
-    case 'world.cell.changed':
-      d.cells.set(ev.payload.cell_id, ev.payload.state)
+    case 'world.cell.changed': {
+      const p = ev.payload
+      d.cells.set(p.cell_id, p.state)
+      if (p.cause) d.cellCauses.set(p.cell_id, p.cause)
+      else d.cellCauses.delete(p.cell_id)
       break
+    }
     case 'world.fire.detected':
       d.cells.set(ev.payload.cell_id, 'burning')
+      d.cellCauses.delete(ev.payload.cell_id)
       break
+    case 'citizen.location': {
+      const p = ev.payload
+      // Sin (x, z) el core no supo proyectar el pin: no se pinta en un sitio inventado.
+      // La tarjeta de la llamada sí lo enseña (lat/lon y «sin anclar»).
+      if (p.x == null || p.z == null) return
+      d.citizens.set(p.call_id, {
+        callId: p.call_id,
+        x: p.x,
+        z: p.z,
+        poiId: p.poi_id ?? null,
+        poiName: p.poi_name ?? null,
+        live: p.live,
+        tSim: ev.t_sim,
+      })
+      break
+    }
     case 'world.road.changed': {
       const p = ev.payload
       if (p.cut) d.cutRoads.set(p.edge_id, p.cause ?? null)
@@ -197,6 +250,8 @@ export function useWorldView(state: WorldState | null, events: Event[]): WorldVi
     return {
       units: d.units,
       cells: d.cells,
+      cellCauses: d.cellCauses,
+      citizens: d.citizens,
       cutRoads: d.cutRoads,
       civilians: d.civilians,
       wind: d.wind,

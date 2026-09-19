@@ -6,8 +6,8 @@
 //
 // Las claves son los `Literal` de contracts, así que si P1 añade un estado, TypeScript
 // obliga a traducirlo aquí.
-import type { CellState, CivState, POIKind, UnitKind, UnitStatus } from '../types'
-import type { CallOutcome, OverrideKind, TaskSeverity, Verb } from '../types'
+import type { CellChanged, CellState, CivState, POIKind, UnitKind, UnitStatus } from '../types'
+import type { CallOutcome, OverrideKind, TaskKind, TaskSeverity, Verb } from '../types'
 
 export const UNIT_STATUS: Record<UnitStatus, string> = {
   idle: 'libre',
@@ -30,6 +30,16 @@ export const CELL_STATE: Record<CellState, string> = {
   burnt: 'quemada',
   flooded: 'inundada',
   dark: 'sin luz',
+}
+
+/** Por qué cambió una celda. `extinguished` es la única que cuenta una acción nuestra
+ *  —un camión la ha sofocado— y por eso es la única que no se filtra como ruido. */
+export const CELL_CAUSE: Record<NonNullable<CellChanged['cause']>, string> = {
+  spread: 'propagación',
+  burnout: 'consumida',
+  extinguished: 'apagada por camión',
+  inject: 'inject',
+  at_risk: 'amenazada',
 }
 
 export const CIV_STATE: Record<CivState, string> = {
@@ -72,6 +82,17 @@ export const VERB: Record<Verb, string> = {
   set_marker: 'marcar',
   announce: 'anunciar',
   rescue: 'rescatar',
+}
+
+/** Las tareas se nombran por lo que son, no por su id: `task_front_12_7` no se lee, y el
+ *  prefijo del id es cosa del core (hoy `task_front_`, ayer `task_ext_`). */
+export const TASK_KIND: Record<TaskKind, string> = {
+  evacuate: 'evacuar',
+  extinguish: 'frente',
+  rescue: 'rescatar',
+  notify: 'avisar',
+  recon: 'reconocer',
+  restore: 'restaurar',
 }
 
 export const SEVERITY: Record<TaskSeverity, string> = {

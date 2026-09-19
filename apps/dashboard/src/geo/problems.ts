@@ -80,6 +80,18 @@ export function problems(view: WorldView, layer: ScenarioLayer, plan: Plan | nul
   if (flooded > 0) out.push({ id: 'flooded', level: 1, text: `${flooded} celdas inundadas` })
   if (dark > 0) out.push({ id: 'dark', level: 1, text: `${dark} celdas sin luz` })
 
+  // Un vecino ubicado por Telegram que aún no está a salvo es una zona con problema con
+  // nombre y apellidos: es la persona a la que hay que mandar una unidad (beat 4:25).
+  for (const c of view.citizens.values()) {
+    const group = c.poiId ? [...view.civilians.values()].find((g) => g.poiId === c.poiId) : null
+    if (group?.state === 'safe') continue
+    out.push({
+      id: c.callId,
+      level: 1,
+      text: `vecino por Telegram · ${c.poiName ?? 'sin anclar'}`,
+    })
+  }
+
   // Las tareas sin cubrir solo traen id, sin geometría (REQ-225): se cuentan y no se
   // ubican, y se dice. Ponerlas en un sitio sería inventarlo.
   const uncovered = plan?.unassigned_tasks.length ?? 0

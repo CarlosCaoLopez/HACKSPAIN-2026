@@ -9,16 +9,19 @@ camino frío; esto es el camino caliente del tool, y tiene que tardar milisegund
 from __future__ import annotations
 
 import difflib
+import math
 import re
 import unicodedata
 from pathlib import Path
 
+from contracts.scenario import GeoAnchor
 from contracts.world import POI, RoadEdge
 
 _pois: dict[str, POI] = {}
 _roads: dict[str, RoadEdge] = {}
 _poi_aliases: dict[str, str] = {}  # texto normalizado → poi_id
 _road_aliases: dict[str, str] = {}  # texto normalizado → edge_id
+_geo: GeoAnchor | None = None  # dónde cae un pin GPS de Telegram en este mundo
 
 STOPWORDS = {"el", "la", "los", "las", "de", "del", "en", "al", "un", "una", "por"}
 
@@ -38,9 +41,11 @@ def set_scenario(
     roads: list[RoadEdge] | None = None,
     poi_aliases: dict[str, str] | None = None,
     road_aliases: dict[str, str] | None = None,
+    geo: GeoAnchor | None = None,
 ) -> None:
     """Lo llama el gateway al arrancar el run. Los alias son "molino viejo" →
-    `poi_molino`, "pista sur" → `wp_sur_03-wp_sur_04`."""
+    `poi_molino`, "pista sur" → `wp_sur_03-wp_sur_04`. `geo` es el anclaje del
+    escenario para los pines de Telegram; sin él, un pin no se proyecta."""
     _pois.clear()
     _pois.update({p.id: p for p in pois})
     _roads.clear()
@@ -49,6 +54,17 @@ def set_scenario(
     _poi_aliases.update({normalize(k): v for k, v in (poi_aliases or {}).items()})
     _road_aliases.clear()
     _road_aliases.update({normalize(k): v for k, v in (road_aliases or {}).items()})
+    set_geo(geo)
+
+
+def set_geo(geo: GeoAnchor | None) -> None:
+    global _geo
+    _geo = geo
+
+
+def geo() -> GeoAnchor | None:
+    """El anclaje lat/lon → (x, z) del escenario cargado, o None si no lo declara."""
+    return _geo
 
 
 def load_scenario_yaml(path: Path | str) -> bool:
@@ -60,11 +76,13 @@ def load_scenario_yaml(path: Path | str) -> bool:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     pois = [POI.model_validate(p) for p in data.get("pois") or []]
     roads = [RoadEdge.model_validate(r) for r in data.get("roads") or []]
+    raw_geo = data.get("geo")
     set_scenario(
         pois,
         roads,
         poi_aliases=data.get("poi_aliases") or {},
         road_aliases=data.get("road_aliases") or {},
+        geo=GeoAnchor.model_validate(raw_geo) if raw_geo else None,
     )
     return True
 
@@ -95,6 +113,18 @@ def pois() -> dict[str, POI]:
 def poi_name(poi_id: str | None) -> str | None:
     p = _pois.get(poi_id or "")
     return p.name if p else None
+
+
+def nearest_poi(x: float, z: float, max_m: float) -> POI | None:
+    """El POI más cercano a `(x, z)` si está a `max_m` o menos; si no, None. Es el
+    anclaje de un pin GPS: un pin no se resuelve por *fuzzy match* de texto, se ancla
+    por distancia o se queda sin POI, y el hueco se ve."""
+    best: tuple[float, POI | None] = (math.inf, None)
+    for p in _pois.values():
+        d = math.hypot(p.x - x, p.z - z)
+        if d < best[0]:
+            best = (d, p)
+    return best[1] if best[1] is not None and best[0] <= max_m else None
 
 
 def resolve_poi_local(location_hint: str | None) -> str | None:

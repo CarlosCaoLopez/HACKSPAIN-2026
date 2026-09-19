@@ -22,6 +22,7 @@ import math
 import os
 import random
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from contracts.scenario import Scenario
@@ -102,14 +103,16 @@ se distingan a 10 metros"; el color cumple eso, la forma cumple algo más."""
 # Cada pieza es (bloque, escala, traslación). Varias piezas comparten posición de
 # entidad y se separan por su `transformation`, así que **un solo `/tp` mueve el
 # vehículo entero** y `movement.py` no se entera de que ahora son tres entidades.
-UNIT_SHAPES: dict[str, list[tuple[str, tuple[float, float, float], tuple[float, float, float]]]] = {
+UNIT_SHAPES: dict[
+    str, list[tuple[str, tuple[float, float, float], tuple[float, float, float]]]
+] = {
     # Proporciones de camión, no de plancha: un cuerpo de 1 bloque de alto contra
     # 3,4 de largo se lee como una lámina roja tirada en el suelo. Alto ≈ ancho.
     "fire_truck": [
-        ("red_concrete", (1.8, 1.6, 3.6), (-0.9, 0.0, -1.8)),      # caja trasera
+        ("red_concrete", (1.8, 1.6, 3.6), (-0.9, 0.0, -1.8)),  # caja trasera
         ("light_gray_concrete", (1.7, 1.3, 1.3), (-0.85, 1.6, 0.4)),  # cabina
-        ("red_concrete", (1.8, 0.35, 1.2), (-0.9, 1.6, -1.8)),     # techo trasero
-        ("sea_lantern", (0.6, 0.35, 0.7), (-0.3, 2.9, 0.7)),       # rotativo
+        ("red_concrete", (1.8, 0.35, 1.2), (-0.9, 1.6, -1.8)),  # techo trasero
+        ("sea_lantern", (0.6, 0.35, 0.7), (-0.3, 2.9, 0.7)),  # rotativo
     ],
     "ambulance": [
         ("white_concrete", (1.7, 1.7, 3.2), (-0.85, 0.0, -1.6)),
@@ -221,8 +224,10 @@ def bounds(scenario: Scenario) -> tuple[int, int, int, int]:
     xs = [w.x for w in scenario.waypoints] + [p.x for p in scenario.pois]
     zs = [w.z for w in scenario.waypoints] + [p.z for p in scenario.pois]
     return (
-        int(min(xs)) - MARGIN, int(min(zs)) - MARGIN,
-        int(max(xs)) + MARGIN, int(max(zs)) + MARGIN,
+        int(min(xs)) - MARGIN,
+        int(min(zs)) - MARGIN,
+        int(max(xs)) + MARGIN,
+        int(max(zs)) + MARGIN,
     )
 
 
@@ -280,7 +285,9 @@ def scenery_commands(scenario: Scenario) -> list[str]:
     """
     x1, z1, x2, z2 = bounds(scenario)
     rng = random.Random(scenario.seed + 1)
-    ocupado = [(w.x, w.z) for w in scenario.waypoints] + [(p.x, p.z) for p in scenario.pois]
+    ocupado = [(w.x, w.z) for w in scenario.waypoints] + [
+        (p.x, p.z) for p in scenario.pois
+    ]
     roads = {(w.id): (w.x, w.z) for w in scenario.waypoints}
 
     out = []
@@ -309,6 +316,58 @@ def _near_road(x: int, z: int, scenario: Scenario, roads: dict) -> bool:
     return False
 
 
+RIDGE_STEP = 3
+"""Lado de cada columna de la cresta, en bloques."""
+
+
+@dataclass(frozen=True)
+class RidgeProfile:
+    """El relieve de la cresta, columna a columna.
+
+    `tops` va de la esquina `(x, z)` de cada columna de `RIDGE_STEP` bloques a la
+    y de su cima; solo las columnas con relieve. `origin` es la esquina de la
+    primera columna: las demás se alinean a ella, no a 0, y sin saberlo no se
+    puede preguntar por un punto cualquiera.
+    """
+
+    origin: tuple[int, int]
+    tops: dict[tuple[int, int], int]
+
+    def top_at(self, x: float, z: float) -> int:
+        """Y de la cima en ese punto, o `GROUND_Y` si allí el valle es plano."""
+        ox, oz = self.origin
+        col = (
+            ox + (math.floor(x) - ox) // RIDGE_STEP * RIDGE_STEP,
+            oz + (math.floor(z) - oz) // RIDGE_STEP * RIDGE_STEP,
+        )
+        return self.tops.get(col, GROUND_Y)
+
+
+def ridge_profile(scenario: Scenario) -> RidgeProfile:
+    """Calcula el perfil una vez. Es la única fuente del relieve: de aquí salen
+    los `fill` de `_ridge` **y** la comprobación de `civilian_commands`, para que
+    ningún aldeano aparezca dentro de la roca y muera asfixiado."""
+    villages = [p for p in scenario.pois if p.kind == "village"]
+    if len(villages) < 2:
+        return RidgeProfile((0, 0), {})
+    a, b = sorted(villages, key=lambda p: p.z)[:2]
+    middle = int((a.z + b.z) / 2)
+    x1, _, x2, _ = bounds(scenario)
+    west, east = int((x1 + min(a.x, b.x)) / 2), x2 - RIM
+    half, rise = 30, RIDGE_Y - GROUND_Y
+    rng = random.Random(scenario.seed + 2)
+
+    tops: dict[tuple[int, int], int] = {}
+    for x in range(west, east + 1, RIDGE_STEP):
+        along = math.sin(math.pi * (x - west) / max(east - west, 1))
+        for z in range(middle - half, middle + half + 1, RIDGE_STEP):
+            across = math.cos(math.pi * (z - middle) / (2 * half))
+            height = int(rise * along * across**1.7 + rng.uniform(-1.2, 1.2))
+            if height >= 1:
+                tops[(x, z)] = GROUND_Y + height
+    return RidgeProfile((west, middle - half), tops)
+
+
 def _ridge(scenario: Scenario) -> list[str]:
     """La cresta entre los dos pueblos, como perfil por columnas.
 
@@ -316,33 +375,16 @@ def _ridge(scenario: Scenario) -> list[str]:
     altura de un coseno a lo ancho por otro a lo largo, más ruido sembrado, que es
     lo que rompe la simetría y la hace pasar por terreno.
     """
-    villages = [p for p in scenario.pois if p.kind == "village"]
-    if len(villages) < 2:
-        return []
-    a, b = sorted(villages, key=lambda p: p.z)[:2]
-    middle = int((a.z + b.z) / 2)
-    x1, _, x2, _ = bounds(scenario)
-    west, east = int((x1 + min(a.x, b.x)) / 2), x2 - RIM
-    half, rise = 30, RIDGE_Y - GROUND_Y
-    rng = random.Random(scenario.seed + 2)
-    step = 3
-
     out: list[str] = []
-    for x in range(west, east + 1, step):
-        along = math.sin(math.pi * (x - west) / max(east - west, 1))
-        for z in range(middle - half, middle + half + 1, step):
-            across = math.cos(math.pi * (z - middle) / (2 * half))
-            height = int(rise * along * across ** 1.7 + rng.uniform(-1.2, 1.2))
-            if height < 1:
-                continue
-            top = GROUND_Y + height
-            out.append(
-                f"fill {x} {GROUND_Y + 1} {z} "
-                + f"{x + step - 1} {top - 1} {z + step - 1} {RIDGE_BLOCK}"
-            )
-            out.append(
-                f"fill {x} {top} {z} {x + step - 1} {top} {z + step - 1} {GROUND_BLOCK}"
-            )
+    for (x, z), top in ridge_profile(scenario).tops.items():
+        out.append(
+            f"fill {x} {GROUND_Y + 1} {z} "
+            + f"{x + RIDGE_STEP - 1} {top - 1} {z + RIDGE_STEP - 1} {RIDGE_BLOCK}"
+        )
+        out.append(
+            f"fill {x} {top} {z} {x + RIDGE_STEP - 1} {top} {z + RIDGE_STEP - 1} "
+            + f"{GROUND_BLOCK}"
+        )
     return out
 
 
@@ -410,9 +452,7 @@ def road_cut_commands(
     cruzan dos troncos — que es lo que se aprecia en el plano cercano y coincide
     con la causa que declara el escenario, "árbol caído".
     """
-    out = (
-        _striped(a, b) if cut else _strip(a, b, ROAD_BLOCK)
-    )
+    out = _striped(a, b) if cut else _strip(a, b, ROAD_BLOCK)
     mx, mz = round((a[0] + b[0]) / 2), round((a[1] + b[1]) / 2)
     reach = ROAD_WIDTH // 2 + 1
     log = "oak_log" if cut else "air"
@@ -470,7 +510,7 @@ def unit_commands(unit: Unit) -> list[str]:
     tags = f'Tags:["{VELA_TAG}","{unit.id}"]'
     out = [
         f"summon block_display {x} {GROUND_Y} {z} "
-        + f"{{{tags},block_state:{{Name:\"minecraft:{block}\"}},"
+        + f'{{{tags},block_state:{{Name:"minecraft:{block}"}},'
         + f"transformation:{{{NO_ROT},translation:[{tx}f,{ty}f,{tz}f],"
         + f"scale:[{sx}f,{sy}f,{sz}f]}},"
         + f"brightness:{{sky:15,block:15}},view_range:{VIEW_RANGE}f}}"
@@ -479,17 +519,37 @@ def unit_commands(unit: Unit) -> list[str]:
     # El cartel va aparte: un marcador invisible que viaja con el vehículo.
     out.append(
         f"summon armor_stand {x} {GROUND_Y + 2} {z} "
-        + f'{{{tags},Marker:1b,Invisible:1b,NoGravity:1b,CustomNameVisible:1b,'
+        + f"{{{tags},Marker:1b,Invisible:1b,NoGravity:1b,CustomNameVisible:1b,"
         + f'CustomName:\'{{"text":"{unit.id}"}}\'}}'
     )
     return out
 
+
+CIVILIAN_RETRIES = 20
+"""Tiradas por aldeano para encontrar suelo libre. Con veinte, la probabilidad de
+que uno se quede dentro de la roca es despreciable; si pasa, muere uno, no el run."""
 
 MAX_CIVILIANS = 40
 """Tope de seguridad, no una muestra: se invocan **todos** los que declara el
 YAML. El backbone limita a seis las *entidades móviles*, y un aldeano con
 `NoAI:1b` no se mueve ni piensa; treinta y nueve estáticos no cuestan nada. El
 tope existe solo para que un cero de más en el YAML no llene el valle."""
+
+
+def _clear_ground(x: float, z: float, scenario: Scenario, ridge: RidgeProfile) -> bool:
+    """Suelo plano y a la vista: fuera de todo edificio y fuera de la cresta.
+
+    Los edificios se comprueban por su huella con un bloque de holgura, porque
+    el aldeano mide 0,6 de ancho y toca la pared aunque su centro caiga fuera.
+    """
+    if ridge.top_at(x, z) > GROUND_Y:
+        return False
+    for poi in scenario.pois:
+        size = (10 if poi.kind == "village" else 7) + 1
+        if abs(x - poi.x) <= size and abs(z - poi.z) <= size:
+            return False
+    return True
+
 
 def civilian_commands(scenario: Scenario) -> list[str]:
     """Aldeanos con `NoAI:1b`: son un indicador visual, no simulación.
@@ -505,6 +565,7 @@ def civilian_commands(scenario: Scenario) -> list[str]:
     pois = {p.id: p for p in scenario.pois}
     rng = random.Random(scenario.seed + 3)
     valle_x = sum(p.x for p in scenario.pois) / len(scenario.pois)
+    ridge = ridge_profile(scenario)
     out = []
     for group in scenario.civilians:
         poi = pois[group.poi_id]
@@ -517,6 +578,15 @@ def civilian_commands(scenario: Scenario) -> list[str]:
         for _ in range(cuantos):
             x = poi.x + hacia * rng.uniform(size + 2, size + 4 + cuantos * 0.45)
             z = poi.z + rng.uniform(-ancho, ancho)
+            # Se vuelve a tirar si cae dentro de un edificio o de la cresta: un
+            # aldeano dentro de un bloque se asfixia en segundos y en Pueblo A
+            # aparecían 22 de los 24 del YAML. Sembrado, así que sigue siendo
+            # el mismo valle en cada run.
+            for _intento in range(CIVILIAN_RETRIES):
+                if _clear_ground(x, z, scenario, ridge):
+                    break
+                x = poi.x + hacia * rng.uniform(size + 2, size + 4 + cuantos * 0.45)
+                z = poi.z + rng.uniform(-ancho, ancho)
             # mirando al pueblo, con unos grados de desvío para que no formen
             yaw = math.degrees(math.atan2(-(poi.x - x), poi.z - z))
             yaw += rng.uniform(-35, 35)
@@ -533,14 +603,18 @@ def main() -> None:
     imprime los comandos en vez de mandarlos, para revisar sin Paper."""
     from sim.scenario import load
 
-    parser = argparse.ArgumentParser(description="Levanta el mundo del escenario por RCON.")
+    parser = argparse.ArgumentParser(
+        description="Levanta el mundo del escenario por RCON."
+    )
     parser.add_argument("--scenario", default="scenarios/wildfire_ridge.yaml")
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="imprime los comandos por stdout y no abre ninguna conexión",
     )
     parser.add_argument(
-        "--teardown", action="store_true",
+        "--teardown",
+        action="store_true",
         help="solo limpia: /kill @e[tag=vela] y borra la cicatriz del fuego",
     )
     args = parser.parse_args()
@@ -553,7 +627,9 @@ def main() -> None:
         else:
             from contracts.settings import settings
 
-            rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
+            rcon = RconClient(
+                settings.rcon_host, settings.rcon_port, settings.rcon_password
+            )
         await rcon.connect()
         try:
             if args.teardown:

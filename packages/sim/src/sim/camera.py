@@ -81,9 +81,7 @@ def shots(scenario: Scenario) -> dict[str, Shot]:
     rzs = [w.z for w in scenario.waypoints]
     cx, cz = (min(rxs) + max(rxs)) / 2, (min(rzs) + max(rzs)) / 2
 
-    pueblo = next(
-        (p for p in scenario.pois if p.kind == "village"), scenario.pois[0]
-    )
+    pueblo = next((p for p in scenario.pois if p.kind == "village"), scenario.pois[0])
     fx, fz = parse_cell(scenario.hazard.origin_cell)
     fx, fz = fx * scenario.hazard.cell_size, fz * scenario.hazard.cell_size
 
@@ -91,33 +89,82 @@ def shots(scenario: Scenario) -> dict[str, Shot]:
         s.name: s
         for s in [
             Shot(
-                "valle", "cenital del valle · explica el mecanismo y la Y",
+                "valle",
+                "cenital del valle · explica el mecanismo y la Y",
                 cx,
                 min(
-                    GROUND_Y
-                    + height_to_frame(max(rxs) - min(rxs), max(rzs) - min(rzs)),
+                    GROUND_Y + height_to_frame(max(rxs) - min(rxs), max(rzs) - min(rzs)),
                     MAX_CENITAL_Y,
                 ),
-                cz, -90, 90,
+                cz,
+                -90,
+                90,
             ),
             Shot(
-                "escorzo", "el valle a 45° desde el oeste · se lee mejor que el cenital",
-                min(rxs) - 55, GROUND_Y + 48, cz + 75, -50, 34,
+                "escorzo",
+                "el valle a 45° desde el oeste · se lee mejor que el cenital",
+                min(rxs) - 55,
+                GROUND_Y + 48,
+                cz + 75,
+                -50,
+                34,
             ),
             Shot(
-                "pueblo", f"plano de {pueblo.name} · la escala y los civiles",
-                pueblo.x - 26, GROUND_Y + 11, pueblo.z + 26, -45, 16,
+                "pueblo",
+                f"plano de {pueblo.name} · la escala y los civiles",
+                pueblo.x - 26,
+                GROUND_Y + 11,
+                pueblo.z + 26,
+                -45,
+                16,
             ),
             Shot(
-                "frente", "el frente de fuego a ras · las llamas, no la mancha",
-                fx - 17, GROUND_Y + 7, fz + 17, -45, 8,
+                "frente",
+                "el frente de fuego a ras · las llamas, no la mancha",
+                fx - 17,
+                GROUND_Y + 7,
+                fz + 17,
+                -45,
+                8,
             ),
         ]
     }
 
 
 async def move(shot: Shot, rcon: Rcon, who: str) -> None:
-    await rcon.send(shot.tp(who), HIGH)
+    answer = await rcon.send(shot.tp(who), HIGH)
+    if "No player was found" in answer or "No entity was found" in answer:
+        # El `tp` falla en silencio si el jugador no está: por RCON solo vuelve el
+        # texto. Sin esto, en el pitch se pulsa una tecla y no pasa nada.
+        print(f"  ! {who} no está conectado: {answer.strip()}", flush=True)
+
+
+PLAYER_POLL_S = 2.0
+"""Cada cuánto se mira si el jugador ya ha entrado."""
+
+
+async def wait_for_player(rcon: Rcon, player: str) -> None:
+    """Espera a que el jugador esté en el servidor, avisando por pantalla.
+
+    La cámara se suele lanzar antes de que el cliente termine de entrar; con un
+    error seco habría que relanzarla, y el `tp` a un jugador ausente no falla,
+    solo no hace nada. Ctrl-C sale.
+    """
+    avisado = False
+    while True:
+        answer = await rcon.send(f"execute if entity {player}", LOW)
+        if answer.startswith("Test passed"):
+            if avisado:
+                print(f"  {player} ha entrado.", flush=True)
+            return
+        if not avisado:
+            print(
+                f"  esperando a que {player} entre en localhost:25565 "
+                "(cualquier nombre vale: online-mode=false)…",
+                flush=True,
+            )
+            avisado = True
+        await asyncio.sleep(PLAYER_POLL_S)
 
 
 SLOT_POLL_S = 0.15
@@ -140,6 +187,7 @@ async def follow(
     """
     rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
     await rcon.connect()
+    await wait_for_player(rcon, player)
     shots_by_slot = dict(enumerate(catalogue.values()))
 
     print(f"CÁMARA · sigue a {player} · Ctrl-C para salir")
@@ -153,9 +201,7 @@ async def follow(
     last: int | None = None
     try:
         while True:
-            answer = await rcon.send(
-                f"data get entity {player} SelectedItemSlot", LOW
-            )
+            answer = await rcon.send(f"data get entity {player} SelectedItemSlot", LOW)
             found = re.search(r"data:\s*(\d+)|following entity data:\s*(\d+)", answer)
             slot = int(next(g for g in found.groups() if g)) if found else None
             if slot is not None and slot != last and slot in shots_by_slot:
@@ -188,10 +234,19 @@ async def live(catalogue: dict[str, Shot], who: str) -> None:
     import termios
     import tty
 
+    if not sys.stdin.isatty():
+        # Sin terminal no hay teclas que leer: mejor decirlo que morir con un
+        # `termios.error` críptico cuando alguien lo lanza con `nohup` o desde un script.
+        raise SystemExit(
+            "--live necesita una terminal de verdad (lee las teclas de stdin); "
+            "para mandar un encuadre suelto: python -m sim.camera valle --who <jugador>"
+        )
+
     keys = dict(zip("1234", catalogue.values(), strict=False))
     rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
     await rcon.connect()
     if who not in ("@a", "@s"):
+        await wait_for_player(rcon, who)
         await rcon.send(f"gamemode spectator {who}", HIGH)
 
     print("CÁMARA EN DIRECTO · esta terminal enfocada · q para salir\n")
@@ -225,15 +280,18 @@ def main() -> None:
     parser.add_argument("--who", default="@a", help="jugador; @a por defecto")
     parser.add_argument("--list", action="store_true", help="lista los encuadres")
     parser.add_argument(
-        "--live", action="store_true",
+        "--live",
+        action="store_true",
         help="macro por teclado de la terminal (necesita que la terminal tenga foco)",
     )
     parser.add_argument(
-        "--follow", metavar="JUGADOR",
+        "--follow",
+        metavar="JUGADOR",
         help="macro dentro del juego: 1-4 del inventario mueven la cámara",
     )
     parser.add_argument(
-        "--gamemode", default="spectator",
+        "--gamemode",
+        default="spectator",
         help="modo al que se pone al jugador: spectator (sin mano) o creative",
     )
     args = parser.parse_args()

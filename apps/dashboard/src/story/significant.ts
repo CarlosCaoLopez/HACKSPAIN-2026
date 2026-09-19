@@ -22,6 +22,8 @@ const SIGNIFICANT: ReadonlySet<EventType> = new Set<EventType>([
   'world.civilians.changed',
   'call.started',
   'call.ended',
+  // El pin del vecino por Telegram: es el «dónde» que la voz no pudo dar (beat 4:25).
+  'citizen.location',
   // La señal del core al agente en vivo es un cambio con causa (cuelga del plan) y es la
   // latencia del pitch. `call.affect` NO entra: es ambiente, tres por llamada.
   'call.signal.requested',
@@ -33,7 +35,12 @@ const SIGNIFICANT: ReadonlySet<EventType> = new Set<EventType>([
   'event.malformed',
 ])
 
-/** Ruido de alto volumen: el mapa los usa, la historia no. */
+/** Ruido de alto volumen: el mapa los usa, la historia no.
+ *
+ *  `world.cell.changed` es ruido (cientos de `spread`/`at_risk` por run) con UNA
+ *  excepción: `cause: extinguished` es un camión que ha sofocado una celda, es decir,
+ *  el efecto de nuestra propia orden. Eso es historia y entra. */
 export function isSignificant(ev: Event): boolean {
+  if (ev.type === 'world.cell.changed') return ev.payload.cause === 'extinguished'
   return SIGNIFICANT.has(ev.type)
 }

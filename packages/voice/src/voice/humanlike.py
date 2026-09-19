@@ -69,6 +69,9 @@ SSE_BACKOFF = (0.5, 1.0, 2.0, 4.0)
 
 AGENT_NAME = "operador"
 CALLER_NAME = "vecino"
+TELEGRAM_PREFIX = "tg_"
+"""`call_id` de un chat de Telegram (`voice.telegram`): sus señales no van a
+HappyRobot, las atiende su propio despachador."""
 NEUTRAL_DRAFT = "Le escucho. Dígame exactamente dónde está."
 
 SYSTEM_PROMPT = (
@@ -913,6 +916,8 @@ async def signal_dispatcher() -> None:
     """Tarea de fondo: `call.signal.requested` → el monitor de esa llamada."""
     async for ev in subscribe(EventType.CALL_SIGNAL_REQUESTED):
         call_id = str(ev.payload.get("call_id", ""))
+        if call_id.startswith(TELEGRAM_PREFIX):
+            continue  # es de `voice.telegram.signal_dispatcher`, no es un aviso
         mon = MONITORS.get(call_id)
         if mon is None:
             log.warning("signal para sesión desconocida %s", call_id)

@@ -115,6 +115,7 @@ class Core:
 
         self._state = belief.apply(self._state, ev)
         self._purge_vetoes()
+        before = self._state.tasks
         changed = await self._sync_tasks(ev)
 
         # Plan inicial: en cuanto hay tareas abiertas y aún no hay plan.
@@ -149,7 +150,7 @@ class Core:
             self._pending_resolve = []
         elif changed:
             self._pending_resolve.extend(changed)
-            if self._resolve_due(changed):
+            if self._resolve_due(changed, before):
                 await self.resolve(self._pending_resolve, ev)
                 self._pending_resolve = []
                 self._last_resolve_t = self._state.t_sim
@@ -157,12 +158,19 @@ class Core:
     def _same_burst(self, ev: Event) -> bool:
         return self._burst == (ev.source, self._state.t_sim)
 
-    def _resolve_due(self, changed: list[Task]) -> bool:
-        """Cada celda que prende es una tarea `extinguish` nueva: re-resolver por cada
-        una era un plan por segundo (141 en 142 s de sim). Las altas de extinción se
-        agrupan y se resuelven cada `RESOLVE_GAP_S`; un cierre, una tarea hacia
-        personas o el primer alta tras un silencio van al momento."""
-        urgent = any(t.done or t.kind in PEOPLE_TASKS for t in changed)
+    def _resolve_due(self, changed: list[Task], before: dict[str, Task]) -> bool:
+        """Re-resolver por cada tarea que cambia era un plan por segundo (141 en
+        142 s de sim cuando había una tarea por celda). Los cambios de extinción (un
+        frente que nace o mueve su celda objetivo) se agrupan y se resuelven cada
+        `RESOLVE_GAP_S`; un cierre, una tarea hacia personas, un frente que sube a
+        `critical` (`before` es lo que había antes de sincronizar) o el primer cambio
+        tras un silencio van al momento."""
+        urgent = any(
+            t.done
+            or t.kind in PEOPLE_TASKS
+            or (t.severity == "critical" and _severity_before(before, t) != "critical")
+            for t in changed
+        )
         return urgent or self._state.t_sim - self._last_resolve_t >= RESOLVE_GAP_S
 
     async def replan(self, reason: str, trigger: str, cause: Event) -> Plan:
@@ -329,13 +337,17 @@ class Core:
         await self._emit_awaited_signals(plan)
 
     async def _emit_actions(self, plan: Plan, cause: Event) -> None:
-        """Un `goto` por asignación nueva o cambiada: cambia la tarea **o la ruta**.
-        Diffear evita reenviar la misma orden en cada replan; pero una arista cortada
-        por un hecho de llamada cambia la ruta sin cambiar la tarea, y sin reenviar
-        el `goto` el sim sigue por la pista cortada (visto en la integración 1)."""
+        """Un `goto` por asignación con ruta nueva. Diffear evita reenviar la misma
+        orden en cada replan; pero una arista cortada por un hecho de llamada cambia
+        la ruta sin cambiar la tarea, y sin reenviar el `goto` el sim sigue por la
+        pista cortada (visto en la integración 1). Una ruta que es un sufijo de la ya
+        ordenada (la unidad avanza por ella, o dos frentes se atacan desde el mismo
+        waypoint) no se reenvía: cada `goto` repetido ponía al camión `moving` un
+        segundo y le cortaba el sofocado."""
         current = {a.unit_id: (a.task_id, tuple(a.route)) for a in plan.assignments}
         for a in plan.assignments:
-            if self._last_actions.get(a.unit_id) == current[a.unit_id]:
+            last = self._last_actions.get(a.unit_id)
+            if last is not None and _same_way(last[1], current[a.unit_id][1]):
                 continue
             self._action_seq += 1
             await self._emit(
@@ -475,6 +487,16 @@ class Core:
         )
         await self.bus.publish(ev)
         return ev
+
+
+def _same_way(ordered: tuple[str, ...], route: tuple[str, ...]) -> bool:
+    """¿`route` es la ruta ya ordenada o un tramo final de ella?"""
+    return len(route) <= len(ordered) and ordered[len(ordered) - len(route) :] == route
+
+
+def _severity_before(before: dict[str, Task], task: Task) -> str | None:
+    prev = before.get(task.id)
+    return prev.severity if prev is not None else None
 
 
 def _poi_of_key(key: str) -> str | None:
