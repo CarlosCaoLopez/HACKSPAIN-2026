@@ -154,7 +154,9 @@ def test_override_assert_fact():
 def test_only_an_observed_fact_can_reopen_a_cut_road():
     """Regla 4: lo asumido sostiene la dirección segura (cortada), nunca la contraria."""
     cut = apply_fact(initial_state("r", scenario()), fact(f"road:{EDGE}:cut", True))
-    assumed_open = fact(f"road:{EDGE}:cut", False).model_copy(update={"kind": "assumed_default"})
+    assumed_open = fact(f"road:{EDGE}:cut", False).model_copy(
+        update={"kind": "assumed_default"}
+    )
     still_cut = apply_fact(cut, assumed_open)
     assert still_cut.roads[EDGE].cut is True
     assert still_cut.facts[-1].kind == "assumed_default"  # se registra, no se aplica
@@ -165,14 +167,20 @@ def test_only_an_observed_fact_can_reopen_a_cut_road():
 def test_fact_event_carries_kind_and_call_id_into_the_state():
     s = initial_state("r", scenario())
     payload = {
-        "key": f"road:{EDGE}:cut", "value": True, "confidence": 0.3,
-        "source": "call:s1", "severity": "critical",
-        "kind": "assumed_default", "call_id": "s1",
+        "key": f"road:{EDGE}:cut",
+        "value": True,
+        "confidence": 0.3,
+        "source": "call:s1",
+        "severity": "critical",
+        "kind": "assumed_default",
+        "call_id": "s1",
     }
     last = apply(s, ev(EventType.WORLD_FACT_ASSERTED, payload)).facts[-1]
     assert last.kind == "assumed_default" and last.call_id == "s1"
     del payload["kind"], payload["call_id"]  # journals viejos: siguen siendo observados
-    assert apply(s, ev(EventType.WORLD_FACT_ASSERTED, payload)).facts[-1].kind == "observed"
+    assert (
+        apply(s, ev(EventType.WORLD_FACT_ASSERTED, payload)).facts[-1].kind == "observed"
+    )
 
 
 def test_plan_moves_a_unit_only_if_it_has_a_way_to_go():
@@ -180,11 +188,18 @@ def test_plan_moves_a_unit_only_if_it_has_a_way_to_go():
     una ruta de un solo waypoint (ya está allí) el estado lo dice el sim."""
     s = initial_state("r", scenario())
     plan = {
-        "id": "plan_r_1", "run_id": "r", "created_t": 5.0,
+        "id": "plan_r_1",
+        "run_id": "r",
+        "created_t": 5.0,
         "policy": {"rationale": "t"},
         "assignments": [
-            {"unit_id": "unit_truck1", "task_id": "task_a", "route": ["wp_sur_03"],
-             "eta_s": 0.0, "cost": 1.0}
+            {
+                "unit_id": "unit_truck1",
+                "task_id": "task_a",
+                "route": ["wp_sur_03"],
+                "eta_s": 0.0,
+                "cost": 1.0,
+            }
         ],
         "context": {"assumptions": [], "world_seq": 1},
     }

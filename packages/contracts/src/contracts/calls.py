@@ -16,6 +16,8 @@ CallIntent = Literal[
     "status_check",
     "shelter_confirm",
     "neighbor_alert",  # aviso al pueblo vecino: puede llegarle gente que huye del fuego
+    "fire_crew_dispatch",  # al retén: hay fuego, ¿pueden salir?
+    "ambulance_dispatch",  # a la ambulancia, solo si alguien la ha pedido y está libre
 ]
 CallOutcome = Literal["answered", "no_answer", "busy", "failed", "hung_up"]
 Severity = Literal["low", "medium", "critical"]

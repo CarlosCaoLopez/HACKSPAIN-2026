@@ -39,7 +39,10 @@ def _state(bearing: float = 0.0) -> WorldState:
         wind=Wind(bearing_deg=bearing, speed=2.0),
         units={
             "unit_truck": Unit(
-                id="unit_truck", kind="fire_truck", x=0, z=0,
+                id="unit_truck",
+                kind="fire_truck",
+                x=0,
+                z=0,
                 capabilities=["extinguish"],
             )
         },
@@ -60,8 +63,12 @@ def _state(bearing: float = 0.0) -> WorldState:
         },
         tasks={
             "task_ext": Task(
-                id="task_ext", kind="extinguish", target_poi="poi_x",
-                required_capability="extinguish", severity="high", created_t=0.0,
+                id="task_ext",
+                kind="extinguish",
+                target_poi="poi_x",
+                required_capability="extinguish",
+                severity="high",
+                created_t=0.0,
             )
         },
     )
@@ -134,9 +141,7 @@ def test_render_one_line_per_rule() -> None:
 
 
 def _score(exposed_end: int) -> RunScore:
-    return RunScore(
-        run_id="run_x", scenario_id="sc", civilians_exposed_end=exposed_end
-    )
+    return RunScore(run_id="run_x", scenario_id="sc", civilians_exposed_end=exposed_end)
 
 
 def test_apply_patch_confirm_and_contradict() -> None:
@@ -229,9 +234,30 @@ def test_harvest_keeps_rules_with_support(monkeypatch, tmp_path: Path) -> None:
     # "cells_burning > 3" aparece en dos runs → soporte 2 (se conserva).
     # "immobile_total > 0" aparece en uno → soporte 1 (se descarta).
     extracted = [
-        {"run_id": "run_a", "rule": {"trigger": "cells_burning > 3", "body": "contener", "evidence": "run_a:seq_10"}},
-        {"run_id": "run_b", "rule": {"trigger": "cells_burning > 3", "body": "contener", "evidence": "run_b:seq_20"}},
-        {"run_id": "run_a", "rule": {"trigger": "immobile_total > 0", "body": "evacuar", "evidence": "run_a:seq_11"}},
+        {
+            "run_id": "run_a",
+            "rule": {
+                "trigger": "cells_burning > 3",
+                "body": "contener",
+                "evidence": "run_a:seq_10",
+            },
+        },
+        {
+            "run_id": "run_b",
+            "rule": {
+                "trigger": "cells_burning > 3",
+                "body": "contener",
+                "evidence": "run_b:seq_20",
+            },
+        },
+        {
+            "run_id": "run_a",
+            "rule": {
+                "trigger": "immobile_total > 0",
+                "body": "evacuar",
+                "evidence": "run_a:seq_11",
+            },
+        },
     ]
     _install_fake_fenic(monkeypatch, extracted)
 
@@ -276,8 +302,12 @@ class _FakeBus:
 
 def _tick() -> Event:
     return Event(
-        run_id="run_test", seq=5, t_wall=datetime.now(UTC), t_sim=0.0,
-        type=EventType.WORLD_TICK, source="sim",
+        run_id="run_test",
+        seq=5,
+        t_wall=datetime.now(UTC),
+        t_sim=0.0,
+        type=EventType.WORLD_TICK,
+        source="sim",
         payload={"t_sim": 0.0, "wind": {"bearing_deg": 0.0, "speed": 2.0}},
     )
 

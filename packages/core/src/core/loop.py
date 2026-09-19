@@ -123,6 +123,10 @@ class Core:
         # pares (poi_id que arde, poi_id vecino) ya avisados de que puede llegarles
         # gente: una vez por par y run, igual que `_called`.
         self._neighbor_called: set[tuple[str, str]] = set()
+        # Medios ya avisados por teléfono (unit_id): al retén se le llama una vez por
+        # run, y a la ambulancia una vez por rescate.
+        self._crew_called = False
+        self._ambulance_called: set[str] = set()
         # call_id → (unit_id, task_id, ruta) de la última señal `unit_dispatched`:
         # tres hechos de una misma llamada no producen tres veces la misma frase.
         self._signalled: dict[str, tuple[str, str, str]] = {}
@@ -474,6 +478,8 @@ class Core:
         await self._emit_actions(plan, cause)
         await self._return_home(plan, cause)
         await self._emit_calls(plan, cause)
+        await self._emit_crew_call(cause)
+        await self._emit_ambulance_call(cause)
         await self._emit_signal(plan, cause)
         await self._emit_awaited_signals(plan)
 
@@ -695,6 +701,128 @@ class Core:
                 aliases=self.scenario.road_aliases,
             )
             await self._emit(EventType.CALL_REQUESTED, req, cause)
+
+    def _free_unit(self, capability: str, for_task: str) -> Unit | None:
+        """La unidad que puede coger el teléfono y salir a ESA tarea: ni averiada, ni
+        metida en OTRA tarea abierta.
+
+        «Libre» no es «sin asignar»: cuando se llama al retén el solver ya le ha dado
+        el frente, y de eso va la llamada — confirmar que pueden ir. Lo que descarta
+        a una unidad es estar en otra cosa distinta, que es la condición del guion
+        para la ambulancia («no ocupada con otra cosa»)."""
+        for unit in sorted(self._state.units.values(), key=lambda u: u.id):
+            if capability not in unit.capabilities or unit.status == "unavailable":
+                continue
+            otra = self._state.tasks.get(unit.task_id or "")
+            if otra is not None and not otra.done and otra.id != for_task:
+                continue  # ocupada con otra cosa
+            return unit
+        return None
+
+    async def _emit_crew_call(self, cause: Event) -> None:
+        """Al retén, en cuanto hay una tarea de extinción: hay fuego, ¿pueden salir?
+
+        Una vez por run. Si no hay ningún camión en condiciones no se llama: no se
+        moviliza a quien no puede ir, y el teléfono queda libre para el resto."""
+        if self._crew_called or not settings.fire_crew_phone:
+            return
+        task = next(
+            (
+                t
+                for t in sorted(self._state.tasks.values(), key=lambda t: t.id)
+                if t.kind == "extinguish" and not t.done
+            ),
+            None,
+        )
+        if task is None:
+            return
+        unit = self._free_unit("extinguish", task.id)
+        if unit is None:
+            log.info("fuego sin camión disponible: no se llama al retén")
+            return
+        station = next((p for p in self._state.pois.values() if p.kind == "base"), None)
+        if station is None:
+            return
+        self._crew_called = True
+        donde = self._where(task)
+        req = calls.fire_crew_call(
+            task,
+            station,
+            settings.fire_crew_phone,
+            self.scenario.hazard.kind,
+            unit.id,
+            donde,
+            state=self._state,
+            graph=self.graph,
+            aliases=self.scenario.road_aliases,
+        )
+        await self._emit(EventType.CALL_REQUESTED, req, cause)
+
+    def _where(self, task: Task) -> str:
+        """Dónde arde, dicho como se dice por teléfono: el pueblo más cercano al
+        frente, que es lo que ubica a quien conduce."""
+        cell = self._state.cells.get(task.target_cell or "")
+        if cell is None:
+            return "el valle"
+        cx, cz = self.graph.cell_center(cell)
+        villages = [
+            p for p in self._state.pois.values() if p.kind in ("village", "landmark")
+        ]
+        if not villages:
+            return "el valle"
+        cerca = min(villages, key=lambda p: math.hypot(p.x - cx, p.z - cz))
+        metros = int(round(math.hypot(cerca.x - cx, cerca.z - cz) / 10.0) * 10)
+        return f"{metros} metros de {cerca.name}"
+
+    async def _emit_ambulance_call(self, cause: Event) -> None:
+        """A la ambulancia, solo si alguien la ha pedido y está libre.
+
+        «Pedida» es una tarea de rescate abierta, y un rescate solo nace de un hecho
+        `poi:<id>:immobile` que ha entrado por una llamada: nadie inventa un rescate
+        desde el mapa. Si la ambulancia está averiada o metida en otra tarea, no se
+        la llama; el plan ya la repartirá cuando quede libre."""
+        if not settings.ambulance_phone:
+            return
+        rescue = next(
+            (
+                t
+                for t in sorted(self._state.tasks.values(), key=lambda t: t.id)
+                if t.kind == "rescue"
+                and not t.done
+                and t.id not in self._ambulance_called
+            ),
+            None,
+        )
+        if rescue is None:
+            return
+        unit = self._free_unit("transport", rescue.id)
+        if unit is None:
+            log.info(
+                "rescate %s pedido con la ambulancia ocupada: no se llama", rescue.id
+            )
+            return
+        poi = self._state.pois.get(rescue.target_poi or "")
+        if poi is None:
+            return
+        base = next((p for p in self._state.pois.values() if p.kind == "hospital"), poi)
+        immobile = max(
+            (g.immobile for g in self._state.civilians.values() if g.poi_id == poi.id),
+            default=1,
+        )
+        self._ambulance_called.add(rescue.id)
+        req = calls.ambulance_call(
+            rescue,
+            poi,
+            base,
+            settings.ambulance_phone,
+            self.scenario.hazard.kind,
+            unit.id,
+            immobile,
+            state=self._state,
+            graph=self.graph,
+            aliases=self.scenario.road_aliases,
+        )
+        await self._emit(EventType.CALL_REQUESTED, req, cause)
 
     async def _emit_signal(self, plan: Plan, cause: Event) -> None:
         """Si el plan lo provocó un hecho de una llamada en curso (`source=call:<id>`),

@@ -1164,3 +1164,172 @@ def test_parse_policy_repairs_an_out_of_contract_urgency(caplog) -> None:
     assert policy.weights == {"life_safety": 0.9}  # no se pierde por un aviso
     assert policy.notify[0].urgency == "medium"
     assert "fuera del contrato" in caplog.text
+
+
+# --- llamadas a los medios ------------------------------------------------------
+
+
+async def test_fire_detected_calls_the_crew_once(
+    journal, fixed_planner, monkeypatch
+) -> None:
+    """Al retén se le llama en cuanto hay fuego: breve, con dónde arde y si pueden
+    salir. Una vez por run, aunque el plan se rehaga veinte veces."""
+    monkeypatch.setattr(settings, "fire_crew_phone", "+34900000001")
+    sc = _scenario()
+    sc = sc.model_copy(
+        update={
+            "pois": [
+                *sc.pois,
+                POI(
+                    id="poi_base",
+                    name="Parque de bomberos",
+                    kind="base",
+                    x=0,
+                    z=0,
+                    waypoint_id="wp_base",
+                ),
+            ]
+        }
+    )
+    core = loop.Core(bus, sc)
+    await _ignite(core)
+
+    crew = [
+        CallRequest.model_validate(e.payload)
+        for e in _of(journal, EventType.CALL_REQUESTED)
+        if e.payload["intent"] == "fire_crew_dispatch"
+    ]
+    assert len(crew) == 1
+    r = crew[0]
+    assert r.to == "+34900000001" and r.audience == "responder"
+    assert r.facts["role"] == "fire_crew" and r.facts["callee"] == "el retén de bomberos"
+    assert r.facts["unit_id"] == "unit_truck2"  # el camión que puede salir
+    assert "incendio forestal" in r.facts["situation_brief"]
+    assert "Pueblo A" in r.facts["situation_brief"]  # dónde arde, en referencia humana
+    assert "pueden salir" in r.facts["checklist"]
+
+    # Un replan más no vuelve a llamar.
+    tick = _ev(
+        EventType.WORLD_CELL_CHANGED,
+        {"cell_id": "cell_6_0", "state": "burning", "hazard": "wildfire"},
+        t_sim=20.0,
+    )
+    await bus.publish(tick)
+    await core.on_event(tick)
+    assert (
+        len(
+            [
+                e
+                for e in _of(journal, EventType.CALL_REQUESTED)
+                if e.payload["intent"] == "fire_crew_dispatch"
+            ]
+        )
+        == 1
+    )
+
+
+async def test_no_crew_phone_no_crew_call(journal, fixed_planner, monkeypatch) -> None:
+    monkeypatch.setattr(settings, "fire_crew_phone", "")
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    assert not [
+        e
+        for e in _of(journal, EventType.CALL_REQUESTED)
+        if e.payload["intent"] == "fire_crew_dispatch"
+    ]
+
+
+async def test_ambulance_is_called_only_when_asked_for_and_free(
+    journal, fixed_planner, monkeypatch
+) -> None:
+    """La ambulancia no se llama porque haya fuego, sino porque alguien la ha pedido:
+    un rescate nace de un `poi:<id>:immobile` que ha entrado por una llamada. Con dos
+    ambulancias, la primera sigue evacuando y a la segunda, que está libre, se la
+    llama para el rescate."""
+    monkeypatch.setattr(settings, "ambulance_phone", "+34900000002")
+    sc = _scenario()
+    sc = sc.model_copy(
+        update={
+            "units": [
+                *sc.units,
+                Unit(
+                    id="unit_ambulance2",
+                    kind="ambulance",
+                    x=0,
+                    z=0,
+                    capabilities=["transport"],
+                ),
+            ]
+        }
+    )
+    core = loop.Core(bus, sc)
+    await _ignite(core)
+    assert not [
+        e
+        for e in _of(journal, EventType.CALL_REQUESTED)
+        if e.payload["intent"] == "ambulance_dispatch"
+    ], "sin rescate pedido no se llama a la ambulancia"
+
+    fact = _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_pueblo_a:immobile",
+            "value": 2,
+            "confidence": 0.9,
+            "source": "call:sess_amb",
+            "severity": "critical",
+            "kind": "observed",
+        },
+        source="call:sess_amb",
+        t_sim=40.0,
+    )
+    await bus.publish(fact)
+    await core.on_event(fact)
+
+    amb = [
+        CallRequest.model_validate(e.payload)
+        for e in _of(journal, EventType.CALL_REQUESTED)
+        if e.payload["intent"] == "ambulance_dispatch"
+    ]
+    assert len(amb) == 1
+    r = amb[0]
+    assert r.to == "+34900000002"
+    assert r.facts["role"] == "ambulance"
+    assert r.facts["unit_id"] == "unit_ambulance2"  # la que está libre, no la que evacúa
+    assert r.facts["immobile"] == "2"
+    assert "no pueden moverse" in r.facts["situation_brief"]
+
+
+async def test_busy_ambulance_is_not_called(
+    journal, fixed_planner, monkeypatch, caplog
+) -> None:
+    """Si ya está metida en otra tarea abierta, no se la llama: el plan la repartirá
+    cuando quede libre. Es la condición del guion, no una optimización."""
+    monkeypatch.setattr(settings, "ambulance_phone", "+34900000002")
+    core = loop.Core(bus, _scenario())
+    await _ignite(core)
+    # El plan inicial ya la mandó a evacuar Pueblo A: está ocupada.
+    assert core.state().units["unit_ambulance"].task_id == "task_evac_poi_pueblo_a"
+
+    fact = _ev(
+        EventType.WORLD_FACT_ASSERTED,
+        {
+            "key": "poi:poi_pueblo_a:immobile",
+            "value": 2,
+            "confidence": 0.9,
+            "source": "call:sess_amb",
+            "severity": "critical",
+            "kind": "observed",
+        },
+        source="call:sess_amb",
+        t_sim=40.0,
+    )
+    with caplog.at_level(logging.INFO, logger="core.loop"):
+        await bus.publish(fact)
+        await core.on_event(fact)
+    assert not [
+        e
+        for e in _of(journal, EventType.CALL_REQUESTED)
+        if e.payload["intent"] == "ambulance_dispatch"
+    ]
+    assert any("ocupada" in r.message for r in caplog.records)

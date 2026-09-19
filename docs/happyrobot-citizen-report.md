@@ -280,3 +280,30 @@ El esquema del Tool Call Result se generó contra un gateway propio en `:8021` c
 túnel auxiliar y `VELA_URL` de **staging** apuntando allí (mismo truco que la v3),
 sin tocar el gateway de la demo ni los valores de dev/prod. Con `params` vacíos el
 endpoint responde bien y no publica nada, así que aquí no hizo falta mock.
+
+## Anexo · llamar a los medios (v12)
+
+El mismo workflow saliente hace ya cuatro llamadas distintas, y ninguna necesitó
+tocar la plataforma salvo para que el trigger aprendiera los campos nuevos: el guion
+entero viaja en el cuerpo del hook.
+
+| `role` | Cuándo | Qué pregunta |
+| --- | --- | --- |
+| `evacuation` | El pueblo con el frente más cerca | recuento, heridos, inmóviles, si acepta |
+| `neighbor_alert` | Los demás pueblos, hasta que el fuego les llega a 60 m | si pueden acoger gente |
+| `fire_crew` | Al detectarse fuego, una vez por run | si pueden salir ya |
+| `ambulance` | Solo si un rescate lo pide y la unidad no está en otra cosa | si pueden ir ya |
+
+Las dos últimas llevan `unit_id` en el cuerpo. Un «no podemos salir» entra como
+`unit:<id>:available=false` (clave de contrato, `belief` la aplica) y el solver
+reparte en el siguiente plan con los medios que quedan: la llamada cambia el plan, no
+solo el registro. El prompt saluda con `callee` («el retén de bomberos», «la dotación
+de la ambulancia», «el responsable de Pueblo A»), que lo calcula el backend.
+
+`FIRE_CREW_PHONE` y `AMBULANCE_PHONE` en el `.env`. Sin número, esa llamada no se
+hace y se anota una vez: no se cae en `JUDGE_PHONE` a propósito, porque dos llamadas
+simultáneas al mismo móvil dan ocupado (visto el sábado con las dos órdenes de
+evacuación).
+
+**Cada fork pierde el esquema del Tool Call Result**: hay que repetir `generate` +
+`visibility` antes de publicar, o el agente se queda sin `message` y habla de memoria.

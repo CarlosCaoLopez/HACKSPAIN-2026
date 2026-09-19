@@ -25,6 +25,10 @@ _INTENT_WORKFLOW: dict[str, str] = {
     # guion se distingue por la variable `role` que lleva el cuerpo del hook, no por
     # el workflow (ver `core.calls`: ahí vive la rama, no en la plataforma).
     "neighbor_alert": WORKFLOW_EVACUATION,
+    # Los medios (retén, ambulancia) salen por el mismo hook: el guion lo trae el
+    # cuerpo y el número lo elige el core.
+    "fire_crew_dispatch": WORKFLOW_EVACUATION,
+    "ambulance_dispatch": WORKFLOW_EVACUATION,
     "resource_request": WORKFLOW_RESOURCE,
     "status_check": WORKFLOW_BROADCAST,
     "shelter_confirm": WORKFLOW_BROADCAST,
@@ -74,6 +78,8 @@ async def trigger(req: CallRequest, run_id: str) -> str:
         "poi_id": req.poi_id,
         "to": req.to,
         "role": req.facts.get("role", "evacuation"),
+        "callee": req.facts.get("callee", ""),
+        "unit_id": req.facts.get("unit_id", ""),
         "poi_name": req.facts.get("poi_name", ""),
         "source_poi_name": req.facts.get("source_poi_name", ""),
         "route_name": req.facts.get("route_name", ""),

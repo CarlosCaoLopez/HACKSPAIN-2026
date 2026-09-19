@@ -20,8 +20,12 @@ ESCENARIOS = ["wildfire_ridge", "blackout_grid"]
 def estado():
     s = load(Path("scenarios/wildfire_ridge.yaml"))
     return s, WorldState(
-        run_id="r", seq=1, t_sim=0.0, wind=Wind(bearing_deg=270, speed=1.2),
-        roads={r.id: r for r in s.roads}, pois={p.id: p for p in s.pois},
+        run_id="r",
+        seq=1,
+        t_sim=0.0,
+        wind=Wind(bearing_deg=270, speed=1.2),
+        roads={r.id: r for r in s.roads},
+        pois={p.id: p for p in s.pois},
     )
 
 

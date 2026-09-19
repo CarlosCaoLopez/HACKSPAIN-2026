@@ -57,9 +57,12 @@ core era acoplamiento gratis, y mientras el core no lo pidiera el mapa se quedab
 muerto salvo por el fuego y los camiones."""
 
 MARKER_BLOCKS = {
-    "ok": "lime_concrete", "warned": "yellow_concrete",
-    "evacuating": "orange_concrete", "danger": "red_concrete",
-    "safe": "light_blue_concrete", "done": "white_concrete",
+    "ok": "lime_concrete",
+    "warned": "yellow_concrete",
+    "evacuating": "orange_concrete",
+    "danger": "red_concrete",
+    "safe": "light_blue_concrete",
+    "done": "white_concrete",
 }
 
 
@@ -183,8 +186,10 @@ class Sim:
         self._running = True
         await self._emit(
             EventType.WORLD_FIRE_DETECTED,
-            {"cell_id": self.scenario.hazard.origin_cell,
-             "hazard": self.scenario.hazard.kind},
+            {
+                "cell_id": self.scenario.hazard.origin_cell,
+                "hazard": self.scenario.hazard.kind,
+            },
         )
         self._loop_task = asyncio.create_task(self._loop(), name="sim-tick")
         self._watch_task = asyncio.create_task(self._watch_roads(), name="sim-roads")
@@ -273,8 +278,12 @@ class Sim:
         for change in self.hazard.tick(dt):
             await self._emit(
                 EventType.WORLD_CELL_CHANGED,
-                {"cell_id": change.cell_id, "state": change.state,
-                 "hazard": change.hazard, "cause": change.cause},
+                {
+                    "cell_id": change.cell_id,
+                    "state": change.state,
+                    "hazard": change.hazard,
+                    "cause": change.cause,
+                },
             )
             # Render en el carril lento (D7): el frente puede ir un tick tarde,
             # el `/tp` de un replan no.
@@ -296,8 +305,12 @@ class Sim:
         for change in self.hazard.suppress([(u.x, u.z) for u in bomberos], dt):
             await self._emit(
                 EventType.WORLD_CELL_CHANGED,
-                {"cell_id": change.cell_id, "state": change.state,
-                 "hazard": change.hazard, "cause": change.cause},
+                {
+                    "cell_id": change.cell_id,
+                    "state": change.state,
+                    "hazard": change.hazard,
+                    "cause": change.cause,
+                },
             )
             for cmd in self.hazard.render_commands(change):
                 await self.rcon.send(cmd, LOW)
@@ -347,9 +360,7 @@ class Sim:
                 if movement.done:
                     break
                 x, z, yaw = movement.step(dt / steps)
-                await self.rcon.send(
-                    tp_command(unit_id, x, z, GROUND_Y + 1, yaw), HIGH
-                )
+                await self.rcon.send(tp_command(unit_id, x, z, GROUND_Y + 1, yaw), HIGH)
                 teletransportada = True
             x, z, yaw = movement.position()
             if movement.done and not teletransportada:
@@ -359,15 +370,18 @@ class Sim:
                 # última posición interpolada mientras el journal decía que había
                 # llegado. Se vio con Paper: una ambulancia reasignada a mitad de
                 # arista quedó 55 bloques corta. El `/tp` final cierra el hueco.
-                await self.rcon.send(
-                    tp_command(unit_id, x, z, GROUND_Y + 1, yaw), HIGH
-                )
+                await self.rcon.send(tp_command(unit_id, x, z, GROUND_Y + 1, yaw), HIGH)
             unit = self.units[unit_id]
             self.units[unit_id] = unit.model_copy(update={"x": x, "z": z})
             await self._emit(
                 EventType.WORLD_UNIT_POSITION,
-                {"unit_id": unit_id, "x": x, "z": z, "heading": yaw,
-                 "eta_s": movement.eta_s},
+                {
+                    "unit_id": unit_id,
+                    "x": x,
+                    "z": z,
+                    "heading": yaw,
+                    "eta_s": movement.eta_s,
+                },
             )
             if movement.done:
                 await self._arrive(unit_id)
@@ -481,7 +495,8 @@ class Sim:
             await self._failed(previous, "superseded")
 
         self._moving[unit_id] = (
-            Movement(unit_id, route, DEFAULT_SPEED_MPS, self.graph), action_id
+            Movement(unit_id, route, DEFAULT_SPEED_MPS, self.graph),
+            action_id,
         )
         await self._status(unit_id, "moving", f"hacia {target}")
 
@@ -522,13 +537,15 @@ class Sim:
                 f"{int(shelter.z) + 16}",
                 HIGH,
             )
-            await self.rcon.send(
-                f"effect give @e[tag={group_id}] glowing 60 0 true", LOW
-            )
+            await self.rcon.send(f"effect give @e[tag={group_id}] glowing 60 0 true", LOW)
             await self._emit(
                 EventType.WORLD_CIVILIANS_CHANGED,
-                {"group_id": group_id, "count": group.count, "state": "safe",
-                 "poi_id": shelter.id},
+                {
+                    "group_id": group_id,
+                    "count": group.count,
+                    "state": "safe",
+                    "poi_id": shelter.id,
+                },
             )
             rescatados.append(group_id)
         await self._completed(action_id, {"rescued": rescatados})
@@ -579,7 +596,8 @@ class Sim:
                 await self._status(unit_id, "idle", "sin ruta")
             elif nueva != movement.route:
                 self._moving[unit_id] = (
-                    Movement(unit_id, nueva, DEFAULT_SPEED_MPS, self.graph), action_id
+                    Movement(unit_id, nueva, DEFAULT_SPEED_MPS, self.graph),
+                    action_id,
                 )
                 await self._status(unit_id, "moving", f"desvío por {edge_id} cortada")
 
@@ -620,7 +638,7 @@ class Sim:
         if origen == route[0]:
             return route
         if origen in route:  # ya va por esa ruta, más adelantada
-            return route[route.index(origen):]
+            return route[route.index(origen) :]
         acceso = self.graph.shortest_path(origen, route[0])
         return None if acceso is None else acceso[:-1] + route
 
@@ -640,9 +658,7 @@ class Sim:
         return self.graph.shortest_path(self._nearest(unit_id), waypoint_id)
 
     async def _status(self, unit_id: str, status: str, reason: str) -> None:
-        self.units[unit_id] = self.units[unit_id].model_copy(
-            update={"status": status}
-        )
+        self.units[unit_id] = self.units[unit_id].model_copy(update={"status": status})
         await self._emit(
             EventType.WORLD_UNIT_STATUS,
             {"unit_id": unit_id, "status": status, "reason": reason},
@@ -692,7 +708,8 @@ async def dummy_core_step(sim: Sim, n: int) -> str | None:
     x1, z1, x2, z2 = sim.hazard.bounds(burning[0])
     target = ((x1 + x2) / 2, (z1 + z2) / 2)
     trucks = [
-        u for u in sim.units.values()
+        u
+        for u in sim.units.values()
         if u.kind == "fire_truck" and u.status != "unavailable"
     ]
     if not trucks:
@@ -745,22 +762,33 @@ def main() -> None:
     """`make dev-sim`: `python -m sim.runner --scenario ... --dummy-core`."""
     from contracts import bus
 
-    parser = argparse.ArgumentParser(description="El sim solo: tick loop + RCON + journal.")
+    parser = argparse.ArgumentParser(
+        description="El sim solo: tick loop + RCON + journal."
+    )
     parser.add_argument("--scenario", default="scenarios/wildfire_ridge.yaml")
     parser.add_argument(
-        "--dummy-core", action="store_true",
+        "--dummy-core",
+        action="store_true",
         help=f"un core tonto que manda un goto cada {DUMMY_EVERY_TICKS} ticks",
     )
     parser.add_argument(
-        "--no-minecraft", action="store_true",
+        "--no-minecraft",
+        action="store_true",
         help="sin RCON: los primeros comandos se imprimen y el resto se cuentan",
     )
-    parser.add_argument("--ticks", type=int, default=0, help="parar tras N ticks (0 = nunca)")
     parser.add_argument(
-        "--speed", type=float, default=1.0, help="multiplicador del reloj (1 = tiempo real)"
+        "--ticks", type=int, default=0, help="parar tras N ticks (0 = nunca)"
     )
     parser.add_argument(
-        "--every", type=int, default=DUMMY_EVERY_TICKS,
+        "--speed",
+        type=float,
+        default=1.0,
+        help="multiplicador del reloj (1 = tiempo real)",
+    )
+    parser.add_argument(
+        "--every",
+        type=int,
+        default=DUMMY_EVERY_TICKS,
         help="ticks entre órdenes del core tonto (y entre líneas de estado)",
     )
     parser.add_argument("--run-id", default=None, help="por defecto, run_<8 hex>")
@@ -783,8 +811,12 @@ def main() -> None:
     try:
         asyncio.run(
             run_headless(
-                Path(args.scenario), rcon, ticks=args.ticks, speed=args.speed,
-                dummy_core=args.dummy_core, every=args.every,
+                Path(args.scenario),
+                rcon,
+                ticks=args.ticks,
+                speed=args.speed,
+                dummy_core=args.dummy_core,
+                every=args.every,
             )
         )
     except KeyboardInterrupt:

@@ -68,7 +68,9 @@ def test_a_weak_answer_does_not_overwrite_an_assumption() -> None:
     c = Completeness()
     c.assume("people_immobile", "1")
     c.update({"people_immobile": ("4", 0.3)}, now=0.0)
-    assert c.fields["people_immobile"] == FieldState("assumed_default", "1", ASSUMED_CONFIDENCE)
+    assert c.fields["people_immobile"] == FieldState(
+        "assumed_default", "1", ASSUMED_CONFIDENCE
+    )
 
 
 def test_facts_carry_kind_and_call_id() -> None:

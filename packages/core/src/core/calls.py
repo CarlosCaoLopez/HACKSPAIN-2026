@@ -238,6 +238,25 @@ def live_facts(
     }
 
 
+BLANK_LIVE = dict.fromkeys(
+    ("resources", "fire_status", "roads_status", "unit_eta"), "sin datos"
+)
+
+
+def _live_or_blank(
+    state: WorldState | None,
+    poi: POI,
+    graph: RoadGraph | None,
+    assignment: Assignment | None,
+    aliases: dict[str, str] | None,
+) -> dict[str, str]:
+    """Los datos en vivo, o «sin datos» si a esta llamada no le pasaron el estado.
+    Nunca una frase inventada: el prompt prohíbe recomendar sobre lo que no está."""
+    if state is None:
+        return dict(BLANK_LIVE)
+    return live_facts(state, poi, graph, assignment, aliases)
+
+
 EVACUATION_CHECKLIST = (
     "Antes de colgar necesitas saber tres cosas, una detrás de otra: cuántas "
     "personas hay en el pueblo, si hay algún herido y si alguien no puede moverse "
@@ -290,6 +309,40 @@ def _situation_brief_neighbor(
     )
 
 
+CREW_CHECKLIST = (
+    "Solo necesitas una cosa: si pueden salir ya. Pregúntalo directamente y, en "
+    "cuanto te contesten, llama a la herramienta `reportar_situacion` con "
+    "`confirmed_order` a true si van y a false si no pueden. Si te dicen que no, "
+    "pregunta por qué en una frase y añádelo en `notes`. No alargues la llamada: "
+    "son treinta segundos."
+)
+"""Al retén y a la ambulancia se les llama para despachar, no para conversar: la
+llamada útil es la que acaba en «voy» o «no puedo» y libera la línea."""
+
+
+def _situation_brief_crew(live: dict[str, str], hazard: str, donde: str) -> str:
+    return (
+        f"Tiene un {hazard} declarado en {donde}. {live['fire_status'].capitalize()}. "
+        f"{live['roads_status'].capitalize()}. Dígalo en dos frases, sin rodeos, y "
+        "pregunte si pueden salir ya."
+    )
+
+
+def _situation_brief_ambulance(
+    live: dict[str, str], hazard: str, poi_name: str, immobile: int
+) -> str:
+    cuantos = (
+        f"{immobile} personas que no pueden moverse solas"
+        if immobile > 1
+        else "una persona que no puede moverse sola"
+    )
+    return (
+        f"Le piden una ambulancia en {poi_name}, por un {hazard}: hay {cuantos}. "
+        f"{live['roads_status'].capitalize()}. Dígalo en dos frases y pregunte si "
+        "pueden ir ya."
+    )
+
+
 ADVICE_RULES = (
     "Todo lo que digas sobre medios, rutas, distancias y tiempos tiene que salir de "
     "los datos de esta llamada: no inventes unidades, ni plazos, ni carreteras. Si "
@@ -326,13 +379,7 @@ def evacuation_call(
     deadline = math.ceil(assignment.eta_s / 60.0) + DEADLINE_MARGIN_MIN
     hazard = hazard_name(hazard_kind)
     route = route_name(assignment.route, roads, aliases)
-    live = (
-        live_facts(state, poi, graph, assignment, aliases)
-        if state is not None
-        else dict.fromkeys(
-            ("resources", "fire_status", "roads_status", "unit_eta"), "sin datos"
-        )
-    )
+    live = _live_or_blank(state, poi, graph, assignment, aliases)
     return CallRequest(
         task_id=task.id,
         poi_id=poi.id,
@@ -371,13 +418,7 @@ def neighbor_alert_call(
     puede llegarle gente huyendo, y conviene que lo sepa antes de que llamen a su
     puerta. Urgencia siempre `medium`: no es su emergencia, todavía."""
     hazard = hazard_name(hazard_kind)
-    live = (
-        live_facts(state, poi, graph, None, aliases)
-        if state is not None
-        else dict.fromkeys(
-            ("resources", "fire_status", "roads_status", "unit_eta"), "sin datos"
-        )
-    )
+    live = _live_or_blank(state, poi, graph, None, aliases)
     incoming = 0
     if state is not None:
         incoming = sum(
@@ -407,8 +448,90 @@ def neighbor_alert_call(
     )
 
 
+def fire_crew_call(
+    task: Task,
+    station: POI,
+    to: str,
+    hazard_kind: str,
+    unit_id: str,
+    where: str,
+    state: WorldState | None = None,
+    graph: RoadGraph | None = None,
+    aliases: dict[str, str] | None = None,
+) -> CallRequest:
+    """Al retén, en cuanto se detecta el fuego: dónde es, qué tiene delante y si
+    pueden salir. `unit_id` viaja con la llamada para que un «no podemos» entre al
+    estado como `unit:<id>:available=false` y el solver reparta con lo que queda."""
+    hazard = hazard_name(hazard_kind)
+    live = _live_or_blank(state, station, graph, None, aliases)
+    return CallRequest(
+        task_id=task.id,
+        poi_id=station.id,
+        to=to,
+        audience="responder",
+        intent="fire_crew_dispatch",
+        urgency="critical",
+        facts={
+            "role": "fire_crew",
+            "callee": "el retén de bomberos",
+            "unit_id": unit_id,
+            "poi_name": station.name,
+            "hazard_kind": hazard,
+            "situation_brief": _situation_brief_crew(live, hazard, where),
+            "checklist": CREW_CHECKLIST,
+            "advice_rules": ADVICE_RULES,
+            **live,
+        },
+        expect=["confirmation"],
+    )
+
+
+def ambulance_call(
+    task: Task,
+    poi: POI,
+    base: POI,
+    to: str,
+    hazard_kind: str,
+    unit_id: str,
+    immobile: int,
+    state: WorldState | None = None,
+    graph: RoadGraph | None = None,
+    aliases: dict[str, str] | None = None,
+) -> CallRequest:
+    """A la ambulancia, solo cuando alguien la ha pedido por teléfono (un rescate
+    nace de un hecho `poi:<id>:immobile` de una llamada) y solo si está libre."""
+    hazard = hazard_name(hazard_kind)
+    live = _live_or_blank(state, poi, graph, None, aliases)
+    return CallRequest(
+        task_id=task.id,
+        poi_id=poi.id,
+        to=to,
+        audience="responder",
+        intent="ambulance_dispatch",
+        urgency="critical",
+        facts={
+            "role": "ambulance",
+            "callee": "la dotación de la ambulancia",
+            "unit_id": unit_id,
+            "poi_name": poi.name,
+            "base_name": base.name,
+            "hazard_kind": hazard,
+            "immobile": str(immobile),
+            "situation_brief": _situation_brief_ambulance(
+                live, hazard, poi.name, immobile
+            ),
+            "checklist": CREW_CHECKLIST,
+            "advice_rules": ADVICE_RULES,
+            **live,
+        },
+        expect=["confirmation"],
+    )
+
+
 __all__ = [
+    "ambulance_call",
     "evacuation_call",
+    "fire_crew_call",
     "hazard_name",
     "neighbor_alert_call",
     "route_name",

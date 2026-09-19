@@ -155,9 +155,9 @@ def test_la_voz_en_vivo_esta_encadenada() -> None:
     requested = next(ev for ev in events if ev.type == EventType.CALL_SIGNAL_REQUESTED)
     sent = next(ev for ev in events if ev.type == EventType.CALL_SIGNAL_SENT)
     assert requested.seq in sent.causes, "la señal enviada no cuelga de la pedida"
-    assert any(
-        by_seq[c].type == EventType.PLAN_EMITTED for c in requested.causes
-    ), "la señal pedida no cuelga de un plan"
+    assert any(by_seq[c].type == EventType.PLAN_EMITTED for c in requested.causes), (
+        "la señal pedida no cuelga de un plan"
+    )
 
     call_id = sent.payload["call_id"]
     ended = next(
@@ -179,9 +179,12 @@ def test_las_carreteras_usan_el_id_de_la_arista() -> None:
     keys = [
         ev.payload["key"]
         for ev in _events()
-        if ev.type == EventType.WORLD_FACT_ASSERTED and ev.payload["key"].startswith("road")
+        if ev.type == EventType.WORLD_FACT_ASSERTED
+        and ev.payload["key"].startswith("road")
     ]
     assert keys, "el fixture no trae ningún hecho de carretera"
     assert all(k.startswith("road:wp_") and "road:road" not in k for k in keys), keys
     # Con la comilla delante: `rd_` a secas casa con `ha`**`rd_`**`constraints`.
-    assert not any('"rd_' in ev.model_dump_json() for ev in _events()), "queda un id `rd_*`"
+    assert not any('"rd_' in ev.model_dump_json() for ev in _events()), (
+        "queda un id `rd_*`"
+    )

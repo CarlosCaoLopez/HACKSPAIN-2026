@@ -73,7 +73,12 @@ def test_los_ids_del_fixture_existen_en_el_escenario(fixture: Path) -> None:
     waypoints = {w.id for w in scenario.waypoints}
     edges = {r.id for r in scenario.roads}
 
-    referenced: dict[str, set[str]] = {"unit": set(), "poi": set(), "wp": set(), "edge": set()}
+    referenced: dict[str, set[str]] = {
+        "unit": set(),
+        "poi": set(),
+        "wp": set(),
+        "edge": set(),
+    }
     for line in fixture.read_text(encoding="utf-8").splitlines():
         ev = json.loads(line)
         payload, type_ = ev["payload"], ev["type"]
@@ -89,7 +94,13 @@ def test_los_ids_del_fixture_existen_en_el_escenario(fixture: Path) -> None:
             for a in payload["assignments"]:
                 referenced["wp"].update(a["route"])
 
-    assert referenced["unit"] <= units, f"unidades sin declarar: {referenced['unit'] - units}"
+    assert referenced["unit"] <= units, (
+        f"unidades sin declarar: {referenced['unit'] - units}"
+    )
     assert referenced["poi"] <= pois, f"POIs sin declarar: {referenced['poi'] - pois}"
-    assert referenced["wp"] <= waypoints, f"waypoints sin coordenadas: {referenced['wp'] - waypoints}"
-    assert referenced["edge"] <= edges, f"aristas sin geometría: {referenced['edge'] - edges}"
+    assert referenced["wp"] <= waypoints, (
+        f"waypoints sin coordenadas: {referenced['wp'] - waypoints}"
+    )
+    assert referenced["edge"] <= edges, (
+        f"aristas sin geometría: {referenced['edge'] - edges}"
+    )

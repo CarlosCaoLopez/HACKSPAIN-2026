@@ -101,7 +101,7 @@ class Director:
             u, st = p["unit_id"], p.get("status")
             (esc.moviendo.add if st == "moving" else esc.moviendo.discard)(u)
             if st == "unavailable":
-                return f"{u} fuera de servicio · {p.get('reason','')}"
+                return f"{u} fuera de servicio · {p.get('reason', '')}"
         elif e == "world.cell.changed":
             cx, cz = (int(v) * esc.cell_size for v in p["cell_id"].split("_")[1:])
             if p["state"] == "burning":
@@ -115,23 +115,23 @@ class Director:
         elif e == "world.inject":
             return f"INJECT · {p.get('inject_type')} · {p.get('detail')}"
         elif e == "world.road.changed" and p.get("cut"):
-            return f"CARRETERA CORTADA · {p.get('edge_id')} · {p.get('cause','')}"
+            return f"CARRETERA CORTADA · {p.get('edge_id')} · {p.get('cause', '')}"
         elif e == "world.unit.arrived":
             return f"{p['unit_id']} llega a {p.get('waypoint_id')}"
         elif e == "action.requested":
             a = p.get("args", {})
             destino = a.get("waypoint_id") or (a.get("route") or [""])[-1]
-            return f"orden: {p.get('verb')} {a.get('unit_id','')} → {destino}"
+            return f"orden: {p.get('verb')} {a.get('unit_id', '')} → {destino}"
         elif e == "action.failed":
             return f"falla una orden · {p.get('error')}"
         elif e == "plan.policy.emitted":
             return "el modelo emite política nueva"
         elif e == "call.started":
-            return f"LLAMADA en curso · {p.get('to') or p.get('direction','')}"
+            return f"LLAMADA en curso · {p.get('to') or p.get('direction', '')}"
         elif e == "call.ended":
             return "llamada terminada"
         elif e == "world.fact.asserted":
-            return f"hecho: {p.get('key')} = {p.get('value')} ({p.get('confidence','')})"
+            return f"hecho: {p.get('key')} = {p.get('value')} ({p.get('confidence', '')})"
         elif e == "world.civilians.changed":
             return f"civiles {p.get('group_id')} → {p.get('state')}"
         return None
@@ -162,7 +162,9 @@ class Director:
         rcon = RconClient(settings.rcon_host, settings.rcon_port, settings.rcon_password)
         await rcon.connect()
         await rcon.send(f"gamemode spectator {self.player}", HIGH)
-        print(f"director · sigue {journal.name} · cámara sobre {self.player}\n", flush=True)
+        print(
+            f"director · sigue {journal.name} · cámara sobre {self.player}\n", flush=True
+        )
 
         with journal.open() as fh:
             fh.seek(0, 2)  # solo lo que pase a partir de ahora

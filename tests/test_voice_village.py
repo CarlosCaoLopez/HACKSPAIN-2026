@@ -160,3 +160,51 @@ async def test_wrong_token_is_rejected(client, monkeypatch) -> None:
         headers={"X-Vela-Token": "no-es-el-token"},
     )
     assert r.status_code == 401
+
+
+async def test_crew_says_no_and_the_unit_leaves_the_board(client, journal) -> None:
+    """Un «no podemos salir» no se discute por teléfono: entra como
+    `unit:<id>:available=false` y el solver reparte con lo que queda."""
+    body = {
+        "unit_id": "unit_truck1",
+        "role": "fire_crew",
+        "call_id": "run_hr_7",
+        "params": {"confirmed_order": "no", "notes": "la bomba está en revisión"},
+    }
+    r = await client.post("/webhooks/happyrobot/village", json=body, headers=HEADERS)
+    assert r.status_code == 200, r.text
+    ack = r.json()
+    assert ack["ambulance_dispatched"] is False
+    assert "no puede salir" in ack["message"] and "retén" in ack["message"]
+    facts = _keys(journal)
+    assert facts["unit:unit_truck1:available"] is False
+    fa = next(e.payload for e in journal if e.type == EventType.WORLD_FACT_ASSERTED)
+    assert fa["kind"] == "observed" and fa["severity"] == "critical"
+
+
+async def test_crew_says_yes(client, journal) -> None:
+    body = {
+        "unit_id": "unit_truck1",
+        "role": "fire_crew",
+        "call_id": "run_hr_8",
+        "params": {"confirmed_order": "sí"},
+    }
+    ack = (
+        await client.post("/webhooks/happyrobot/village", json=body, headers=HEADERS)
+    ).json()
+    assert "movilizados" in ack["message"]
+    assert _keys(journal)["unit:unit_truck1:available"] is True
+
+
+async def test_ambulance_confirms(client, journal) -> None:
+    body = {
+        "unit_id": "unit_ambulance",
+        "role": "ambulance",
+        "call_id": "run_hr_9",
+        "params": {"confirmed_order": "true"},
+    }
+    ack = (
+        await client.post("/webhooks/happyrobot/village", json=body, headers=HEADERS)
+    ).json()
+    assert ack["ambulance_dispatched"] is True
+    assert _keys(journal)["unit:unit_ambulance:available"] is True

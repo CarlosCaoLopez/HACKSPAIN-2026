@@ -36,7 +36,9 @@ XML = FIXTURE.read_bytes()
 EDGE = "road:wp_a-wp_b"
 
 
-def anchor(road: str = "A-8005", pk_from: float = 1.0, pk_to: float = 2.5, edge: str = EDGE) -> GeoAnchor:
+def anchor(
+    road: str = "A-8005", pk_from: float = 1.0, pk_to: float = 2.5, edge: str = EDGE
+) -> GeoAnchor:
     return GeoAnchor(
         id="t",
         place="Sitio",
@@ -47,7 +49,9 @@ def anchor(road: str = "A-8005", pk_from: float = 1.0, pk_to: float = 2.5, edge:
     )
 
 
-def facts_of(xml: bytes = XML, a: GeoAnchor | None = None, ctx: FeedContext | None = None):
+def facts_of(
+    xml: bytes = XML, a: GeoAnchor | None = None, ctx: FeedContext | None = None
+):
     records = parse_situations(xml).records
     return to_facts(records, a or anchor(), ctx or FeedContext())
 
@@ -63,10 +67,19 @@ def test_la_captura_real_se_lee_entera():
     parsed = parse_situations(XML)
     assert parsed.malformed == 0
     assert [r.id for r in parsed.records] == [
-        "5684393", "16676270", "17769357", "27494457", "20413525", "20413490",
+        "5684393",
+        "16676270",
+        "17769357",
+        "27494457",
+        "20413525",
+        "20413490",
     ]
     first = parsed.records[0]
-    assert (first.road_name, first.management, first.validity) == ("A-8005", "roadClosed", "active")
+    assert (first.road_name, first.management, first.validity) == (
+        "A-8005",
+        "roadClosed",
+        "active",
+    )
     assert first.pks == (2.16, 0.0)  # un tramo lleva dos PK
     assert first.detailed_cause == "roadworks"
 
@@ -95,11 +108,20 @@ def test_solo_lo_que_corta_es_un_corte():
     }
 
 
-def record(management: str, cause: str = "rockfalls", lanes=(ALL_LANES,)) -> SituationRecord:
+def record(
+    management: str, cause: str = "rockfalls", lanes=(ALL_LANES,)
+) -> SituationRecord:
     return SituationRecord(
-        id="1", version="1", validity="active", probability="certain", road_name="A-1",
-        pks=(1.0,), cause_type="environmentalObstruction", detailed_cause=cause,
-        management=management, lane_usages=tuple(lanes),
+        id="1",
+        version="1",
+        validity="active",
+        probability="certain",
+        road_name="A-1",
+        pks=(1.0,),
+        cause_type="environmentalObstruction",
+        detailed_cause=cause,
+        management=management,
+        lane_usages=tuple(lanes),
     )
 
 
@@ -133,7 +155,9 @@ def test_una_causa_de_corte_que_solo_afecta_a_un_carril_no_corta():
 
 def test_un_roadclosed_sobre_la_arista_declarada_da_un_solo_hecho_el_corte():
     obs = facts_of()
-    assert [o.fact.key for o in obs] == ["road:wp_a-wp_b:cut"], "la causa no se publica (REQ-312)"
+    assert [o.fact.key for o in obs] == ["road:wp_a-wp_b:cut"], (
+        "la causa no se publica (REQ-312)"
+    )
     cut = obs[0].fact
     assert cut.value is True and cut.kind == "observed" and cut.confidence == 0.9
     assert cut.source == "api:dgt:5684393v1"
@@ -211,7 +235,9 @@ def test_la_ruta_del_plan_casa_con_o_sin_prefijo_road():
     ("probability", "expected"),
     [("certain", 0.9), ("probable", 0.7), ("riskOf", 0.4), ("algoNuevo", 0.5)],
 )
-def test_la_confianza_sale_de_la_probabilidad_del_registro(probability: str, expected: float):
+def test_la_confianza_sale_de_la_probabilidad_del_registro(
+    probability: str, expected: float
+):
     xml = XML.replace(b">certain<", f">{probability}<".encode())
     assert by_key(facts_of(xml))["road:wp_a-wp_b:cut"].confidence == expected
 

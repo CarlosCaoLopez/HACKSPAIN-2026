@@ -187,8 +187,10 @@ def scar_bounds(scenario: Scenario) -> tuple[int, int, int, int]:
     size = scenario.hazard.cell_size
     r = MAX_RADIUS_CELLS * size + size
     return (
-        min(x1, cx * size - r), min(z1, cz * size - r),
-        max(x2, cx * size + r), max(z2, cz * size + r),
+        min(x1, cx * size - r),
+        min(z1, cz * size - r),
+        max(x2, cx * size + r),
+        max(z2, cz * size + r),
     )
 
 

@@ -35,7 +35,9 @@ EDGE = "road:wp_a-wp_b"
 class FakeRt:
     """Lo que `Feeds` usa de `Runtime`: el estado, el plan, el reloj y `publish`."""
 
-    def __init__(self, t_sim: float = 0.0, state=None, plan=None, fail_first: bool = False):
+    def __init__(
+        self, t_sim: float = 0.0, state=None, plan=None, fail_first: bool = False
+    ):
         self.hub = SimpleNamespace(last_t_sim=t_sim)
         self.state, self.plan = state, plan
         self.published: list = []
@@ -137,7 +139,10 @@ def test_sin_clave_no_es_un_error_es_off_con_nota():
     feeds = make_feeds(client=transport({}))
     started = {s.name for s in feeds.plan_sources()}
     assert "firms" not in started
-    assert feeds.states["firms"].note == "sin clave" and feeds.states["firms"].status == "off"
+    assert (
+        feeds.states["firms"].note == "sin clave"
+        and feeds.states["firms"].status == "off"
+    )
 
 
 def test_solo_las_fuentes_pedidas_arrancan():
@@ -148,7 +153,8 @@ def test_solo_las_fuentes_pedidas_arrancan():
 
 def test_dgt_fechado_no_tiene_historico_y_sin_aristas_no_tiene_a_que_casar():
     dated = make_feeds(
-        client=transport({}), anchor=anchor(reference_start=datetime(2025, 8, 14, 12, tzinfo=UTC))
+        client=transport({}),
+        anchor=anchor(reference_start=datetime(2025, 8, 14, 12, tzinfo=UTC)),
     )
     dated.plan_sources()
     assert dated.states["dgt"].note == "sin histórico"
@@ -180,7 +186,9 @@ async def test_dgt_en_vivo_publica_el_corte_y_no_lo_republica():
     await run_source_once(feeds, "dgt")
     assert feeds.states["dgt"].status == "ok" and feeds.states["dgt"].last_ok_t_wall
 
-    assert await feeds.publish_due() == 1  # solo el `cut`: la causa no tiene equivalente en Minecraft
+    assert (
+        await feeds.publish_due() == 1
+    )  # solo el `cut`: la causa no tiene equivalente en Minecraft
     assert {p.key for p in facts(rt)} == {"road:wp_a-wp_b:cut"}
     assert all(t == EventType.WORLD_FACT_ASSERTED for t, _, _ in rt.published)
     assert all(src == "feeds" for _, _, src in rt.published)  # la envoltura (REQ-236)
@@ -191,7 +199,9 @@ async def test_dgt_en_vivo_publica_el_corte_y_no_lo_republica():
 
 
 async def test_las_capturas_crudas_se_guardan_tal_cual(tmp_path: Path):
-    feeds = make_feeds(client=transport({"nap.dgt.es": DGT}), feeds_dir=tmp_path, only=frozenset({"dgt"}))
+    feeds = make_feeds(
+        client=transport({"nap.dgt.es": DGT}), feeds_dir=tmp_path, only=frozenset({"dgt"})
+    )
     await run_source_once(feeds, "dgt")
     saved = list((tmp_path / "t" / "dgt").glob("*.xml"))
     assert len(saved) == 1
@@ -223,7 +233,9 @@ async def test_la_clave_nunca_aparece_en_el_error_de_una_fuente():
     assert "CLAVE-SECRETA-123" not in (st.last_error or "")
 
 
-async def _waits_of(feeds: Feeds, name: str, monkeypatch: pytest.MonkeyPatch, cycles: int) -> list[float]:
+async def _waits_of(
+    feeds: Feeds, name: str, monkeypatch: pytest.MonkeyPatch, cycles: int
+) -> list[float]:
     """Las esperas que pide una fuente entre ciclos, sin esperar de verdad."""
     from gateway.feeds import poller
 
@@ -256,7 +268,9 @@ async def test_un_exito_resetea_el_backoff(monkeypatch: pytest.MonkeyPatch):
     def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
         # Falla dos veces y luego contesta bien.
-        return httpx.Response(500 if calls["n"] <= 2 else 200, content=DGT, request=request)
+        return httpx.Response(
+            500 if calls["n"] <= 2 else 200, content=DGT, request=request
+        )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     feeds = make_feeds(client=client, only=frozenset({"dgt"}))
@@ -267,9 +281,13 @@ async def test_un_exito_resetea_el_backoff(monkeypatch: pytest.MonkeyPatch):
 
 
 async def test_un_run_fechado_sale_repartido_en_t_sim_y_no_de_golpe():
-    a = anchor(reference_start=datetime(2025, 8, 14, 12, 0, tzinfo=timezone(timedelta(hours=2))))
+    a = anchor(
+        reference_start=datetime(2025, 8, 14, 12, 0, tzinfo=timezone(timedelta(hours=2)))
+    )
     rt = FakeRt(t_sim=0.0)
-    feeds = make_feeds(rt, transport({"open-meteo": METEO}), anchor=a, only=frozenset({"open_meteo"}))
+    feeds = make_feeds(
+        rt, transport({"open-meteo": METEO}), anchor=a, only=frozenset({"open_meteo"})
+    )
     await run_source_once(feeds, "open_meteo")
     total = len(feeds.schedule)
     assert total > 2
@@ -303,7 +321,9 @@ async def test_los_focos_de_firms_salen_como_hechos_y_como_detecciones_del_mapa(
     await run_source_once(feeds, "firms")
     # Tres satélites devuelven las mismas seis filas: la deduplicación deja 3 hechos.
     assert await feeds.publish_due() == 3
-    assert len(feeds.status()["detections"]) == 4  # el mapa enseña también el foco de z < 0
+    assert (
+        len(feeds.status()["detections"]) == 4
+    )  # el mapa enseña también el foco de z < 0
     assert feeds.states["firms"].malformed >= 1  # la fila de confianza `x`
 
 
@@ -324,7 +344,11 @@ async def test_firms_fechado_pide_nrt_y_estandar_solo_donde_el_estandar_existe()
     await run_source_once(feeds, "firms")
     asked = {u.split("/csv/k/")[1].split("/")[0] for u in urls}
     assert asked == {
-        "VIIRS_NOAA21_NRT", "VIIRS_NOAA20_NRT", "VIIRS_NOAA20_SP", "VIIRS_SNPP_NRT", "VIIRS_SNPP_SP",
+        "VIIRS_NOAA21_NRT",
+        "VIIRS_NOAA20_NRT",
+        "VIIRS_NOAA20_SP",
+        "VIIRS_SNPP_NRT",
+        "VIIRS_SNPP_SP",
     }
     assert feeds.states["firms"].status == "ok"
 
@@ -333,14 +357,19 @@ async def test_una_parte_ilegible_no_tumba_a_las_buenas_pero_todas_ilegibles_si(
     good, bad = FIRMS, b"Invalid MAP_KEY."
     routes = {"VIIRS_NOAA21_NRT": good, "VIIRS_NOAA20_NRT": bad, "VIIRS_SNPP_NRT": good}
     feeds = make_feeds(
-        client=transport(routes), anchor=anchor(edges={}), firms_key="k", only=frozenset({"firms"})
+        client=transport(routes),
+        anchor=anchor(edges={}),
+        firms_key="k",
+        only=frozenset({"firms"}),
     )
     await run_source_once(feeds, "firms")
     assert feeds.states["firms"].status == "ok"
     assert len(feeds.schedule) == 3
 
     all_bad = make_feeds(
-        client=transport({"firms.modaps": bad}), anchor=anchor(edges={}), firms_key="k",
+        client=transport({"firms.modaps": bad}),
+        anchor=anchor(edges={}),
+        firms_key="k",
         only=frozenset({"firms"}),
     )
     await run_source_once(all_bad, "firms")
@@ -349,16 +378,22 @@ async def test_una_parte_ilegible_no_tumba_a_las_buenas_pero_todas_ilegibles_si(
 
 async def test_en_desarrollo_un_registro_roto_lanza_pero_no_pierde_los_buenos():
     strict = make_feeds(
-        client=transport({"firms.modaps": FIRMS}), anchor=anchor(edges={}), firms_key="k",
-        only=frozenset({"firms"}), strict=True,
+        client=transport({"firms.modaps": FIRMS}),
+        anchor=anchor(edges={}),
+        firms_key="k",
+        only=frozenset({"firms"}),
+        strict=True,
     )
     await run_source_once(strict, "firms")
     assert strict.states["firms"].status == "degraded"  # REQ-258: lanza en desarrollo
     assert len(strict.schedule) == 3  # y los tres focos buenos están en la cola
 
     lenient = make_feeds(
-        client=transport({"firms.modaps": FIRMS}), anchor=anchor(edges={}), firms_key="k",
-        only=frozenset({"firms"}), strict=False,
+        client=transport({"firms.modaps": FIRMS}),
+        anchor=anchor(edges={}),
+        firms_key="k",
+        only=frozenset({"firms"}),
+        strict=False,
     )
     await run_source_once(lenient, "firms")
     assert lenient.states["firms"].status == "ok"  # en la demo se cuenta y se sigue
@@ -372,10 +407,14 @@ async def test_un_corte_sobre_una_arista_del_plan_es_critico():
     plan = SimpleNamespace(assignments=[SimpleNamespace(route=[road.a, road.b])])
     rt = FakeRt(plan=plan)
     a = anchor(edges={road.id: EdgeRef(road_name="A-8005", pk_from=1.0, pk_to=2.5)})
-    feeds = make_feeds(rt, transport({"nap.dgt.es": DGT}), anchor=a, only=frozenset({"dgt"}))
+    feeds = make_feeds(
+        rt, transport({"nap.dgt.es": DGT}), anchor=a, only=frozenset({"dgt"})
+    )
     await run_source_once(feeds, "dgt")
     await feeds.publish_due()
-    assert [(p.key, p.severity) for p in facts(rt)] == [(f"road:{road.id.removeprefix('road:')}:cut", "critical")]
+    assert [(p.key, p.severity) for p in facts(rt)] == [
+        (f"road:{road.id.removeprefix('road:')}:cut", "critical")
+    ]
 
 
 # --- publicar y parar -------------------------------------------------------------------------
@@ -383,7 +422,9 @@ async def test_un_corte_sobre_una_arista_del_plan_es_critico():
 
 async def test_un_hecho_que_no_se_publica_no_mata_la_emision():
     rt = FakeRt(fail_first=True)
-    feeds = make_feeds(rt, transport({"open-meteo": METEO}), only=frozenset({"open_meteo"}))
+    feeds = make_feeds(
+        rt, transport({"open-meteo": METEO}), only=frozenset({"open_meteo"})
+    )
     await run_source_once(feeds, "open_meteo")
     total = len(feeds.schedule)
     assert total > 2  # hace falta más de un hecho para que haya un «siguiente»
@@ -406,11 +447,17 @@ async def test_recorded_reproduce_las_capturas_sin_red(tmp_path: Path):
 
 
 async def test_cancelar_run_no_deja_tareas_colgadas():
-    feeds = make_feeds(client=transport({"open-meteo": METEO}), only=frozenset({"open_meteo"}))
+    feeds = make_feeds(
+        client=transport({"open-meteo": METEO}), only=frozenset({"open_meteo"})
+    )
     task = asyncio.create_task(feeds.run())
     await asyncio.sleep(0.05)
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
-    leftovers = [t for t in asyncio.all_tasks() if t.get_name().startswith("vela.feeds") and not t.done()]
+    leftovers = [
+        t
+        for t in asyncio.all_tasks()
+        if t.get_name().startswith("vela.feeds") and not t.done()
+    ]
     assert leftovers == []

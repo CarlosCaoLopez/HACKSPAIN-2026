@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     # pueden llegarle vecinos del otro. Es por papel, no por pueblo (cuál está a salvo
     # cambia con el viento). Sin él, ese aviso cae en `judge_phone` como el resto.
     neighbor_phone: str = ""
+    # Los medios contestan al teléfono como cualquiera: al retén se le llama en cuanto
+    # hay fuego, y a la ambulancia solo cuando alguien la ha pedido y está libre. Sin
+    # número configurado no se llama y se anota una vez (no se cae en `judge_phone`:
+    # dos llamadas a la vez al mismo móvil dan ocupado, medido el sábado).
+    fire_crew_phone: str = ""
+    ambulance_phone: str = ""
     # P3 · Telegram: el «dónde» exacto tras la llamada. Sin token, canal ausente.
     telegram_bot_token: str = ""
     telegram_secret_token: str = ""  # `X-Telegram-Bot-Api-Secret-Token` del setWebhook

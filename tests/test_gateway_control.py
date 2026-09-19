@@ -60,7 +60,9 @@ def webhook_client(monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture
 def replay_client(monkeypatch: pytest.MonkeyPatch):
     if not FAKE.exists():
-        pytest.skip("falta fixtures/run_fake.jsonl · uv run python scripts/fake_journal.py")
+        pytest.skip(
+            "falta fixtures/run_fake.jsonl · uv run python scripts/fake_journal.py"
+        )
     monkeypatch.setattr(settings, "vela_mode", "replay")
     monkeypatch.setattr(settings, "vela_replay_file", str(FAKE))
     monkeypatch.setattr(settings, "vela_replay_speed", 60.0)
@@ -166,7 +168,9 @@ def test_en_replay_no_se_inyecta(replay_client: TestClient) -> None:
 
 def test_pausa_idempotente_y_visible(dev_client: TestClient) -> None:
     for _ in range(2):
-        assert dev_client.post("/control/pause", params={"paused": True}).json()["accepted"]
+        assert dev_client.post("/control/pause", params={"paused": True}).json()[
+            "accepted"
+        ]
     assert dev_client.get("/api/health").json()["paused"] is True
 
     dev_client.post("/control/pause", params={"paused": False})
@@ -216,9 +220,12 @@ def test_token_malo_es_401_y_se_cuenta(
     assert dev_client.get("/api/health").json()["webhooks"] == "activo"
 
     assert dev_client.post("/webhooks/humalike/call", json={}).status_code == 401
-    assert dev_client.post(
-        "/webhooks/humalike/call", json={}, headers={"X-Vela-Token": "otro"}
-    ).status_code == 401
+    assert (
+        dev_client.post(
+            "/webhooks/humalike/call", json={}, headers={"X-Vela-Token": "otro"}
+        ).status_code
+        == 401
+    )
     assert dev_client.get("/api/health").json()["webhook_rejected"] == 2
 
 

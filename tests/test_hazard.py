@@ -27,8 +27,11 @@ OESTE = Wind(bearing_deg=270, speed=1.2)  # O→E, como wildfire_ridge.yaml
 
 def spec(**kw) -> HazardSpec:
     base = {
-        "kind": "wildfire", "origin_cell": "cell_14_22", "cell_size": 4,
-        "base_spread": 0.12, "wind": OESTE,
+        "kind": "wildfire",
+        "origin_cell": "cell_14_22",
+        "cell_size": 4,
+        "base_spread": 0.12,
+        "wind": OESTE,
     }
     return HazardSpec(**{**base, **kw})
 
@@ -38,6 +41,7 @@ def correr(fuego: Wildfire, segundos: int) -> list[CellChange]:
 
 
 # --- determinismo, que es lo que sostiene todo lo demás ---
+
 
 def test_la_misma_semilla_da_el_mismo_incendio():
     a = correr(Wildfire(spec(), seed=1821), 60)
@@ -55,12 +59,16 @@ def test_semillas_distintas_dan_incendios_distintos():
 def test_no_usa_el_random_global():
     """Sembrar el módulo `random` no puede cambiar nada (D4)."""
     import random
-    random.seed(1); a = correr(Wildfire(spec(), seed=7), 40)
-    random.seed(999); b = correr(Wildfire(spec(), seed=7), 40)
+
+    random.seed(1)
+    a = correr(Wildfire(spec(), seed=7), 40)
+    random.seed(999)
+    b = correr(Wildfire(spec(), seed=7), 40)
     assert [c.cell_id for c in a] == [c.cell_id for c in b]
 
 
 # --- el comportamiento ---
+
 
 def test_arranca_ardiendo_por_la_celda_de_origen():
     primero = Wildfire(spec(), seed=1).tick(1.0)
@@ -120,24 +128,32 @@ def test_cambiar_el_viento_cambia_la_direccion():
 
 # --- render y utilidades ---
 
+
 def test_render_de_burning_y_burnt():
     fuego = Wildfire(spec(), seed=1)
-    burning = fuego.render_commands(CellChange(cell_id="cell_1_2", state="burning", hazard="wildfire"))
+    burning = fuego.render_commands(
+        CellChange(cell_id="cell_1_2", state="burning", hazard="wildfire")
+    )
     assert burning == [
-        "fill 4 65 8 7 73 11 air",       # se lleva por delante lo que hubiera
+        "fill 4 65 8 7 73 11 air",  # se lleva por delante lo que hubiera
         "fill 4 64 8 7 64 11 netherrack",
         "fill 4 65 8 7 65 11 fire",
     ]
-    burnt = fuego.render_commands(CellChange(cell_id="cell_1_2", state="burnt", hazard="wildfire"))
+    burnt = fuego.render_commands(
+        CellChange(cell_id="cell_1_2", state="burnt", hazard="wildfire")
+    )
     assert burnt[-1].endswith("coal_block")
     assert "air" in burnt[0], "hay que apagar el fuego antes de dejar la cicatriz"
 
 
 def test_at_risk_no_se_pinta():
     fuego = Wildfire(spec(), seed=1)
-    assert fuego.render_commands(
-        CellChange(cell_id="cell_1_2", state="at_risk", hazard="wildfire")
-    ) == []
+    assert (
+        fuego.render_commands(
+            CellChange(cell_id="cell_1_2", state="at_risk", hazard="wildfire")
+        )
+        == []
+    )
 
 
 @pytest.mark.parametrize(
@@ -160,6 +176,7 @@ def test_ids_de_celda_van_y_vienen():
 
 # --- la fábrica ---
 
+
 def test_build_hazard_devuelve_la_implementacion():
     assert isinstance(build_hazard(spec(), 1), Wildfire)
 
@@ -177,8 +194,7 @@ def test_flood_declara_que_no_esta():
 
 # --- Blackout: el segundo escenario ---
 
-APAGON = {"kind": "blackout", "base_spread": 0.9,
-          "wind": Wind(bearing_deg=0, speed=0.0)}
+APAGON = {"kind": "blackout", "base_spread": 0.9, "wind": Wind(bearing_deg=0, speed=0.0)}
 
 
 def test_blackout_se_propaga_en_cruz_no_en_diagonal():
@@ -224,9 +240,12 @@ def test_render_del_apagon():
         CellChange(cell_id="cell_1_2", state="dark", hazard="blackout")
     )
     assert cmds == ["fill 4 64 8 7 64 11 polished_blackstone"]
-    assert b.render_commands(
-        CellChange(cell_id="cell_1_2", state="at_risk", hazard="blackout")
-    ) == []
+    assert (
+        b.render_commands(
+            CellChange(cell_id="cell_1_2", state="at_risk", hazard="blackout")
+        )
+        == []
+    )
 
 
 def test_build_hazard_devuelve_blackout():
@@ -234,6 +253,7 @@ def test_build_hazard_devuelve_blackout():
 
 
 # --- sofocar desde la carretera ---
+
 
 def test_un_camion_cerca_apaga_el_fuego():
     """El contrato lo asigna al sim: una unidad trabaja las celdas `burning` a
@@ -282,9 +302,12 @@ def test_un_camion_reparte_su_esfuerzo():
     f = Wildfire(spec(base_spread=0.9), seed=3)
     correr(f, 60)
     x, z = f.center_of(f.burning[len(f.burning) // 2])
-    a_tiro = sum(1 for c in f.burning
-                 if abs(f.center_of(c)[0] - x) <= f.spec.suppress_reach_m
-                 and abs(f.center_of(c)[1] - z) <= f.spec.suppress_reach_m)
+    a_tiro = sum(
+        1
+        for c in f.burning
+        if abs(f.center_of(c)[0] - x) <= f.spec.suppress_reach_m
+        and abs(f.center_of(c)[1] - z) <= f.spec.suppress_reach_m
+    )
     apagadas = [c for _ in range(20) for c in f.suppress([(x, z)], 1.0)]
     assert a_tiro > 1, "el escenario de la prueba necesita varias celdas a tiro"
     assert len(apagadas) < a_tiro, "no puede apagarlas todas a la vez"
@@ -294,11 +317,13 @@ def test_la_cicatriz_de_un_camion_se_pinta_distinta():
     """`extinguished` no es `burnout`: el dashboard y el mundo los separan."""
     f = Wildfire(spec(), seed=1)
     apagada = f.render_commands(
-        CellChange(cell_id="cell_1_2", state="burnt", hazard="wildfire",
-                   cause="extinguished"))
+        CellChange(
+            cell_id="cell_1_2", state="burnt", hazard="wildfire", cause="extinguished"
+        )
+    )
     quemada = f.render_commands(
-        CellChange(cell_id="cell_1_2", state="burnt", hazard="wildfire",
-                   cause="burnout"))
+        CellChange(cell_id="cell_1_2", state="burnt", hazard="wildfire", cause="burnout")
+    )
     assert "gray_concrete" in apagada[-1]
     assert "coal_block" in quemada[-1]
 
@@ -314,7 +339,7 @@ def test_fuera_del_valle_no_arde_nada():
     """El freno del incendio es el combustible, no un radio alrededor de la chispa.
     Sin esto el frente se pasa los pueblos y sigue ardiendo en hierba vacía: ruido
     en pantalla y tareas de extinción por celdas a las que nadie va a ir."""
-    valle = (0.0, 0.0, 80.0, 80.0)   # 20x20 celdas de 4 bloques
+    valle = (0.0, 0.0, 80.0, 80.0)  # 20x20 celdas de 4 bloques
     f = Wildfire(spec(origin_cell="cell_10_10", base_spread=2.0), seed=5, burnable=valle)
     correr(f, 400)
     for cid in list(f.burning) + [c for c, s in f._state.items() if s == "burnt"]:

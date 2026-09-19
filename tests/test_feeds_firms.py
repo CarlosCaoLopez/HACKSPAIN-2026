@@ -27,7 +27,12 @@ CSV = Path("fixtures/feeds/_test/firms_viirs_synthetic.csv").read_text()
 
 def anchor() -> GeoAnchor:
     return GeoAnchor(
-        id="t", place="Sitio", lat0=40.0, lon0=-4.0, meters_per_block=25, firms_radius_km=10
+        id="t",
+        place="Sitio",
+        lat0=40.0,
+        lon0=-4.0,
+        meters_per_block=25,
+        firms_radius_km=10,
     )
 
 
@@ -91,7 +96,9 @@ def test_solo_el_primer_foco_n_h_de_cada_pase_es_critico():
 def test_un_pase_ya_avisado_no_vuelve_a_ser_critico_en_el_siguiente_sondeo():
     c = ctx()
     to_facts(parse_csv(CSV).records[:1], anchor(), c)  # avisa el pase N de las 10:30
-    second = to_facts(parse_csv(CSV).records[1:2], anchor(), c)  # otro foco del mismo pase
+    second = to_facts(
+        parse_csv(CSV).records[1:2], anchor(), c
+    )  # otro foco del mismo pase
     assert second[0].fact.severity == "medium"
 
 
@@ -100,14 +107,20 @@ def test_un_pase_distinto_vuelve_a_avisar():
     same_pass = [r for r in rows if r.satellite == "N"]
     other = [r for r in rows if r.satellite == "1"]
     c = ctx()
-    critical = [o for o in to_facts(same_pass + other, anchor(), c) if o.fact.severity == "critical"]
+    critical = [
+        o
+        for o in to_facts(same_pass + other, anchor(), c)
+        if o.fact.severity == "critical"
+    ]
     assert len(critical) == 1  # `l` es `low`: de los n/h solo el pase N tiene uno crítico
 
 
 def test_solo_se_publican_los_focos_de_la_caja_del_valle():
     """Con la API real la sonda publicaba focos a 5-10 km del valle (`cell_97_10`)."""
     everywhere = to_facts(parse_csv(CSV).records, anchor(), ctx())
-    boxed = FeedContext(origin_cell="cell_18_7", cell_size=4, world_box=(0.0, 60.0, 0.0, 30.0))
+    boxed = FeedContext(
+        origin_cell="cell_18_7", cell_size=4, world_box=(0.0, 60.0, 0.0, 30.0)
+    )
     inside = to_facts(parse_csv(CSV).records, anchor(), boxed)
     assert len(everywhere) == 3 and len(inside) == 1  # solo (x~51, z~22) cae en la caja
     assert inside[0].fact.confidence == 0.4
@@ -147,7 +160,9 @@ def test_sin_focos_no_se_publica_nada_ni_un_hecho_negativo():
 def test_las_detecciones_del_mapa_llevan_posicion_y_no_huella():
     det = detections(parse_csv(CSV).records, anchor())
     assert len(det) == 4  # el mapa enseña también el de z < 0; solo se filtra el cuadro
-    assert all("footprint_blocks" not in d for d in det)  # sin huella: Minecraft no la tiene (REQ-312)
+    assert all(
+        "footprint_blocks" not in d for d in det
+    )  # sin huella: Minecraft no la tiene (REQ-312)
     # SPEC-008 REQ-293: el mapa real necesita la coordenada, no solo (x, z).
     assert all(isinstance(d["lat"], float) and isinstance(d["lon"], float) for d in det)
     assert det[0]["satellite"] == "N" and det[0]["confidence"] == "n"

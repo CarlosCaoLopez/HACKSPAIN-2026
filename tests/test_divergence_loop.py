@@ -45,7 +45,10 @@ def _state(cut: bool = False, bearing: float = 0.0) -> WorldState:
         wind=Wind(bearing_deg=bearing, speed=1.0),
         units={
             "unit_truck": Unit(
-                id="unit_truck", kind="fire_truck", x=0, z=0,
+                id="unit_truck",
+                kind="fire_truck",
+                x=0,
+                z=0,
                 capabilities=["extinguish"],
             )
         },
@@ -57,8 +60,12 @@ def _state(cut: bool = False, bearing: float = 0.0) -> WorldState:
         },
         tasks={
             "task_ext": Task(
-                id="task_ext", kind="extinguish", target_poi="poi_x",
-                required_capability="extinguish", severity="high", created_t=0.0,
+                id="task_ext",
+                kind="extinguish",
+                target_poi="poi_x",
+                required_capability="extinguish",
+                severity="high",
+                created_t=0.0,
             )
         },
     )
@@ -76,8 +83,12 @@ def _ctx() -> PlanContext:
 
 def _tick() -> Event:
     return Event(
-        run_id="run_test", seq=5, t_wall=datetime.now(UTC), t_sim=0.0,
-        type=EventType.WORLD_TICK, source="sim",
+        run_id="run_test",
+        seq=5,
+        t_wall=datetime.now(UTC),
+        t_sim=0.0,
+        type=EventType.WORLD_TICK,
+        source="sim",
         payload={"t_sim": 0.0, "wind": {"bearing_deg": 0.0, "speed": 1.0}},
     )
 
@@ -129,8 +140,14 @@ def test_should_replan_triggers() -> None:
 def _fact():
     from contracts.calls import Fact
 
-    return Fact(key="cell:cell_1_1:state", value="burning", confidence=1.0,
-                source="call:x", severity="critical", t_sim=0.0)
+    return Fact(
+        key="cell:cell_1_1:state",
+        value="burning",
+        confidence=1.0,
+        source="call:x",
+        severity="critical",
+        t_sim=0.0,
+    )
 
 
 # --- loop: smoke con bus y belief fakeados ---------------------------------

@@ -376,6 +376,20 @@ def _coerce_village(params: dict) -> dict:
     return {k: v for k, v in out.items() if v is not None}
 
 
+def crew_ack(role: str, disponible: bool | None) -> str:
+    """Lo que se le contesta a un medio al que se acaba de movilizar. Un «no puedo»
+    no se discute por teléfono: se anota y el plan se rehace sin él."""
+    quien = "la ambulancia" if role == "ambulance" else "el retén"
+    if disponible is False:
+        return (
+            f"Entendido, anotamos que {quien} no puede salir ahora. Reasignamos con "
+            "los medios que quedan. Gracias."
+        )
+    if disponible is True:
+        return "Recibido, quedan movilizados. Les mandamos la ruta. Gracias."
+    return "Recibido, queda anotado. Gracias."
+
+
 def village_ack(role: str, immobile: int | None, capacity: bool | None) -> str:
     """Lo que el agente le dice al alcalde en cuanto anota su respuesta: nunca
     promete nada que el estado no vaya a cumplir (si hay inmóviles, el rescate ya se
@@ -428,6 +442,30 @@ async def happyrobot_village(
             if k not in ("poi_id", "role", "run_id", "session_id", "call_id", "task_id")
         }
     coerced = _coerce_village(params)
+    unit_id = str(body.get("unit_id") or "")
+
+    if unit_id:
+        # Llamada a un medio (retén, ambulancia): lo único que cambia el mundo es si
+        # pueden salir. `unit:<id>:available` es clave de contrato y `belief` la
+        # aplica: un «no podemos» saca a esa unidad del reparto en el siguiente plan.
+        disponible = coerced.get("confirmed_order")
+        n = 0
+        if disponible is not None:
+            await publish(
+                _village_fact_event(
+                    f"unit:{unit_id}:available",
+                    bool(disponible),
+                    call_id,
+                    "critical" if not disponible else "medium",
+                )
+            )
+            n = 1
+        return {
+            "ok": True,
+            "facts_published": n,
+            "ambulance_dispatched": bool(disponible) and role == "ambulance",
+            "message": crew_ack(role, disponible),
+        }
 
     n = 0
     if not poi_id:

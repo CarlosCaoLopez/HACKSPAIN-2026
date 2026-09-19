@@ -27,10 +27,22 @@ def journal() -> list[Event]:
     bus.configure(run_id="run_test", writer=events.append)
     pois.set_scenario(
         [
-            POI(id="poi_molino", name="Molino viejo", kind="landmark", x=1, z=1,
-                waypoint_id="wp_sur_03"),
-            POI(id="poi_pueblo_b", name="Pueblo B", kind="village", x=5, z=5,
-                waypoint_id="wp_sur_04"),
+            POI(
+                id="poi_molino",
+                name="Molino viejo",
+                kind="landmark",
+                x=1,
+                z=1,
+                waypoint_id="wp_sur_03",
+            ),
+            POI(
+                id="poi_pueblo_b",
+                name="Pueblo B",
+                kind="village",
+                x=5,
+                z=5,
+                waypoint_id="wp_sur_04",
+            ),
         ],
         [RoadEdge(id=EDGE, a="wp_sur_03", b="wp_sur_04", length_m=100)],
         road_aliases={"pista del sur": EDGE},
@@ -87,8 +99,16 @@ TURNS = [{"speaker": "caller", "text": "la pista del sur está cortada"}]
 
 
 async def test_tick_publishes_observed_fact_with_kind_and_call_id(journal):
-    use_jev([{"urgency": ("critical", 0.95), "road_blocked": (EDGE, 0.93),
-              "location_hint": ("poi_molino", 0.9), "people_immobile": ("3", 0.8)}])
+    use_jev(
+        [
+            {
+                "urgency": ("critical", 0.95),
+                "road_blocked": (EDGE, 0.93),
+                "location_hint": ("poi_molino", 0.9),
+                "people_immobile": ("3", 0.8),
+            }
+        ]
+    )
     cp = CallPerception("hl_1")
     await cp.tick(TURNS)
     facts = facts_of(journal)
@@ -103,8 +123,16 @@ async def test_tick_publishes_observed_fact_with_kind_and_call_id(journal):
 
 async def test_budget_runs_out_and_the_gap_is_assumed_not_observed(journal):
     """El vecino da el corte y el lugar pero no cuántos; sin presupuesto, se asume."""
-    use_jev([{"urgency": ("critical", 0.95), "road_blocked": (EDGE, 0.93),
-              "location_hint": ("poi_molino", 0.9), "people_immobile": ("not_stated", 0.9)}])
+    use_jev(
+        [
+            {
+                "urgency": ("critical", 0.95),
+                "road_blocked": (EDGE, 0.93),
+                "location_hint": ("poi_molino", 0.9),
+                "people_immobile": ("not_stated", 0.9),
+            }
+        ]
+    )
     clock = Clock()
     cp = CallPerception("hl_1", clock=clock)
     assert await cp.tick(TURNS) == "people_immobile"  # una pregunta, la que falta
@@ -115,15 +143,22 @@ async def test_budget_runs_out_and_the_gap_is_assumed_not_observed(journal):
     assert assumed["kind"] == "assumed_default" and assumed["confidence"] < 0.55
     assert facts[f"road:{EDGE.removeprefix('road:')}:cut"]["kind"] == "observed"
     snap = [e for e in journal if e.type == EventType.CALL_COMPLETENESS][-1].payload
-    assert {f["key"]: f["status"] for f in snap["fields"]}["people_immobile"] == "assumed_default"
+    assert {f["key"]: f["status"] for f in snap["fields"]}[
+        "people_immobile"
+    ] == "assumed_default"
 
 
 async def test_a_later_observation_falsifies_the_assumption(journal):
-    use_jev([
-        {"urgency": ("critical", 0.95), "location_hint": ("poi_molino", 0.9),
-         "people_immobile": ("not_stated", 0.9)},
-        {"people_immobile": ("3", 0.9)},
-    ])
+    use_jev(
+        [
+            {
+                "urgency": ("critical", 0.95),
+                "location_hint": ("poi_molino", 0.9),
+                "people_immobile": ("not_stated", 0.9),
+            },
+            {"people_immobile": ("3", 0.9)},
+        ]
+    )
     clock = Clock()
     cp = CallPerception("hl_1", clock=clock)
     await cp.tick(TURNS)
@@ -151,10 +186,21 @@ async def test_jev_down_means_no_perception_and_no_crash(journal):
 
 async def test_tool_is_only_a_trigger_its_values_are_ignored(client, journal, fakes):
     """El tool dice `road_blocked: ...` en texto libre. Los hechos salen de Jev."""
-    use_jev([{"urgency": ("critical", 0.95), "road_blocked": (EDGE, 0.93),
-              "location_hint": ("poi_molino", 0.9), "people_immobile": ("2", 0.9)}])
-    body = {"session_id": "s1", "run_id": "run_test",
-            "params": {"road_blocked": "un camino inventado", "people_immobile": "99"}}
+    use_jev(
+        [
+            {
+                "urgency": ("critical", 0.95),
+                "road_blocked": (EDGE, 0.93),
+                "location_hint": ("poi_molino", 0.9),
+                "people_immobile": ("2", 0.9),
+            }
+        ]
+    )
+    body = {
+        "session_id": "s1",
+        "run_id": "run_test",
+        "params": {"road_blocked": "un camino inventado", "people_immobile": "99"},
+    }
     r = await client.post("/webhooks/happyrobot/fact", json=body)
     assert r.status_code == 200, r.text
     facts = facts_of(journal)
@@ -164,10 +210,23 @@ async def test_tool_is_only_a_trigger_its_values_are_ignored(client, journal, fa
 
 
 async def test_end_of_call_closes_with_a_final_tick(client, journal, fakes):
-    use_jev([{"urgency": ("critical", 0.95), "road_blocked": (EDGE, 0.93),
-              "location_hint": ("poi_molino", 0.9), "people_immobile": ("3", 0.9)}])
-    end = {"type": "end", "session_id": "s2", "status": "completed", "direction": "inbound",
-           "transcript": "vecino: la pista del sur está cortada en el molino, tres no pueden andar"}
+    use_jev(
+        [
+            {
+                "urgency": ("critical", 0.95),
+                "road_blocked": (EDGE, 0.93),
+                "location_hint": ("poi_molino", 0.9),
+                "people_immobile": ("3", 0.9),
+            }
+        ]
+    )
+    end = {
+        "type": "end",
+        "session_id": "s2",
+        "status": "completed",
+        "direction": "inbound",
+        "transcript": "vecino: la pista del sur está cortada en el molino, tres no pueden andar",
+    }
     r = await client.post("/webhooks/happyrobot/call", json=end)
     assert r.status_code == 200
     ended = next(e for e in journal if e.type == EventType.CALL_ENDED)
@@ -177,7 +236,9 @@ async def test_end_of_call_closes_with_a_final_tick(client, journal, fakes):
 
 
 def test_turns_from_text_labels_the_agent_as_operator():
-    turns = humanlike.turns_from_text("operador: ¿dónde está?\nvecino: en el molino\nsigo aquí")
+    turns = humanlike.turns_from_text(
+        "operador: ¿dónde está?\nvecino: en el molino\nsigo aquí"
+    )
     assert [t["speaker"] for t in turns] == ["operator", "caller"]
     assert turns[1]["text"] == "en el molino sigo aquí"
 
@@ -199,7 +260,9 @@ async def test_tick_translates_the_sdk_response_and_never_raises(journal):
         async def system_one(self, state, questions, **kw):
             assert set(questions) >= {"location_hint", "road_blocked"}
             return SimpleNamespace(
-                answers={"location_hint": SimpleNamespace(choice="poi_molino", confidence=0.9)},
+                answers={
+                    "location_hint": SimpleNamespace(choice="poi_molino", confidence=0.9)
+                },
                 usage=SimpleNamespace(input_tokens=42),
             )
 
@@ -237,9 +300,11 @@ async def test_synthetic_calls_are_scored_by_jev_without_touching_the_world(jour
         async def tick(self, state, questions):
             text = state["transcript"][0]["text"]
             hot = "cortada" in text
-            return jev.Perception(
-                answers={"relevant": jev.Answer(hot, 0.9)}, latency_ms=1.0
-            ) if questions else NS()
+            return (
+                jev.Perception(answers={"relevant": jev.Answer(hot, 0.9)}, latency_ms=1.0)
+                if questions
+                else NS()
+            )
 
     jev.configure(Scorer())  # type: ignore[arg-type]
     calls = synthetic.generate(20, 0.0, seed=1)
