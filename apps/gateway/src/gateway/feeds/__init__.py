@@ -14,10 +14,13 @@ Con `VELA_FEEDS=off` (el default) nada de esto arranca.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import NamedTuple
 
 from contracts.events import FactAsserted
+from contracts.world import Cell
 
 
 class Observation(NamedTuple):
@@ -31,4 +34,34 @@ class Observation(NamedTuple):
     fact: FactAsserted
 
 
-__all__ = ["Observation"]
+class Parsed[T](NamedTuple):
+    """Lo que devuelve un `parse_*`: los registros buenos y cuántos venían rotos.
+
+    Un payload entero inválido lanza. Una fila rota dentro de uno válido se cuenta en
+    `malformed` y no impide leer las demás: quien llama decide si en desarrollo eso es un
+    error (REQ-258) o en la demo solo un contador.
+    """
+
+    records: list[T]
+    malformed: int
+
+
+@dataclass
+class FeedContext:
+    """Lo que un `to_facts` necesita saber del mundo y de lo que ya publicó.
+
+    Las fuentes lo rellenan desde `WorldState` y el plan en cada ciclo. `to_facts` no hace
+    E/S ni mira el reloj de pared; lo único que muta de aquí es la deduplicación
+    (`seen`, `last_wind`), que es justo lo que no puede vivir fuera sin que dos ciclos
+    publiquen el mismo hecho dos veces.
+    """
+
+    cells: Mapping[str, Cell] = field(default_factory=dict)
+    origin_cell: str = ""
+    cell_size: int = 4
+    route_edges: frozenset[str] = frozenset()  # ids de aristas que recorre el plan vigente
+    last_wind: dict[str, float] = field(default_factory=dict)  # lo último publicado
+    seen: set[str] = field(default_factory=set)  # `<fuente>:<id>` ya publicados
+
+
+__all__ = ["FeedContext", "Observation", "Parsed"]

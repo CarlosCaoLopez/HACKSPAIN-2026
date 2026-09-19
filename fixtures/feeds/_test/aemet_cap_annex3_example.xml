@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Ejemplo del anexo 3 (CAP) del Plan Meteoalerta de AEMET, epígrafe 2.4: METEOALERTA_ANX3_CAP.pdf.
+     Estructura tal cual; los <polygon> están recortados a unos pocos puntos. No es una captura de la API. -->
+<alert xmlns="urn:oasis:names:tc:emergency:cap:1.2">
+<identifier>2.49.0.0.724.0.ES.20171201093433.633303NENV01231512120873</identifier>
+  <sender>http://www.aemet.es</sender>
+  <sent>2017-12-01T09:34:33-00:00</sent>
+  <status>Test</status>
+  <msgType>Update</msgType>
+  <scope>Public</scope>
+<references>http://www.aemet.es,2.49.0.0.724.0.ES.20171130202309.633303NENV01231512073389,2017-11-30T20:23:09-00:00</references>
+  <info>
+    <language>es-ES</language>
+    <category>Met</category>
+    <event>Aviso de nevadas de nivel naranja</event>
+    <responseType>Monitor</responseType>
+    <urgency>Immediate</urgency>
+    <severity>Severe</severity>
+    <certainty>Likely</certainty>
+    <eventCode>
+      <valueName>AEMET-Meteoalerta fenomeno</valueName>
+      <value>NE;Nevadas</value>
+    </eventCode>
+    <effective>2017-12-01T10:34:33+01:00</effective>
+    <onset>2017-12-01T10:00:00+01:00</onset>
+    <expires>2017-12-01T23:59:59+01:00</expires>
+    <senderName>AEMET. Agencia Estatal de Meteorología</senderName>
+    <headline>Aviso de nevadas de nivel naranja. Suroccidental asturiana</headline>
+    <description>Acumulación de nieve en 24 horas: 20 cm. La cota de acumulación será de unos 600 metros</description>
+    <instruction>Esté preparado. Tome precauciones y manténgase informado de la predicción meteorológica más actualizada.</instruction>
+    <web>http://www.aemet.es/es/eltiempo/prediccion/avisos</web>
+    <contact>AEMET</contact>
+    <parameter>
+      <valueName>AEMET-Meteoalerta nivel</valueName>
+      <value>naranja</value>
+    </parameter>
+    <parameter>
+      <valueName>AEMET-Meteoalerta parametro</valueName>
+      <value>NV;Acumulación de nieve en 24 horas;20 cm</value>
+    </parameter>
+    <area>
+      <areaDesc>Suroccidental asturiana</areaDesc>
+      <polygon>43.47,-7.05 43.47,-7.0 43.37,-6.95 43.47,-7.05</polygon>
+      <geocode>
+        <valueName>AEMET-Meteoalerta zona</valueName>
+        <value>633303</value>
+      </geocode>
+    </area>
+  </info>
+  <info>
+    <language>en-GB</language>
+    <category>Met</category>
+    <event>Severe snow warning</event>
+    <responseType>Monitor</responseType>
+    <urgency>Immediate</urgency>
+    <severity>Severe</severity>
+    <certainty>Likely</certainty>
+    <eventCode>
+      <valueName>AEMET-Meteoalerta fenomeno</valueName>
+      <value>NE;Nevadas</value>
+    </eventCode>
+    <effective>2017-12-01T10:34:33+01:00</effective>
+    <onset>2017-12-01T10:00:00+01:00</onset>
+    <expires>2017-12-01T23:59:59+01:00</expires>
+    <senderName>AEMET. State Meteorological Agency</senderName>
+    <headline>Severe snow warning. Suroccidental asturiana</headline>
+    <description>Twentyfour-hours accumulated snowfall: 20 cm. La cota de acumulación será de unos 600 metros</description>
+    <instruction>Be prepared. Take precautions and keep up to date with the latest weather forecast.</instruction>
+    <web>http://www.aemet.es/en/eltiempo/prediccion/avisos</web>
+    <contact>AEMET</contact>
+    <parameter>
+      <valueName>AEMET-Meteoalerta nivel</valueName>
+      <value>naranja</value>
+    </parameter>
+    <parameter>
+      <valueName>AEMET-Meteoalerta parametro</valueName>
+      <value>NV;Twentyfour-hours accumulated snowfall;20 cm</value>
+    </parameter>
+    <area>
+      <areaDesc>Suroccidental asturiana</areaDesc>
+      <polygon>43.47,-7.05 43.47,-7.0 43.37,-6.95 43.47,-7.05</polygon>
+      <geocode>
+        <valueName>AEMET-Meteoalerta zona</valueName>
+        <value>633303</value>
+      </geocode>
+    </area>
+  </info>
+</alert>

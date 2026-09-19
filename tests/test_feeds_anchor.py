@@ -32,7 +32,7 @@ CEST = timezone(timedelta(hours=2))
 
 
 def make_anchor(**over) -> GeoAnchor:
-    base = dict(id="t", place="Sitio de prueba", lat0=40.0, lon0=-4.0, meters_per_block=25)
+    base = {"id": "t", "place": "Sitio de prueba", "lat0": 40.0, "lon0": -4.0, "meters_per_block": 25}
     return GeoAnchor(**{**base, **over})
 
 
@@ -80,7 +80,7 @@ def test_el_cuadro_de_firms_contiene_el_ancla_y_tiene_el_radio_pedido():
 
 def test_reference_start_sin_zona_horaria_se_rechaza_al_cargar():
     with pytest.raises(ValueError, match="zona horaria"):
-        make_anchor(reference_start=datetime(2025, 8, 14, 12, 0))
+        make_anchor(reference_start=datetime(2025, 8, 14, 12, 0))  # noqa: DTZ001 — sin zona a propósito: es lo que se rechaza
 
 
 def test_meters_per_block_tiene_que_ser_positivo():
@@ -168,7 +168,7 @@ def test_fechado_un_dato_sale_en_su_t_sim():
 
 def test_los_csv_de_firms_sin_zona_se_leen_como_utc():
     a = make_anchor(reference_start=datetime(2025, 8, 14, 12, 0, tzinfo=CEST), time_scale=60)
-    assert due_t_sim(a, datetime(2025, 8, 14, 10, 10)) == pytest.approx(10.0)
+    assert due_t_sim(a, datetime(2025, 8, 14, 10, 10)) == pytest.approx(10.0)  # noqa: DTZ001 — FIRMS da UTC sin zona
 
 
 def test_un_dato_anterior_al_arranque_sale_ya():
@@ -178,7 +178,7 @@ def test_un_dato_anterior_al_arranque_sale_ya():
 
 def test_la_cola_emite_en_orden_y_no_antes_de_tiempo():
     a = make_anchor(reference_start=datetime(2025, 8, 14, 12, 0, tzinfo=CEST), time_scale=60)
-    at = lambda minutes: datetime(2025, 8, 14, 10, 0, tzinfo=UTC) + timedelta(minutes=minutes)  # noqa: E731
+    at = lambda minutes: datetime(2025, 8, 14, 10, 0, tzinfo=UTC) + timedelta(minutes=minutes)
     s = Schedule()
     for minutes, key in [(30, "c"), (10, "a"), (20, "b")]:
         s.push(Observation(at(minutes), fact(key)), a)

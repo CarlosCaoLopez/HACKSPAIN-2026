@@ -17,6 +17,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 
 import yaml
@@ -157,7 +158,7 @@ def edges_on_route(routes: Iterable[Sequence[str]], roads: Iterable[RoadEdge]) -
     by_pair = {frozenset((r.a, r.b)): r.id for r in roads}
     used: set[str] = set()
     for route in routes:
-        for a, b in zip(route, route[1:]):
+        for a, b in pairwise(route):
             edge = by_pair.get(frozenset((a, b)))
             if edge is not None:
                 used.add(edge)
