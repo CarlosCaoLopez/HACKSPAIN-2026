@@ -167,6 +167,7 @@ def test_recorded_publica_los_hechos_firmados_como_feeds(
     body = client.get("/api/feeds").json()
     assert body["mode"] == "recorded"
     assert body["anchor"]["place"] == "Sitio de prueba" and body["anchor"]["fixed"] is True
+    assert isinstance(body["anchor"]["lat0"], float) and isinstance(body["anchor"]["lon0"], float)
     assert body["sources"]["firms"] == {**body["sources"]["firms"], "status": "off", "note": "sin capturas"}
     client.post("/api/run/stop")
 

@@ -114,4 +114,6 @@ def test_la_huella_es_el_pixel_de_375_m_en_bloques():
     det = detections(parse_csv(CSV).records, anchor())
     assert len(det) == 4  # el mapa enseña también el de z < 0; solo se filtra el cuadro
     assert {d["footprint_blocks"] for d in det} == {15.0}  # 375 m / 25 m por bloque
+    # SPEC-008 REQ-293: el mapa real necesita la coordenada, no solo (x, z).
+    assert all(isinstance(d["lat"], float) and isinstance(d["lon"], float) for d in det)
     assert det[0]["satellite"] == "N" and det[0]["confidence"] == "n"

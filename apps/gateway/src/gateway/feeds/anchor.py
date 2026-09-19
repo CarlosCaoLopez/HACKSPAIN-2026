@@ -76,6 +76,9 @@ def anchor_view(anchor: GeoAnchor) -> dict[str, object]:
         "id": anchor.id,
         "place": anchor.place,
         "fixed": anchor.fixed,
+        # El mapa real coloca el valle con estas dos (SPEC-008 REQ-293).
+        "lat0": anchor.lat0,
+        "lon0": anchor.lon0,
         "meters_per_block": anchor.meters_per_block,
         "reference_start": anchor.reference_start.isoformat() if anchor.reference_start else None,
     }

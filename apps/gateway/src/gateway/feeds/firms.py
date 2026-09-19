@@ -161,6 +161,9 @@ def detections(records: list[FirmsRecord], anchor: GeoAnchor) -> list[dict[str, 
             {
                 "x": round(x, 2),
                 "z": round(z, 2),
+                # La coordenada real, para el mapa de OpenStreetMap (SPEC-008 REQ-293).
+                "lat": rec.lat,
+                "lon": rec.lon,
                 "footprint_blocks": round(footprint, 2),
                 "t_real": rec.t.isoformat(),
                 "satellite": rec.satellite,
