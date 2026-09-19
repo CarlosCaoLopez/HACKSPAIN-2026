@@ -144,8 +144,16 @@ class Director:
             self._set_foco("el valle · política", self._valle())
             return "el modelo emite política nueva"
         elif e == "plan.replan.started":
-            self._set_foco("el valle · replan", self._valle())
-            return f"REPLAN · {p.get('reason', '')}"
+            # Solo los replans "de demo" —divergencia (viento) y restricción dura
+            # (carretera cortada)— merecen plano. El retasking rutinario
+            # (`tasks_changed`) salta decenas de veces; si cada uno agarrase el
+            # foco, la cámara se quedaría pegada al valle toda la segunda mitad.
+            # Ese se narra en minúscula (no urgente) y deja que el fuego y las
+            # unidades manden.
+            if p.get("trigger") in ("divergence", "hard_violation"):
+                self._set_foco("el valle · replan", self._valle())
+                return f"REPLAN · {p.get('reason', '')}"
+            return f"replan · {p.get('reason', '')}"
         elif e == "call.requested":
             if p.get("task_id") and p.get("poi_id"):
                 esc.calls_por_task[p["task_id"]] = p["poi_id"]

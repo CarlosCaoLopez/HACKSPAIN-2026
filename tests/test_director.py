@@ -38,11 +38,26 @@ def test_llamada_saliente_encuadra_el_pueblo(director):
     assert nombre == "llamada a poi_pueblo_a"
 
 
-def test_replan_encuadra_el_valle(director):
-    """Hito 6: el replan por viento/divergencia abre al valle entero."""
-    _dar(director, "plan.replan.started", {"reason": "divergencia 0.45 > 0.25"})
+def test_replan_de_demo_encuadra_el_valle(director):
+    """Hito 6: el replan por divergencia (viento) o restricción dura abre al valle."""
+    _dar(director, "plan.replan.started",
+         {"reason": "divergencia 0.45 > 0.25", "trigger": "divergence"})
     nombre, _ = director.elegir(urgente=True)
     assert nombre == "el valle · replan"
+
+
+def test_replan_rutinario_no_agarra_la_camara(director):
+    """El retasking (`tasks_changed`) salta decenas de veces: se narra pero NO fija
+    foco, para no dejar la cámara pegada al valle. Con fuego activo, manda el frente."""
+    for cid in ("cell_13_11", "cell_14_11", "cell_13_12", "cell_14_12"):
+        _celda_ardiendo(director, cid)
+    nota = director.aplicar(
+        {"type": "plan.replan.started",
+         "payload": {"reason": "tareas: task_front_13_11", "trigger": "tasks_changed"}}
+    )
+    assert nota is not None and not nota[0].isupper()  # minúscula → no urgente
+    nombre, _ = director.elegir(urgente=False)
+    assert nombre == "el frente de fuego"
 
 
 def test_llamada_entrante_sin_ubicacion_abre_al_valle(director):
@@ -63,7 +78,7 @@ def test_foco_manda_sobre_el_fuego(director):
     """El foco puntual pisa las heurísticas mientras dura, aunque arda medio valle."""
     for cid in ("cell_13_11", "cell_14_11", "cell_13_12", "cell_14_12", "cell_15_11"):
         _celda_ardiendo(director, cid)
-    _dar(director, "plan.replan.started", {"reason": "x"})
+    _dar(director, "plan.replan.started", {"reason": "x", "trigger": "hard_violation"})
     nombre, _ = director.elegir(urgente=True)
     assert nombre == "el valle · replan"
 
