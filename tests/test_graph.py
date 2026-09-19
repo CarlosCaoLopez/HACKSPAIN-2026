@@ -23,12 +23,12 @@ WAYPOINTS = [
     Waypoint(id="wp_pueblo", x=300, z=0),
 ]
 ROADS = [
-    RoadEdge(id="rd_base_cruce", a="wp_base", b="wp_cruce", length_m=100),
-    RoadEdge(id="rd_cruce_nor1", a="wp_cruce", b="wp_nor_01", length_m=95),
-    RoadEdge(id="rd_nor1_nor2", a="wp_nor_01", b="wp_nor_02", length_m=100),
-    RoadEdge(id="rd_nor2_pueblo", a="wp_nor_02", b="wp_pueblo", length_m=95),
-    RoadEdge(id="rd_cruce_sur1", a="wp_cruce", b="wp_sur_01", length_m=100),
-    RoadEdge(id="rd_sur1_pueblo", a="wp_sur_01", b="wp_pueblo", length_m=130),
+    RoadEdge(id="road:wp_base-wp_cruce", a="wp_base", b="wp_cruce", length_m=100),
+    RoadEdge(id="road:wp_cruce-wp_nor_01", a="wp_cruce", b="wp_nor_01", length_m=95),
+    RoadEdge(id="road:wp_nor_01-wp_nor_02", a="wp_nor_01", b="wp_nor_02", length_m=100),
+    RoadEdge(id="road:wp_nor_02-wp_pueblo", a="wp_nor_02", b="wp_pueblo", length_m=95),
+    RoadEdge(id="road:wp_cruce-wp_sur_01", a="wp_cruce", b="wp_sur_01", length_m=100),
+    RoadEdge(id="road:wp_sur_01-wp_pueblo", a="wp_sur_01", b="wp_pueblo", length_m=130),
 ]
 
 
@@ -46,22 +46,22 @@ def test_la_ruta_corta_es_la_sur(graph):
 
 def test_cortar_el_sur_manda_el_camion_por_el_norte(graph):
     """El mecanismo del replan, en una aserción."""
-    graph.cut("rd_sur1_pueblo", "árbol caído")
+    graph.cut("road:wp_sur_01-wp_pueblo", "árbol caído")
     assert graph.shortest_path("wp_base", "wp_pueblo") == [
         "wp_base", "wp_cruce", "wp_nor_01", "wp_nor_02", "wp_pueblo",
     ]
-    assert graph.is_cut("rd_sur1_pueblo")
+    assert graph.is_cut("road:wp_sur_01-wp_pueblo")
 
 
 def test_restore_devuelve_la_ruta_original(graph):
-    graph.cut("rd_sur1_pueblo", "árbol caído")
-    graph.restore("rd_sur1_pueblo")
+    graph.cut("road:wp_sur_01-wp_pueblo", "árbol caído")
+    graph.restore("road:wp_sur_01-wp_pueblo")
     assert graph.shortest_path("wp_base", "wp_pueblo")[2] == "wp_sur_01"
 
 
 def test_sin_ruta_viva_devuelve_none(graph):
-    graph.cut("rd_sur1_pueblo", "fuego")
-    graph.cut("rd_nor2_pueblo", "fuego")
+    graph.cut("road:wp_sur_01-wp_pueblo", "fuego")
+    graph.cut("road:wp_nor_02-wp_pueblo", "fuego")
     assert graph.shortest_path("wp_base", "wp_pueblo") is None
 
 
@@ -70,10 +70,10 @@ def test_es_determinista_con_rutas_empatadas():
     escenario no se ve igual en dos ensayos."""
     waypoints = [Waypoint(id=f"wp_{n}", x=0, z=0) for n in ("a", "b", "c", "d")]
     roads = [
-        RoadEdge(id="rd_ab", a="wp_a", b="wp_b", length_m=50),
-        RoadEdge(id="rd_ac", a="wp_a", b="wp_c", length_m=50),
-        RoadEdge(id="rd_bd", a="wp_b", b="wp_d", length_m=50),
-        RoadEdge(id="rd_cd", a="wp_c", b="wp_d", length_m=50),
+        RoadEdge(id="road:wp_a-wp_b", a="wp_a", b="wp_b", length_m=50),
+        RoadEdge(id="road:wp_a-wp_c", a="wp_a", b="wp_c", length_m=50),
+        RoadEdge(id="road:wp_b-wp_d", a="wp_b", b="wp_d", length_m=50),
+        RoadEdge(id="road:wp_c-wp_d", a="wp_c", b="wp_d", length_m=50),
     ]
     rutas = {
         tuple(RoadGraph(waypoints, roads).shortest_path("wp_a", "wp_d"))
@@ -100,7 +100,7 @@ def test_ids_desconocidos_fallan_claro(graph):
     with pytest.raises(ValueError, match="no existe el waypoint"):
         graph.shortest_path("wp_base", "wp_fantasma")
     with pytest.raises(ValueError, match="no existe la arista"):
-        graph.cut("rd_fantasma", "x")
+        graph.cut("road:wp_fantasma-wp_nada", "x")
 
 
 def test_una_arista_huerfana_falla_al_construir():
@@ -108,5 +108,32 @@ def test_una_arista_huerfana_falla_al_construir():
     with pytest.raises(ValueError, match="no es un waypoint"):
         RoadGraph(
             [Waypoint(id="wp_a", x=0, z=0)],
-            [RoadEdge(id="rd_x", a="wp_a", b="wp_no_existe", length_m=10)],
+            [RoadEdge(id="road:wp_a-wp_no_existe", a="wp_a", b="wp_no_existe", length_m=10)],
         )
+
+
+# --- nombrar una carretera desde fuera ---
+
+def test_resolve_edge_acepta_las_formas_que_circulan(graph):
+    """Quien nombra una carretera desde fuera —una llamada, un `human.override`,
+    el ejemplo de inject del backbone— no conoce los ids del YAML. `interfaces.md`
+    las direcciona como `road:wp_a-wp_b`, y el backbone escribe `wp_a-wp_b` a
+    secas. Las tres formas tienen que llegar a la misma arista."""
+    esperado = "road:wp_sur_01-wp_pueblo"
+    assert graph.resolve_edge(esperado) == esperado
+    assert graph.resolve_edge("wp_sur_01-wp_pueblo") == esperado
+    assert graph.resolve_edge("wp_pueblo-wp_sur_01") == esperado, "el orden da igual"
+
+
+def test_resolve_edge_devuelve_none_si_no_existe(graph):
+    assert graph.resolve_edge("road:wp_a-wp_b") is None
+    assert graph.resolve_edge("una frase suelta") is None
+
+
+def test_cortar_por_extremos_sin_conocer_el_id(graph):
+    """El ejemplo de inject del backbone manda `edge: wp_a-wp_b`. Antes de esto
+    lo rechazaba con "no existe la arista" y el corte no ocurría."""
+    graph.cut("wp_sur_01-wp_pueblo", "árbol caído")
+    assert graph.is_cut("road:wp_sur_01-wp_pueblo")
+    graph.restore("wp_pueblo-wp_sur_01")
+    assert not graph.is_cut("road:wp_sur_01-wp_pueblo")

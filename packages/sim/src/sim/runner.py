@@ -201,7 +201,14 @@ class Sim:
             await self._failed(action_id, f"{type(exc).__name__}: {exc}")
 
     async def _do_goto(self, action_id: str, args: dict) -> None:
-        unit_id, target = args["unit_id"], args["waypoint_id"]
+        """Acepta `route` (la que manda el core) o `waypoint_id` (un destino suelto).
+
+        El core resuelve el camino él mismo: `Assignment.route` está documentado
+        como "waypoint ids, ya resuelta" y `core.loop` emite `args={"unit_id",
+        "route"}`. El sim acepta también un destino suelto porque es lo cómodo
+        para un core tonto, para `POST /control` y para los tests.
+        """
+        unit_id = args["unit_id"]
         if unit_id not in self.units:
             await self._failed(action_id, f"unknown_unit:{unit_id}")
             return
@@ -209,7 +216,25 @@ class Sim:
             await self._failed(action_id, f"unit_unavailable:{unit_id}")
             return
 
-        route = self._route_from(unit_id, target)
+        target = args.get("waypoint_id")
+        given = args.get("route")
+        if not given and target is None:
+            await self._failed(action_id, "goto_sin_destino")
+            return
+
+        if given:
+            desconocidos = [w for w in given if w not in self.graph.waypoint_ids]
+            if desconocidos:
+                await self._failed(action_id, f"unknown_waypoint:{desconocidos[0]}")
+                return
+            # La unidad puede no estar en el arranque de la ruta que manda el core
+            # —viene de otra orden, o el plan la calculó desde su tarea—. Se le
+            # antepone el trecho que falta en vez de teletransportarla al inicio.
+            route = self._join(unit_id, list(given))
+            target = given[-1]
+        else:
+            route = self._route_from(unit_id, target)
+
         if route is None:
             await self._failed(action_id, f"no_route:{target}")
             return
@@ -284,7 +309,18 @@ class Sim:
         elif inject_type == UNIT_FAILURE:
             await self._fail_unit(payload["unit"], payload.get("reason", "avería"))
 
-    async def _cut(self, edge_id: str, cause: str) -> None:
+    async def _cut(self, reference: str, cause: str) -> None:
+        # Canonizar antes de emitir: si el que corta nombró la carretera por sus
+        # extremos, el evento tiene que llevar el id de siempre. Si no, el
+        # dashboard ve dos `edge_id` distintos para la misma carretera según
+        # quién la cortó, y el journal deja de poder casarlos.
+        edge_id = self.graph.resolve_edge(reference)
+        if edge_id is None:
+            await self._emit(
+                EventType.WORLD_ROAD_CHANGED,
+                {"edge_id": reference, "cut": False, "cause": f"desconocida: {cause}"},
+            )
+            return
         self.graph.cut(edge_id, cause)
         await self._emit(
             EventType.WORLD_ROAD_CHANGED,
@@ -330,18 +366,30 @@ class Sim:
             "unpublished": len(_FALLBACK),
         }
 
-    def _route_from(self, unit_id: str, waypoint_id: str) -> list[str] | None:
-        """De dónde sale la unidad: del waypoint más cercano a su posición real,
-        no del origen de su última ruta."""
+    def _join(self, unit_id: str, route: list[str]) -> list[str] | None:
+        """Pega la unidad al principio de una ruta que viene ya resuelta."""
+        origen = self._nearest(unit_id)
+        if origen == route[0]:
+            return route
+        if origen in route:  # ya va por esa ruta, más adelantada
+            return route[route.index(origen):]
+        acceso = self.graph.shortest_path(origen, route[0])
+        return None if acceso is None else acceso[:-1] + route
+
+    def _nearest(self, unit_id: str) -> str:
         unit = self.units[unit_id]
-        origen = min(
+        return min(
             self.graph.waypoint_ids,
             key=lambda w: (
                 (self.graph.position_of(w)[0] - unit.x) ** 2
                 + (self.graph.position_of(w)[1] - unit.z) ** 2
             ),
         )
-        return self.graph.shortest_path(origen, waypoint_id)
+
+    def _route_from(self, unit_id: str, waypoint_id: str) -> list[str] | None:
+        """De dónde sale la unidad: del waypoint más cercano a su posición real,
+        no del origen de su última ruta."""
+        return self.graph.shortest_path(self._nearest(unit_id), waypoint_id)
 
     async def _status(self, unit_id: str, status: str, reason: str) -> None:
         self.units[unit_id] = self.units[unit_id].model_copy(
