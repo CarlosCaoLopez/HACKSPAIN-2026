@@ -277,3 +277,22 @@ def test_parse_webhook_reads_json_transcript_string():
         r.transcript
         == "operador: Buenos días, le llamo del 112\nvecino: Se te ha redirigido al buzón de voz"
     )
+
+
+async def test_outbound_end_without_monitor_is_analyzed(client, journal, fakes):
+    hl, _ = fakes
+    body = {
+        "type": "end",
+        "session_id": "s7",
+        "run_id": "run_7",
+        "task_id": "task_evac_a",
+        "direction": "outbound",
+        "status": "completed",
+        "transcript": "operador: Debe evacuar Pueblo A por la pista norte.\nvecino: Entendido, somos cuatro, salimos ya.",
+    }
+    r = await client.post("/webhooks/happyrobot/call", json=body, headers=HEADERS)
+    assert r.status_code == 200
+    ended = next(e for e in journal if e.type == EventType.CALL_ENDED)
+    assert ended.payload["call_id"] == "run_7" and ended.payload["outcome"] == "answered"
+    assert ended.payload["health_score"] == pytest.approx(0.82)
+    assert ("analyze", {"turns": 2}) in hl.calls
