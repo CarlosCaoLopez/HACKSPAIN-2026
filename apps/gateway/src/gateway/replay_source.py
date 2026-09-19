@@ -26,7 +26,6 @@ from pathlib import Path
 
 from contracts.events import Event, EventType
 from contracts.plan import Plan
-
 from gateway.runtime import Runtime
 from gateway.scenarios import load_scenario
 

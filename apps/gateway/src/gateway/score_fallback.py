@@ -1,12 +1,13 @@
-"""La puntuación provisional de un run. P4. **Se apaga sola.**
+"""La puntuación provisional de un run. P4. **Ya no es la primera opción.**
 
-`journal/score.py` es de P1 y hoy no tiene cuerpo, así que `GET /api/runs` devuelve
-`score: null` y el run 1 vs run 12 —criterio explícito de puntos extra— no se puede ni
-construir. Esto cuenta lo que se puede contar de un journal mientras tanto.
+`journal.score` (P1) tiene cuerpo y es quien puntúa en `GET /api/runs`. Esto queda para
+lo que P1 no lee: su lector (`journal.replay.read`) revienta en la primera línea que no
+valida, y cada Ctrl-C deja un journal con la última línea cortada. Ese run también tiene
+que salir en la lista —marcado como incompleto— o el ensayo interrumpido desaparece.
 
-Se apaga sola, con dos reglas:
+Dos reglas, las de siempre:
 
-- **Solo se rellena lo que falta.** En cuanto `journal.score` responda, esto no se llama.
+- **Solo se rellena lo que falta.** Si `journal.score` responde, esto no se llama.
 - **Lo que se ha contado aquí se dice.** `provisional: true` viaja hasta la pantalla y
   `total` sale vacío: la fórmula de la puntuación es de P1 y un número inventado justo
   donde el jurado mira el marcador es lo que no se hace.
