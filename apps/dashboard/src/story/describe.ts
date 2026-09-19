@@ -63,6 +63,16 @@ function describeNarrowed(ev: VelaEvent): Described {
       }
     }
 
+    case 'task.changed': {
+      const { task } = ev.payload
+      const target = task.target_poi ?? task.target_cell
+      return {
+        label: task.done ? 'TAREA ✓' : 'TAREA',
+        tone: 'decision',
+        sentence: `${task.kind}${target ? ` · ${shortId(target)}` : ''} · ${task.severity}`,
+      }
+    }
+
     case 'plan.divergence':
       return {
         label: 'DIVERGENCIA',
