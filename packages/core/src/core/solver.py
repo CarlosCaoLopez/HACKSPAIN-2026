@@ -36,12 +36,12 @@ from contracts.world import POI, Cell, Task, Unit, Wind, WorldState
 
 INFEASIBLE = float("inf")
 
-SELF_EVACUATE = "self_evacuate"
-"""La capacidad que pide una evacuación, y que **ninguna unidad tiene**: es lo que
-hace que toda su columna salga `INFEASIBLE` y no se le asigne nadie. Un pueblo avisado
-sale andando; mandar una ambulancia a los que pueden caminar era gastar el único medio
-capaz de sacar a los que no. Vive aquí, y no en `core.tasks`, porque quien la usa es el
-cruce con `Unit.capabilities` (y porque `tasks` importa de `solver`, no al revés)."""
+RESCUE_FACTOR = 0.5
+"""Lo que abarata un `rescue` frente a cualquier otra tarea de la misma gravedad. Una
+evacuación y el rescate de su pueblo son las dos `critical` y se sirven desde el mismo
+waypoint: sin esto empataban y la pegajosidad dejaba a la ambulancia en la evacuación,
+con los que no pueden moverse esperando a que alguien los cogiera. Espejo de
+`loop._urgency`, que es lo que suelta a esa ambulancia de su columna pegajosa."""
 
 UNIT_SPEED_MPS = 4.0
 """Velocidad plana para pasar de metros de ruta a `eta_s`. No es física, es un
@@ -358,6 +358,8 @@ def _weighted_cost(base: float, state: WorldState, task: Task, policy: Policy) -
     """Aplica los pesos del catálogo que abaratan esta tarea. Peso desconocido se
     ignora aquí (lo caza `make check` contra los prompts, no el solver en runtime)."""
     cost = base * SEVERITY_FACTOR.get(task.severity, 1.0)
+    if task.kind == "rescue":
+        cost *= RESCUE_FACTOR
     civs = [c for c in state.civilians.values() if c.poi_id == task.target_poi]
     poi = state.pois.get(task.target_poi) if task.target_poi else None
 
@@ -393,13 +395,43 @@ def _columns(state: WorldState, units: list[Unit], tasks: list[Task]) -> list[Ta
         key=lambda t: (-_severity_rank(t.severity), t.created_t, t.id),
     )
     columns = list(tasks)
-    if not ext_tasks:
-        return columns
     i = 0
-    while len(ext_tasks) + (i) < ext_units:
+    while ext_tasks and len(ext_tasks) + (i) < ext_units:
         columns.append(ext_tasks[i % len(ext_tasks)])
         i += 1
+    columns.extend(_evac_columns(state, units, tasks))
     return columns
+
+
+def _evac_columns(state: WorldState, units: list[Unit], tasks: list[Task]) -> list[Task]:
+    """Columnas extra de evacuación: una evacuación necesita tantas ambulancias como
+    viajes haga falta dar (civiles por sacar entre la capacidad de una), de la más
+    grave a la menos, hasta que todas las de transporte activas tengan hueco. Con el
+    emparejamiento 1:1 y una sola columna, tres de las cuatro ambulancias se quedaban
+    en el hospital mientras un pueblo de 24 vecinos esperaba a la única que salía."""
+    transport = [u for u in units if "transport" in u.capabilities]
+    evac_tasks = sorted(
+        (t for t in tasks if t.kind == "evacuate"),
+        key=lambda t: (-_severity_rank(t.severity), t.created_t, t.id),
+    )
+    if not transport or not evac_tasks:
+        return []
+    capacity = max((u.capacity for u in transport), default=0) or 1
+    room = len(transport) - len(evac_tasks)
+    extra: list[Task] = []
+    for task in evac_tasks:
+        if room <= 0:
+            break
+        pending = sum(
+            g.count
+            for g in state.civilians.values()
+            if g.poi_id == task.target_poi and g.state != "safe"
+        )
+        trips = max(1, math.ceil(pending / capacity))
+        n = min(trips - 1, room)
+        extra.extend([task] * n)
+        room -= n
+    return extra
 
 
 _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
@@ -692,9 +724,7 @@ def solve(
     restricción desconocida las devuelve `solve_with_violations`, que es lo que usa
     `loop.py` para publicarlas: aquí se descartan solo porque la firma no tiene
     dónde ponerlas."""
-    plan, _violations = solve_with_violations(
-        state, policy, graph, vetoes, holds, sticky
-    )
+    plan, _violations = solve_with_violations(state, policy, graph, vetoes, holds, sticky)
     return plan
 
 
@@ -742,17 +772,7 @@ def solve_with_violations(
             )
         )
     assigned_tasks = {a.task_id for a in assignments}
-    # Una evacuación no pide vehículo: no está «sin cubrir», está hecha a pie. Contarla
-    # como hueco pintaba dos tareas en rojo todo el run y una luz de «esperando
-    # ambulancia» con las ambulancias paradas en el hospital, que es justo la clase de
-    # pantalla que miente.
-    unassigned = list(
-        dict.fromkeys(
-            t.id
-            for t in tasks
-            if t.id not in assigned_tasks and t.required_capability != SELF_EVACUATE
-        )
-    )
+    unassigned = list(dict.fromkeys(t.id for t in tasks if t.id not in assigned_tasks))
 
     context = build_context(state, assignments, live_graph)
     plan = Plan(

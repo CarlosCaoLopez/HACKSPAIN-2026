@@ -71,7 +71,40 @@ async def test_llegar_a_un_pueblo_pide_rescate(core, monkeypatch):
     assert len(pedidas) == 1, "una llegada con civiles expuestos pide un rescate"
     args = pedidas[0]["args"] if isinstance(pedidas[0], dict) else pedidas[0].args
     assert args["civ_ids"] == ["civ_pueblo_a"]
-    assert args["shelter_id"] == "poi_refugio", "al refugio del escenario"
+    assert args["shelter_id"] == "poi_pueblo_b", "al pueblo vecino, que no arde"
+
+
+async def test_si_el_vecino_tiene_el_fuego_encima_se_va_al_refugio(core):
+    """El traslado es al pueblo vecino mientras no lo tenga en la puerta; si el frente
+    ya le llega, moverlos allí sería moverlos dos veces: van al refugio."""
+    from contracts.world import Cell
+
+    c, bus = core
+    grupo = CivilianGroup(id="civ_pueblo_a", poi_id="poi_pueblo_a", count=24, immobile=3)
+    # Pueblo B está en (187, 94): una celda ardiendo justo al lado (cell_size 4).
+    encima = Cell(id="cell_46_23", cx=46, cz=23, state="burning")
+    c._state = c._state.model_copy(
+        update={"civilians": {grupo.id: grupo}, "cells": {encima.id: encima}}
+    )
+    assert c._fire_at_the_door(c._state.pois["poi_pueblo_b"])
+
+    tarea = type(
+        "T", (), {"done": True, "kind": "evacuate", "target_poi": "poi_pueblo_a"}
+    )()
+    llegada = Event(
+        run_id="run_test",
+        seq=1,
+        t_wall=__import__("datetime").datetime.now(__import__("datetime").UTC),
+        t_sim=100.0,
+        type=EventType.WORLD_UNIT_ARRIVED,
+        source="sim",
+        payload={"unit_id": "unit_ambulance", "waypoint_id": "wp_pueblo_a"},
+    )
+    await c._emit_rescue([tarea], llegada)
+    pedidas = acciones(bus, "rescue")
+    assert len(pedidas) == 1
+    args = pedidas[0]["args"] if isinstance(pedidas[0], dict) else pedidas[0].args
+    assert args["shelter_id"] == "poi_refugio"
 
 
 async def test_no_se_rescata_a_quien_ya_esta_a_salvo(core):

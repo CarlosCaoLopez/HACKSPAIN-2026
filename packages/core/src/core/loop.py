@@ -414,11 +414,12 @@ class Core:
 
         Que sea **estrictamente** más urgente es lo que corta el rebote sin dejar
         críticas desatendidas: un camión que ya está en una crítica no lo mueve otra
-        crítica; uno que está en una `medium`, sí."""
-        mia = _SEVERITY_RANK.get(task.severity, 0)
+        crítica; uno que está en una `medium`, sí. Y a igual gravedad un rescate va
+        antes que una evacuación (`_urgency`): la ambulancia que va a por el pueblo
+        se suelta para los que no pueden salir por su pie."""
+        mia = _urgency(task)
         return any(
-            o.required_capability in unit.capabilities
-            and _SEVERITY_RANK.get(o.severity, 0) > mia
+            o.required_capability in unit.capabilities and _urgency(o) > mia
             for o in orphans
         )
 
@@ -702,28 +703,20 @@ class Core:
         `tasks.py` de cerrar una evacuación "cuando todos sus grupos están `safe`"
         no podía cumplirse jamás, porque solo ese verbo pone un grupo a `safe`.
 
-        Se emite con el CIERRE de la tarea, no con el plan: es la consecuencia de que
-        la evacuación esté resuelta, no una asignación nueva. Dos cosas la cierran, y
-        por eso hay dos causas válidas:
+        Se emite con la llegada, no con el plan: es la consecuencia de que una
+        unidad esté ya en el sitio, no una asignación nueva.
 
-        - un `rescue`, cuando la ambulancia **llega** (`WORLD_UNIT_ARRIVED`);
-        - una `evacuate`, cuando el pueblo **acepta la orden** por teléfono
-          (`WORLD_FACT_ASSERTED` con `poi:<id>:confirmed`). Sin esta segunda causa,
-          quitarle el vehículo a la evacuación dejaba a los vecinos plantados en el
-          pueblo: el `/tp` al refugio solo lo hace este verbo.
+        A dónde se los lleva: al pueblo vecino que no tenga el fuego encima
+        (`_refuge_for`), que es al que se ha avisado de que puede recibir gente
+        (`_emit_neighbor_calls`); si no queda ninguno, al refugio.
         """
-        if cause.type not in (
-            EventType.WORLD_UNIT_ARRIVED,
-            EventType.WORLD_FACT_ASSERTED,
-        ):
-            return
-        shelter = next(
-            (p.id for p in self._state.pois.values() if p.kind == "shelter"), None
-        )
-        if shelter is None:
+        if cause.type != EventType.WORLD_UNIT_ARRIVED:
             return
         for task in changed:
             if not task.done or task.kind not in RESCUES or task.target_poi is None:
+                continue
+            shelter = self._refuge_for(task.target_poi)
+            if shelter is None:
                 continue
             groups = sorted(
                 g.id
@@ -743,6 +736,23 @@ class Core:
                 cause,
             )
 
+    def _refuge_for(self, poi_id: str) -> str | None:
+        """A dónde se traslada a la gente de ese POI: el pueblo vecino más lejos del
+        frente que no lo tenga en la puerta (`AT_THE_DOOR_M`), y si no hay ninguno, el
+        refugio del escenario. El vecino es a quien ya se le ha dicho que puede
+        llegarle gente; llevarlos a un pueblo que también se está evacuando sería
+        moverlos dos veces."""
+        vecinos = [
+            p
+            for p in self._state.pois.values()
+            if p.kind == "village" and p.id != poi_id and not self._fire_at_the_door(p)
+        ]
+        if vecinos:
+            return max(vecinos, key=lambda p: (self._fire_distance(p), p.id)).id
+        return next(
+            (p.id for p in self._state.pois.values() if p.kind == "shelter"), None
+        )
+
     def _fire_distance(self, poi: POI) -> float:
         return calls.nearest_fire(self._state, poi, self.graph)[0]
 
@@ -750,11 +760,11 @@ class Core:
         """El pueblo con el frente más cerca. Es el que se evacúa; a los demás se les
         avisa de que puede llegarles gente hasta que el fuego llegue a su puerta.
 
-        `tasks._evacuate` abre una tarea de evacuación por cada pueblo en cuanto arde
-        una celda en cualquier parte del mapa, así que sin esto los dos pueblos del
-        valle reciben la misma orden con quince segundos de diferencia: medido en el
-        ensayo de las 16:40, la segunda llamada dio «ocupado» porque la primera seguía
-        abierta en el mismo teléfono."""
+        Es la misma regla con la que `tasks._to_evacuate` decide a qué pueblo se le
+        abre la tarea (y por tanto a cuál van las ambulancias). Sin esto los dos
+        pueblos del valle recibían la misma orden con quince segundos de diferencia:
+        medido en el ensayo de las 16:40, la segunda llamada dio «ocupado» porque la
+        primera seguía abierta en el mismo teléfono."""
         villages = [p for p in self._state.pois.values() if p.kind == "village"]
         if not villages:
             return None
@@ -880,7 +890,9 @@ class Core:
             u
             for u, t0 in self._held_since.items()
             if self._state.t_sim - t0
-            >= (DISPATCH_TALK_S if self._held.get(u) in self._talking else DISPATCH_RING_S)
+            >= (
+                DISPATCH_TALK_S if self._held.get(u) in self._talking else DISPATCH_RING_S
+            )
         ]
         for unit_id in vencidas:
             hablando = self._held.get(unit_id) in self._talking
@@ -967,10 +979,10 @@ class Core:
         camión que no ha confirmado es justo la clase de promesa que no se puede
         cumplir. La orden se difiere y sale con `committed_resources` de verdad."""
         amenazado = self._most_threatened_village()
-        # Se itera la TAREA, no la asignación: una evacuación ya no lleva vehículo
-        # (los vecinos que pueden andar se van solos), y colgar la llamada de
-        # `plan.assignments` dejaba al pueblo sin orden justo cuando se le quitó la
-        # ambulancia. La asignación, si la hay, sigue viajando para el `unit_eta`.
+        # Se itera la TAREA, no la asignación: la orden al pueblo no depende de que
+        # el solver ya le haya encontrado ambulancia (sin ruta viva no la hay, y aun
+        # así hay que decirle que salga). La asignación, si la hay, viaja para el
+        # `unit_eta`.
         abiertas = [
             t
             for t in sorted(self._state.tasks.values(), key=lambda t: t.id)
@@ -1062,11 +1074,19 @@ class Core:
         el frente, y de eso va la llamada — confirmar que pueden ir. Lo que descarta
         a una unidad es estar en otra cosa distinta, que es la condición del guion
         para la ambulancia («no ocupada con otra cosa»)."""
+        mia = self._state.tasks.get(for_task)
         for unit in sorted(self._state.units.values(), key=lambda u: u.id):
             if capability not in unit.capabilities or unit.status == "unavailable":
                 continue
             otra = self._state.tasks.get(unit.task_id or "")
-            if otra is not None and not otra.done and otra.id != for_task:
+            if (
+                otra is not None
+                and not otra.done
+                and otra.id != for_task
+                # Una ambulancia que ya va a evacuar ESE pueblo no está «en otra
+                # cosa»: el rescate es en el mismo sitio y ella es la que antes llega.
+                and not (mia is not None and otra.target_poi == mia.target_poi)
+            ):
                 continue  # ocupada con otra cosa
             return unit
         return None
@@ -1143,23 +1163,29 @@ class Core:
         return f"{metros} metros de {cerca.name}"
 
     async def _emit_ambulance_call(self, plan: Plan, cause: Event) -> None:
-        """A la ambulancia, solo si alguien la ha pedido.
+        """A la dotación de la ambulancia antes de que salga, como al retén: nadie
+        arranca hasta que digan «vamos».
 
-        «Pedida» es una tarea de rescate abierta, y un rescate solo nace de un hecho
-        `poi:<id>:immobile` que ha entrado por una llamada: nadie inventa un rescate
-        desde el mapa.
+        Dos cosas la piden, una llamada por tarea y run:
 
-        Si hay una libre, se la manda. Si no queda ninguna, se llama a la que antes
-        vaya a terminar para preguntarle en cuántos minutos estará libre y —si el
-        caso es crítico— decirle que en cuanto acabe va allí. Esa respuesta vuelve al
-        que sigue esperando al teléfono (`voice.webhooks`)."""
+        - la **evacuación** de un pueblo, en cuanto el solver le asigna ambulancias:
+          se le piden todas las del plan y se retienen hasta que cuelguen. Solo
+          entonces sale la orden al pueblo (`_emit_calls` la difiere mientras haya
+          alguien retenido), con los medios que van de verdad;
+        - un **rescate**, que solo nace de un hecho `poi:<id>:immobile` que ha
+          entrado por una llamada. Si hay una libre (una que ya va a ese pueblo lo
+          es), se la manda. Si no queda ninguna, se llama a la que antes vaya a
+          terminar para preguntarle en cuántos minutos estará libre y —si el caso
+          es crítico— decirle que en cuanto acabe va allí. Esa respuesta vuelve al
+          que sigue esperando al teléfono (`voice.webhooks`)."""
         if not settings.phone_ambulance:
             return
         rescue = next(
             (
                 t
                 for t in sorted(self._state.tasks.values(), key=lambda t: t.id)
-                if t.kind == "rescue"
+                if t.kind in ("evacuate", "rescue")
+                and t.required_capability == "transport"
                 and not t.done
                 and t.id not in self._ambulance_called
             ),
@@ -1170,7 +1196,28 @@ class Core:
         poi = self._state.pois.get(rescue.target_poi or "")
         if poi is None:
             return
-        unit = self._free_unit("transport", rescue.id)
+        evacuating = 0
+        if rescue.kind == "evacuate":
+            # Se pide lo que el solver manda; sin asignación todavía (sin ruta viva)
+            # no hay nada que pedir, y se volverá a intentar con el siguiente plan.
+            unit = next(
+                (
+                    self._state.units[a.unit_id]
+                    for a in sorted(plan.assignments, key=lambda a: a.unit_id)
+                    if a.task_id == rescue.id and a.unit_id in self._state.units
+                ),
+                None,
+            )
+            if unit is None:
+                log.info("evacuación %s sin ambulancia asignada: no se llama", rescue.id)
+                return
+            evacuating = sum(
+                g.count
+                for g in self._state.civilians.values()
+                if g.poi_id == poi.id and g.state != "safe"
+            )
+        else:
+            unit = self._free_unit("transport", rescue.id)
         queued = unit is None
         if queued:
             # Ninguna libre: se llama igualmente, pero a preguntar CUÁNDO. Quien
@@ -1199,9 +1246,10 @@ class Core:
             aliases=self.scenario.road_aliases,
             queued=queued,
             priority=rescue.severity == "critical",
-            waiting_call_id=self._who_asked(poi.id),
+            waiting_call_id=self._who_asked(poi.id) if rescue.kind == "rescue" else "",
             plan=plan,
             roads=self._state.roads,
+            evacuating=evacuating,
         )
         await self._emit(EventType.CALL_REQUESTED, req, cause)
         # Una ambulancia en cola está ocupada en otra cosa y la llamada solo pregunta
@@ -1279,7 +1327,9 @@ class Core:
         if unit is None:
             return
         route = calls.route_name(a.route, self._state.roads, self.scenario.road_aliases)
-        novelty = (a.unit_id, a.task_id, route)
+        # La novedad es la unidad y la pista, no la tarea: la ambulancia que iba a
+        # evacuar el pueblo y ahora va a su rescate es la misma por la misma carretera.
+        novelty = (a.unit_id, route)
         if self._signalled.get(call_id) == novelty:
             return  # ya se le dijo: otro hecho de la misma llamada no lo repite
         self._signalled[call_id] = novelty
@@ -1340,6 +1390,13 @@ class Core:
         )
         await self.bus.publish(ev)
         return ev
+
+
+def _urgency(task: Task) -> tuple[int, int]:
+    """(gravedad, es rescate): el orden con el que una tarea huérfana reclama a una
+    unidad. A igual gravedad, un `rescue` gana a una `evacuate` del mismo pueblo:
+    espejo de `solver.RESCUE_FACTOR`."""
+    return (_SEVERITY_RANK.get(task.severity, 0), 1 if task.kind == "rescue" else 0)
 
 
 def _same_way(ordered: tuple[str, ...], route: tuple[str, ...]) -> bool:

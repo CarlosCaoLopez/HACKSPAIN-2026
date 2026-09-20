@@ -33,10 +33,13 @@ Reglas, todas deterministas y sin LLM:
   a tiro, la que antes llegará a él (el camión la espera en la carretera como
   cortafuegos).
 - `evacuate`: una por POI de tipo `village` con civiles `exposed`/`warned` mientras
-  haya fuego. Severidad por distancia al frente y por sotavento. **No pide vehículo**
-  (`SELF_EVACUATE`): quien puede andar se va solo en cuanto se le avisa, y las
-  ambulancias quedan para quien no puede. Se cierra cuando el pueblo acepta la orden
-  (`poi:<id>:confirmed`) o cuando todos sus grupos están `safe`.
+  haya fuego, **solo para el pueblo que toca evacuar** (`_to_evacuate`): el que tiene
+  el frente más cerca y cualquiera que ya lo tenga en la puerta. A los demás se les
+  avisa (`loop._emit_neighbor_calls`), no se les manda nadie. Severidad por distancia
+  al frente y por sotavento. Pide `transport`: las ambulancias salen a por el pueblo
+  sin que nadie las pida (el solver les abre una columna a cada una,
+  `solver._evac_columns`) y lo trasladan al pueblo vecino. Se cierra cuando una
+  unidad llega a su waypoint o cuando todos sus grupos están `safe`.
 - `rescue`: una por POI con un hecho `poi:<id>:immobile > 0` de `kind` `observed` o
   `inferred` (un `assumed_default` no funda una tarea: regla 4). Crítica. Se cierra
   cuando una unidad llega a su waypoint.
@@ -50,13 +53,7 @@ import math
 from contracts.calls import Fact
 from contracts.events import Event, EventType, UnitArrived
 from contracts.world import POI, Cell, Task, TaskSeverity, Wind, WorldState
-from core.solver import (
-    SELF_EVACUATE,
-    RoadGraph,
-    attack_waypoint,
-    attackable_from,
-    fire_eta_s,
-)
+from core.solver import RoadGraph, attack_waypoint, attackable_from, fire_eta_s
 
 log = logging.getLogger("core.tasks")
 
@@ -94,10 +91,9 @@ STICKY_CRITICAL = 0.9
 y el crítico vigente otro 90 %. Sin esto dos frentes parejos se intercambiaban la
 gravedad en cada celda que prendía, y con ella los camiones."""
 
-ARRIVAL_CLOSES: frozenset[str] = frozenset({"rescue"})
-"""Tareas que se cierran al llegar una unidad al waypoint del POI. `evacuate` ya no
-está: no lleva unidad, así que no hay llegada que la cierre (lo hace la orden
-aceptada, `_order_confirmed`)."""
+ARRIVAL_CLOSES: frozenset[str] = frozenset({"evacuate", "rescue"})
+"""Tareas que se cierran al llegar una unidad al waypoint del POI: la ambulancia que
+llega es la que se lleva a la gente (`loop._emit_rescue`)."""
 
 FRONT_PREFIX = "task_front_"
 
@@ -478,6 +474,7 @@ def _threatened_poi(
 def _evacuate(state: WorldState, graph: RoadGraph) -> list[Task]:
     out: list[Task] = []
     burning = [c for c in state.cells.values() if c.state == "burning"]
+    evacuar = _to_evacuate(state, burning, graph)
     for poi in sorted(state.pois.values(), key=lambda p: p.id):
         tid = evac_task_id(poi.id)
         existing = state.tasks.get(tid)
@@ -485,16 +482,14 @@ def _evacuate(state: WorldState, graph: RoadGraph) -> list[Task]:
         if existing is not None:
             if existing.done:
                 continue
-            if (groups and all(g.state == "safe" for g in groups)) or _order_confirmed(
-                state, poi.id
-            ):
+            if groups and all(g.state == "safe" for g in groups):
                 out.append(existing.model_copy(update={"done": True}))
             elif burning:
                 severity = _evac_severity(poi, burning, state.wind, graph)
                 if _rank(severity) > _rank(existing.severity):
                     out.append(existing.model_copy(update={"severity": severity}))
             continue
-        if poi.kind != "village" or not burning:
+        if poi.kind != "village" or not burning or poi.id not in evacuar:
             continue
         if not any(g.state in EVAC_STATES and g.count > 0 for g in groups):
             continue
@@ -503,12 +498,40 @@ def _evacuate(state: WorldState, graph: RoadGraph) -> list[Task]:
                 id=tid,
                 kind="evacuate",
                 target_poi=poi.id,
-                required_capability=SELF_EVACUATE,
+                required_capability="transport",
                 severity=_evac_severity(poi, burning, state.wind, graph),
                 created_t=state.t_sim,
             )
         )
     return out
+
+
+def _to_evacuate(state: WorldState, burning: list[Cell], graph: RoadGraph) -> set[str]:
+    """Los pueblos a los que se manda una evacuación: el que tiene el frente más
+    cerca y cualquiera que ya lo tenga en la puerta (`CRITICAL_DISTANCE_M`, el mismo
+    umbral que `loop.AT_THE_DOOR_M`).
+
+    Es la misma regla con la que `loop._emit_calls` decide a quién se le dicta la
+    orden y a quién solo se le avisa. Abrir una tarea por cada pueblo en cuanto arde
+    una celda mandaba las ambulancias a los dos, y el vecino al que se está
+    trasladando a la gente no puede estar evacuándose a la vez."""
+    villages = [p for p in state.pois.values() if p.kind == "village"]
+    if not villages or not burning:
+        return set()
+    dist = {p.id: _fire_distance_m(p, burning, graph) for p in villages}
+    closest = min(villages, key=lambda p: (dist[p.id], p.id))
+    return {closest.id} | {p.id for p in villages if dist[p.id] <= CRITICAL_DISTANCE_M}
+
+
+def _fire_distance_m(poi: POI, burning: list[Cell], graph: RoadGraph) -> float:
+    """Metros del POI a la celda en llamas más cercana."""
+    return min(
+        (
+            math.hypot(poi.x - cx, poi.z - cz)
+            for cx, cz in map(graph.cell_center, burning)
+        ),
+        default=math.inf,
+    )
 
 
 def _evac_severity(
@@ -584,22 +607,6 @@ def _rescue(state: WorldState) -> list[Task]:
     return out
 
 
-def _order_confirmed(state: WorldState, poi_id: str) -> bool:
-    """¿El pueblo ha aceptado la orden de evacuación por teléfono?
-
-    Es lo que cierra una `evacuate` ahora que no lleva vehículo: sin esto la tarea
-    quedaba abierta para siempre, nadie llegaba al refugio y `civilians_safe` se
-    quedaba a cero. Un `assumed_default` no vale (regla 4): que nadie conteste no es
-    que hayan dicho que sí."""
-    fact = _latest_facts(state).get(f"poi:{poi_id}:confirmed")
-    if fact is None or fact.kind == "assumed_default":
-        return False
-    value = fact.value
-    if isinstance(value, str):
-        return value.strip().lower() in ("true", "1", "sí", "si", "yes")
-    return bool(value)
-
-
 def _rescue_point(state: WorldState, poi_id: str) -> tuple[float | None, float | None]:
     """El punto exacto que ha mandado un vecino por GPS para este POI, si lo hay.
 
@@ -640,15 +647,21 @@ def _as_int(value: object) -> int:
 
 def _arrivals(state: WorldState, ev: Event) -> list[Task]:
     """`world.unit.arrived` en el waypoint de un POI cierra su evacuación o rescate.
-    Si la unidad va asignada a otra tarea todavía abierta, no cierra esta; sin
-    asignación (o con una ya cerrada), cualquier tarea de ese POI."""
+    Si la unidad va asignada a otra tarea todavía abierta sobre OTRO POI (pasa de
+    largo), no cierra esta; si va a ese mismo POI, cierra todo lo suyo: la ambulancia
+    que llega a Pueblo A por su rescate es la misma que se lleva a los que esperaban
+    la evacuación (`loop._emit_rescue` mueve a todos los del POI). Sin asignación (o
+    con una ya cerrada), cualquier tarea de ese POI."""
     ua = UnitArrived.model_validate(ev.payload)
     unit = state.units.get(ua.unit_id)
     busy_with = unit.task_id if unit is not None else None
+    busy_poi: str | None = None
     if busy_with is not None:
         assigned = state.tasks.get(busy_with)
         if assigned is None or assigned.done:
             busy_with = None
+        else:
+            busy_poi = assigned.target_poi
     out: list[Task] = []
     for task in sorted(state.tasks.values(), key=lambda t: t.id):
         if task.done or task.kind not in ARRIVAL_CLOSES or task.target_poi is None:
@@ -656,7 +669,7 @@ def _arrivals(state: WorldState, ev: Event) -> list[Task]:
         poi = state.pois.get(task.target_poi)
         if poi is None or poi.waypoint_id != ua.waypoint_id:
             continue
-        if busy_with is not None and busy_with != task.id:
+        if busy_with is not None and busy_with != task.id and busy_poi != task.target_poi:
             continue
         out.append(task.model_copy(update={"done": True}))
     return out

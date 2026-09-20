@@ -383,7 +383,9 @@ def shelter_route(
     refugio = next((p for p in state.pois.values() if p.kind == "shelter"), None)
     if refugio is None or not poi.waypoint_id or not refugio.waypoint_id:
         return []
-    return graph.with_cuts(state).shortest_path(poi.waypoint_id, refugio.waypoint_id) or []
+    return (
+        graph.with_cuts(state).shortest_path(poi.waypoint_id, refugio.waypoint_id) or []
+    )
 
 
 def live_facts(
@@ -572,12 +574,20 @@ def _situation_brief_ambulance(
     peticion: str,
     injuries: int = 0,
     punto: str = "",
+    evacuating: int = 0,
 ) -> str:
     cuantos = _people_line(immobile, injuries)
+    if evacuating > 0:
+        # Una evacuación: se pide sacar al pueblo entero, y de entre ellos, si se
+        # sabe, a los que no pueden por su pie.
+        cuantos = f"{evacuating} vecinos que sacar del pueblo"
+        if immobile > 0 or injuries > 0:
+            cuantos += f", entre ellos {_people_line(immobile, injuries)}"
     pide = f"Les pedimos {peticion}. " if peticion else ""
     donde = f"{poi_name}{punto}"
+    que = "ambulancias para evacuar" if evacuating > 0 else "una ambulancia en"
     return (
-        f"Le piden una ambulancia en {donde}, por un {hazard}: hay {cuantos}. "
+        f"Le piden {que} {donde}, por un {hazard}: hay {cuantos}. "
         f"{live['roads_status'].capitalize()}. {pide}Dígalo en dos frases, pregunte "
         "si pueden ir ya y después si tienen otra unidad disponible."
     )
@@ -623,10 +633,11 @@ def evacuation_call(
 ) -> CallRequest:
     """La orden de evacuación para el POI de una tarea `evacuate`.
 
-    `assignment` es opcional porque una evacuación **no necesita vehículo**: quien
-    puede andar se va solo en cuanto se le avisa, y las ambulancias quedan para quien
-    no puede. Sin asignación el plazo lo marca el fuego (`on_foot_deadline_min`) y la
-    ruta es la de los vecinos al refugio (`shelter_route`), no la de un medio.
+    `assignment` es la ambulancia que el solver manda al pueblo, y de ella salen el
+    plazo y la ruta. Es opcional porque puede no haberla todavía (sin ruta viva, o
+    todas averiadas) y la orden tiene que salir igual: entonces el plazo lo marca el
+    fuego (`on_foot_deadline_min`) y la ruta es la de los vecinos al refugio
+    (`shelter_route`), no la de un medio.
 
     Al alcalde del pueblo que arde: se le dicta la orden, la ruta y el plazo, y se
     le pregunta cuánta gente hay, si hay heridos y si alguien no puede moverse por
@@ -831,9 +842,13 @@ def ambulance_call(
     waiting_call_id: str = "",
     plan: Plan | None = None,
     roads: dict[str, RoadEdge] | None = None,
+    evacuating: int = 0,
 ) -> CallRequest:
-    """A la ambulancia, cuando alguien la ha pedido por teléfono (un rescate nace de
-    un hecho `poi:<id>:immobile` de una llamada).
+    """A la dotación de la ambulancia, antes de que salga: el mismo despacho que el
+    retén. Dos motivos: la evacuación de un pueblo (`evacuating` > 0: se le piden
+    TODAS las ambulancias que el solver manda, `requested_units`) o un rescate que
+    alguien ha pedido por teléfono (un rescate nace de un hecho `poi:<id>:immobile`
+    de una llamada).
 
     Con `queued` la llamada es otra: no queda ninguna libre, alguien espera al
     teléfono, y lo que se le pregunta a la dotación es *cuándo* estará libre, para
@@ -842,20 +857,33 @@ def ambulance_call(
     dice que en cuanto terminen van allí."""
     hazard = hazard_name(hazard_kind)
     # Una ambulancia en cola no tiene asignación a este rescate todavía: de eso va la
-    # llamada. Una libre sí, y es lo que se le pide.
-    asignada = None if queued else _assignment_for(plan, task.id)
+    # llamada. Una libre sí, y es lo que se le pide; en una evacuación, todas las que
+    # el plan manda al pueblo.
+    pedidas = (
+        []
+        if queued or plan is None
+        else [a for a in plan.assignments if a.task_id == task.id]
+    )
+    asignada = pedidas[0] if pedidas else None
     unidad = asignada.unit_id if asignada is not None else unit_id
     live = _live_or_blank(state, poi, graph, asignada, aliases)
     peticion = (
-        requested_units_line(state, [asignada], roads, aliases)
-        if state is not None and asignada is not None
+        requested_units_line(state, pedidas, roads, aliases)
+        if state is not None and pedidas
         else ""
     )
     brief = (
         _situation_brief_queued(live, hazard, poi.name, immobile, priority, injuries)
         if queued
         else _situation_brief_ambulance(
-            live, hazard, poi.name, immobile, peticion, injuries, exact_point(task)
+            live,
+            hazard,
+            poi.name,
+            immobile,
+            peticion,
+            injuries,
+            exact_point(task),
+            evacuating,
         )
     )
     return CallRequest(
@@ -878,6 +906,7 @@ def ambulance_call(
             "hazard_kind": hazard,
             "immobile": str(immobile),
             "injuries": str(injuries),
+            "evacuating": str(evacuating),
             "must_go_next": "sí" if priority else "no",
             "waiting_call_id": waiting_call_id,
             "situation_brief": brief,
