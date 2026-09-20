@@ -1,6 +1,6 @@
 # Taiafox
 
-[![Vídeo de Taiafox en YouTube](https://img.youtube.com/vi/vYMx2elWio0/maxresdefault.jpg)](https://www.youtube.com/watch?v=vYMx2elWio0)
+[![Vídeo de Taiafox en YouTube](https://img.youtube.com/vi/vYMx2elWio0/sddefault.jpg)](https://www.youtube.com/watch?v=vYMx2elWio0)
 
 **Taiafox es la entrega del Grupo Gamma para el track de HappyRobot de HackSpain 2026.**
 
