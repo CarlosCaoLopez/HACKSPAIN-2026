@@ -1,0 +1,206 @@
+<!doctype html>
+<!--
+  Referencia del formulario de la /demo autoservicio.
+
+  Esto NO se construye ni se sirve desde este repo: el formulario vive en la landing
+  (otro repo), y aquí está solo para que quien la escriba tenga el contrato delante y
+  no tenga que deducirlo del código del gateway. Copiar, pegar y maquetar allí.
+
+  Contrato completo: `docs/interfaces.md`, sección «La /demo autoservicio».
+
+  Lo único que hay que tocar: API_BASE. Y en el gateway, `VELA_CORS_ORIGINS` tiene que
+  incluir el origen de la landing, o el preflight muere.
+
+  Tres cosas que este fichero hace a propósito y conviene no perder al maquetarlo:
+   1. Los cinco campos se pintan desde `phone_roles`, no se escriben a mano: así la
+      etiqueta y la explicación salen del gateway y no se desincronizan.
+   2. El 422 se desempaqueta campo a campo. Un «número no válido» genérico obliga al
+      visitante a adivinar cuál de los cinco.
+   3. Se avisa de que repetir número está permitido pero tiene consecuencias.
+-->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Probar la demo</title>
+<style>
+  :root { --ink:#16181d; --dim:#6b7280; --line:#e5e7eb; --bad:#b42318; --bg:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#e9eaec; --dim:#9aa1ab; --line:#2a2e37; --bad:#f97066; --bg:#111318; }
+  }
+  body { background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, sans-serif;
+         margin:0; padding:24px; }
+  main { max-width:34rem; margin:0 auto; }
+  h1 { font-size:1.5rem; margin:0 0 .25rem; }
+  p.lead { color:var(--dim); margin:0 0 1.5rem; }
+  label { display:block; margin:1rem 0 .25rem; font-weight:600; }
+  .explica { color:var(--dim); font-size:.875rem; font-weight:400; margin:.125rem 0 .375rem; }
+  input { width:100%; box-sizing:border-box; padding:.625rem .75rem; font:inherit;
+          color:var(--ink); background:transparent;
+          border:1px solid var(--line); border-radius:.5rem; }
+  input[aria-invalid="true"] { border-color:var(--bad); }
+  .error { color:var(--bad); font-size:.875rem; margin:.25rem 0 0; }
+  button { margin-top:1.5rem; width:100%; padding:.75rem; font:inherit; font-weight:600;
+           color:var(--bg); background:var(--ink); border:0; border-radius:.5rem;
+           cursor:pointer; }
+  button[disabled] { opacity:.5; cursor:not-allowed; }
+  .aviso { border:1px solid var(--line); border-radius:.5rem; padding:.75rem 1rem;
+           margin:1.5rem 0 0; color:var(--dim); font-size:.875rem; }
+  .aviso strong { color:var(--ink); }
+  #busy { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Probar la demo</h1>
+  <p class="lead">Cinco teléfonos, siete minutos. Los móviles que pongas recibirán
+    llamadas de verdad.</p>
+
+  <!-- Hay una demo en marcha: no se puede arrancar otra. -->
+  <section id="busy">
+    <p>Ahora mismo hay una demo en marcha. Vuelve en <strong id="busy-min"></strong>.</p>
+    <p><a id="busy-watch" href="#">Mirarla igualmente</a></p>
+  </section>
+
+  <form id="form" hidden>
+    <div id="campos"></div>
+
+    <p class="aviso">
+      Los cuatro primeros son los que <strong>reciben</strong> la llamada. El último es el
+      tuyo: desde él llamarás al <strong id="inbound">—</strong> haciéndote pasar por un
+      vecino, y tu llamada saldrá marcada en el panel.
+      <br><br>
+      Puedes repetir el mismo número en varios papeles, pero entonces te llegarán
+      varias llamadas seguidas y alguna puede darte ocupado.
+    </p>
+
+    <p class="error" id="error-global"></p>
+    <button type="submit" id="enviar">Empezar la demo</button>
+  </form>
+</main>
+
+<script>
+// El origen del gateway. En producción, el dominio del despliegue.
+const API_BASE = "https://demo.ejemplo.com";
+
+const $ = (id) => document.getElementById(id);
+let ROLES = [];
+
+/** Pinta los cinco campos desde `phone_roles`, en el orden en que suenan. */
+function pintarCampos(roles) {
+  $("campos").innerHTML = roles.map((rol, i) => `
+    <label for="f-${rol.key}">${i + 1}. ${rol.label}</label>
+    <p class="explica">${rol.explica}</p>
+    <input id="f-${rol.key}" name="${rol.key}" type="tel" required
+           autocomplete="off" placeholder="+34 600 00 00 00">
+    <p class="error" id="e-${rol.key}"></p>
+  `).join("");
+}
+
+function minutos(s) {
+  if (s == null) return "unos minutos";
+  const m = Math.ceil(s / 60);
+  return m <= 1 ? "un minuto" : `${m} minutos`;
+}
+
+/** ¿Hay demo en marcha? Decide qué se enseña. Se repregunta cada 5 s mientras esté ocupada. */
+async function estado() {
+  const r = await fetch(`${API_BASE}/api/demo/status`);
+  const s = await r.json();
+  ROLES = s.phone_roles;
+
+  if (s.busy) {
+    $("form").hidden = true;
+    $("busy").style.display = "block";
+    $("busy-min").textContent = minutos(s.ends_in_s);
+    $("busy-watch").href = s.watch_url;
+    setTimeout(estado, 5000);
+    return;
+  }
+
+  $("busy").style.display = "none";
+  if ($("form").hidden) {
+    pintarCampos(ROLES);
+    $("inbound").textContent = s.inbound_number || "el número de la demo";
+    $("form").hidden = false;
+  }
+}
+
+function limpiarErrores() {
+  $("error-global").textContent = "";
+  for (const rol of ROLES) {
+    $(`e-${rol.key}`).textContent = "";
+    $(`f-${rol.key}`).removeAttribute("aria-invalid");
+  }
+}
+
+/** El 422 de FastAPI trae `detail:[{loc, msg}]`, y hay que llevar cada error a su campo:
+ *  si no, el visitante ve «número no válido» y tiene que adivinar cuál de los cinco.
+ *
+ *  Comprobado contra el gateway: el validador de `phones` valida el diccionario entero,
+ *  así que `loc` es `["body","phones"]` y NO trae la clave. Quien sí la trae es el
+ *  mensaje, que empieza por `<clave>: …`. De ahí que se mire el msg y no el loc. */
+function pintarErrores(detail) {
+  if (!Array.isArray(detail)) {
+    $("error-global").textContent = detail?.message || "No se ha podido arrancar la demo.";
+    return;
+  }
+  for (const err of detail) {
+    const msg = err.msg || "";
+    const rol = ROLES.find((r) => msg.includes(`${r.key}:`));
+    if (rol) {
+      // Se quita el `Value error, ` que antepone pydantic y el prefijo de la clave.
+      $(`e-${rol.key}`).textContent = msg.replace(/^Value error,\s*/, "").replace(`${rol.key}: `, "");
+      $(`f-${rol.key}`).setAttribute("aria-invalid", "true");
+    } else {
+      $("error-global").textContent = msg.replace(/^Value error,\s*/, "");
+    }
+  }
+}
+
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  limpiarErrores();
+  $("enviar").disabled = true;
+  $("enviar").textContent = "Arrancando…";
+
+  const phones = {};
+  for (const rol of ROLES) phones[rol.key] = $(`f-${rol.key}`).value.trim();
+
+  try {
+    const r = await fetch(`${API_BASE}/api/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scenario_id: "wildfire_ridge", phones }),
+    });
+    const data = await r.json();
+
+    if (r.ok) {
+      // Al visitante se le lleva a mirar: el run ya está en marcha y los móviles
+      // empiezan a sonar en segundos.
+      location.href = data.watch_url;
+      return;
+    }
+    if (r.status === 409) {
+      $("error-global").textContent =
+        `Alguien se te ha adelantado. Vuelve en ${minutos(data.detail?.retry_after_s)}.`;
+      estado();
+    } else {
+      pintarErrores(data.detail);
+    }
+  } catch (e) {
+    // Degradado y anotado, nunca un `catch` mudo: sin esto el botón se queda colgado
+    // y el visitante no sabe si ha arrancado algo.
+    console.error("[demo] no se ha podido arrancar:", e);
+    $("error-global").textContent =
+      "No se ha podido hablar con el servidor de la demo. Inténtalo otra vez.";
+  } finally {
+    $("enviar").disabled = false;
+    $("enviar").textContent = "Empezar la demo";
+  }
+});
+
+estado();
+</script>
+</body>
+</html>

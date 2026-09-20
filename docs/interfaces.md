@@ -450,6 +450,13 @@ P4 decide el orden de arranque y apaga limpio. Expone `POST /control/*` y es el 
 | `POST /webhooks/happyrobot/fact` | P3 | El tool `report_fact`, **durante** la llamada. Solo dispara un tick inmediato de Jev; publica los hechos y devuelve el ack |
 | `POST /webhooks/happyrobot/call` | P3 | Fin de llamada (nodo Webhook del workflow): `task_id`, `session_id`, estado, transcripción; al colgar hace el tick final de Jev |
 | `GET /api/runs` | P4 | Runs pasados con su puntuación, para el run 1 vs run 12 |
+| `GET /api/health` | P4 | Arranque degradado: qué piezas están vivas y qué se cayó, con `notes` |
+| `GET /api/scenario` | P4 | El escenario del run vigente, ya resuelto |
+| `GET /api/scenario/{scenario_id}` | P4 | Un escenario concreto del catálogo |
+| `GET /api/feeds` | P4 | Estado de las fuentes reales (FIRMS, DGT, Open-Meteo) |
+| `GET /api/demo/status` | P4 | Lo que la landing necesita para pintar el formulario. Ver «La /demo autoservicio» |
+| `POST /webhooks/happyrobot/village` | P3 | El vecino que llama al 112 de la demo |
+| `POST /webhooks/telegram` | P3 | Handoff a Telegram cuando no hay teléfono |
 | `WS /ws` | P4 | El chorro de eventos |
 
 ### El WebSocket
@@ -480,6 +487,60 @@ En el dashboard son tres botones sobre cada tarjeta de asignación y un campo de
 ### Autenticación
 
 Ninguna. Todo corre en localhost salvo los webhooks, que van por un túnel. Poned un token compartido en la cabecera de los webhooks para que un escaneo aleatorio no os dispare una llamada a mitad del pitch.
+
+### La /demo autoservicio
+
+**El contrato que consume la landing** (otro repo), que es lo único nuestro que vive en un
+origen distinto. Desde ella cualquiera mete cinco teléfonos con su papel, pulsa «empezar» y
+se va a mirar el Minecraft en vivo mientras esos móviles reciben las llamadas. Sin operador.
+
+Los cinco papeles son `PHONE_KEYS` (`contracts/settings.py`), **en el orden en que suenan**:
+`fire_crew`, `ambulance`, `pueblo_a`, `pueblo_b`, `neighbor`. Los cuatro primeros son
+salientes; `neighbor` es el móvil **desde el que el visitante llama** al `inbound_number`,
+y por eso su llamada entra marcada con `CallStarted.known_caller: true`.
+
+```
+GET /api/demo/status
+  → {busy, run_id, scenario_id, started_at, ends_in_s, run_max_s,
+     inbound_number, watch_url, landing_url, cam_hls_url,
+     minecraft, calls, phone_roles:[{key,label,explica} ×5], default_scenario}
+
+POST /api/run
+  {"scenario_id":"wildfire_ridge",
+   "phones":{"fire_crew":"+34…","ambulance":"+34…","pueblo_a":"+34…",
+             "pueblo_b":"+34…","neighbor":"+34…"}}
+  → 200 {run_id, scenario_id, minecraft, mock_calls, speed,
+         phones:"por petición"|"del .env", watch_url, inbound_number, ends_in_s}
+  → 409 {detail:{reason:"busy", message, run_id, retry_after_s}}
+  → 422 si una clave no es de `PHONE_KEYS` o un número no queda en E.164
+```
+
+Cuatro reglas que no se rompen:
+
+1. **Ningún endpoint devuelve un teléfono jamás.** Ni `/api/demo/status`, ni `/api/health`,
+   ni el 200 de `/api/run`, que contesta `"por petición"` o `"del .env"` y nada más. Los
+   números del visitante viven en memoria del proceso mientras dura el run, no se escriben
+   al journal y se restauran al `.env` al parar. Es un dato personal de alguien que pasaba
+   por ahí.
+2. **Se valida antes de tocar nada.** El `field_validator` de `RunBody` normaliza (quita
+   espacios, guiones, puntos y paréntesis; no adivina prefijos) y exige E.164. Un número
+   malo es un 422 con el run sin arrancar. **Repetir el mismo número en varios papeles está
+   permitido**: el visitante tiene un móvil. La landing avisa de que entonces llegarán
+   varias llamadas seguidas y alguna puede dar ocupado.
+3. **Un run a la vez, y se para solo.** El 409 trae `retry_after_s` para que la landing
+   pueda decir «vuelve en N minutos». `VELA_RUN_MAX_S` (420 por defecto, 0 = nunca) cierra
+   el run y el journal aunque nadie pulse nada.
+4. **CORS solo para la landing.** `VELA_CORS_ORIGINS` con orígenes explícitos; nunca `*`.
+   Sin la variable no se monta el middleware.
+
+No hay puerta de acceso: ni código ni límite por IP. Es una decisión tomada, no un olvido.
+El único freno es un run cada siete minutos. Si aparece abuso, lo más barato de añadir es
+un campo «código» en `RunBody` contra una variable de entorno.
+
+**El dashboard también lo consume:** `useDemoStatus` pregunta cada 5 s, la sala de espera
+(`Waiting.tsx`) se pinta cuando `busy` es falso y la vista `minecraft` tira el vídeo de
+`cam_hls_url` por HLS. En el despliegue el dashboard **no tiene servidor propio**: se
+construye dentro de la imagen del gateway y se sirve con `StaticFiles` en `/`.
 
 ---
 
@@ -530,11 +591,25 @@ HAPPYROBOT_HOOK_EVACUATION=         # P3, https://platform.happyrobot.ai/hooks/<
 HAPPYROBOT_WEBCALL_URL=             # P3/P4, enlace de la web call del workflow entrante
 HUMALIKE_API_KEY=                  # P3, token de Humalike (api.humalike.com)
 WEBHOOK_SHARED_TOKEN=               # P3 y P4
-JUDGE_PHONE=                        # P3, se cambia en el último minuto
 VELA_MODE=demo|dev|replay           # P4
+PHONE_FIRE_CREW=                    # P3/P4, los cinco de PHONE_KEYS, en el orden en que suenan
+PHONE_AMBULANCE=
+PHONE_PUEBLO_A=
+PHONE_PUEBLO_B=
+PHONE_NEIGHBOR=                     # el vecino: desde este móvil se llama al 112 de la demo
+HAPPYROBOT_INBOUND_NUMBER=          # P4, el número al que marca el visitante
+VELA_CORS_ORIGINS=                  # P4, orígenes de la landing separados por coma. Nunca `*`
+VELA_PUBLIC_URL=                    # P4, a dónde se manda al visitante a mirar
+VELA_LANDING_URL=                   # P4, de vuelta a la landing
+VELA_RUN_MAX_S=420                  # P4, auto-stop del run. 0 = nunca
+VELA_CAM_PLAYER=                    # P4, el jugador de la cámara headless
+VELA_CAM_SHOT=aguila                # P4, su encuadre fijo: aguila | valle | escorzo
+VELA_CAM_HLS_URL=/cam/vela/index.m3u8  # P4, de dónde tira el vídeo el dashboard
 ```
 
-`JUDGE_PHONE` en una variable y no en el código. Lo vais a cambiar cinco minutos antes de subir al escenario.
+Los teléfonos **no** son secretos de despliegue: son valores por defecto. En la /demo los
+manda la petición y se restauran al parar. `JUDGE_PHONE` ya no existe: lo sustituyó
+`PHONE_KEYS` (`contracts/settings.py`).
 
 ---
 

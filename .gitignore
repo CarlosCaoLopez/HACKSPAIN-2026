@@ -69,6 +69,8 @@ docs/carlos/
 
 # tsc --build deja su caché de incrementales en el paquete del dashboard
 apps/dashboard/*.tsbuildinfo
+# Precompilado de dependencias de Vite: se regenera en cada `pnpm install`.
+apps/dashboard/.vite/
 
 # Vídeo grabado de la demo (plan B nivel 5): 130 MB, va en el móvil, no en git.
 *.mp4
