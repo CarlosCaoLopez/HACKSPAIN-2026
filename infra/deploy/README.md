@@ -510,6 +510,28 @@ MC_LOGIN=<esa misma cuenta>
 y `make deploy-up` otra vez. La sesión queda en el volumen `mc-home` y `portablemc` la
 refresca sola; **caduca si pasan ~90 días sin usarla**.
 
+El código que pide `--auth-no-browser` **no es el de seis dígitos** de Microsoft. Tras
+loguearte, el navegador acaba en `theorozier.fr/portablemc/auth#...`: hay que copiar de la
+barra de direcciones **todo lo que va después del `#`**, sin el `#`. `portablemc` le pasa
+un `parse_qs` y exige que dentro estén las dos claves, `code` e `id_token`; el orden da
+igual, así que es normal que empiece por `id_token=`.
+
+> **Al poner `MC_LOGIN` hay que cambiar `MC_PLAYER` también.** Con cuenta real el cliente
+> entra con el **nombre de usuario de Minecraft de esa cuenta**, no con `MC_PLAYER` (que
+> solo se usa en modo offline). Pero el gateway busca al jugador por `VELA_CAM_PLAYER`,
+> que el compose saca de `MC_PLAYER`. Si no coinciden, espera 120 s a alguien que nunca
+> aparece y **no coloca la cámara**: hay vídeo, pero del sitio equivocado.
+>
+> El nombre real lo dice Paper cuando el cliente entra:
+>
+> ```bash
+> make deploy-logs S=paper | grep -i "joined the game" | tail -3
+> ```
+>
+> Ese nombre, tal cual y con sus mayúsculas, va en `MC_PLAYER`. Se comprueba con
+> `/api/health`: `notes.camera` tiene que decir «en espectador · plano aguila» y no
+> «no ha entrado en 120s».
+
 ### 7 · Repuntar HappyRobot y Telegram
 
 Se acabó ngrok: la URL ya no cambia. Una sola vez, desde cualquier portátil con el `.env`:
