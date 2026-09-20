@@ -42,6 +42,7 @@ from contracts.events import EventType, RunEnded, RunStarted
 from contracts.settings import settings
 from gateway import replay_source
 from gateway.bridges import mount_bridges
+from gateway.pacing import mount_pacing
 from gateway.control import router as control_router
 from gateway.feeds.anchor import load_anchor
 from gateway.feeds.poller import feeds_from_settings, off_status
@@ -274,6 +275,10 @@ async def start_run(
         rt.mark("core", "up", f"run {rt.run_id} · suscrito al bus")
 
     mount_bridges(rt)
+    # El reloj adaptativo va DESPUÉS de que el core esté suscrito: solo se monta con
+    # llamadas reales y crucero > 1×, y frena el mundo mientras haya una llamada viva
+    # para que la retención en `t_sim` no venza antes de que la voz cuelgue en pared.
+    mount_pacing(rt)
     await rt.publish(EventType.RUN_STARTED, RunStarted(scenario_id=scenario_id), "core")
     # Después de `run.started`, no antes: así es lo primero que ve el journal del run y
     # ningún hecho de una fuente puede colarse por delante de él.
@@ -344,6 +349,7 @@ async def _ask_for_speed(rt: Runtime, speed: float) -> None:
     hay ni eso, se anota y el mundo va a 1×. Es la misma degradación explícita que
     `Sim.pause()` en el H4: ni se inventa el método ni se entra en el fichero de P2.
     """
+    rt.cruise_speed = speed
     if speed == 1.0 or rt.sim is None:
         return
     setter = getattr(rt.sim, "set_speed", None)
