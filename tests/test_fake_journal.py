@@ -18,12 +18,12 @@ from contracts.events import PAYLOAD_MODELS, Event, EventType
 # El fixture vigente es el v4 (v3 = sin la percepción con Jev). Los v1, v2 y v3 están congelados (`fixtures/**` solo se añade)
 # con los ids de carretera de antes del renombrado a `road:wp_a-wp_b` y sin los tres
 # eventos de voz de P3: ya no se pueden regenerar, así que no se prueban aquí.
-FAKE = Path("fixtures/run_fake_v5.jsonl")
+FAKE = Path("fixtures/run_fake_v6.jsonl")
 GEN = Path("scripts/fake_journal.py")
 
 pytestmark = pytest.mark.skipif(
     not FAKE.exists(),
-    reason="falta fixtures/run_fake_v5.jsonl · uv run python scripts/fake_journal.py",
+    reason="falta fixtures/run_fake_v6.jsonl · uv run python scripts/fake_journal.py",
 )
 
 

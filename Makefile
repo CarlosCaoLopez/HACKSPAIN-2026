@@ -9,7 +9,7 @@ FLAGS ?=
 # falso de `scripts/fake_journal.py` — el v3, que lleva los ids de carretera de hoy y la
 # voz en vivo de P3; los v2 y v1 quedan como históricos (el escenario ya no los produce).
 # El día que Luis grabe el golden, este target cambia solo y nadie tiene que acordarse.
-FAKE_REPLAY := $(firstword $(wildcard fixtures/run_fake_v5.jsonl fixtures/run_fake_v4.jsonl fixtures/run_fake_v3.jsonl fixtures/run_fake_v2.jsonl fixtures/run_fake.jsonl))
+FAKE_REPLAY := $(firstword $(wildcard fixtures/run_fake_v6.jsonl fixtures/run_fake_v5.jsonl fixtures/run_fake_v4.jsonl fixtures/run_fake_v3.jsonl fixtures/run_fake_v2.jsonl fixtures/run_fake.jsonl))
 REPLAY ?= $(if $(wildcard fixtures/run_golden.jsonl),fixtures/run_golden.jsonl,$(FAKE_REPLAY))
 
 help:
