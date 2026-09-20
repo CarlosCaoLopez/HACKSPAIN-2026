@@ -1,5 +1,7 @@
 # Taiafox
 
+[![Vídeo de Taiafox en YouTube](https://img.youtube.com/vi/vYMx2elWio0/maxresdefault.jpg)](https://www.youtube.com/watch?v=vYMx2elWio0)
+
 **Taiafox es la entrega del Grupo Gamma para el track de HappyRobot de HackSpain 2026.**
 
 Es un agente de crisis: recibe y emite llamadas telefónicas, decide qué hacer con un LLM y un
