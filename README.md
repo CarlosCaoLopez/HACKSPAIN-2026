@@ -1,5 +1,7 @@
 # Taiafox
 
+**🚀 ¡Estamos en Product Hunt!** [Apóyanos en nuestro lanzamiento](https://www.producthunt.com/products/taiafox?launch=taiafox).
+
 [![Vídeo de Taiafox en YouTube](https://img.youtube.com/vi/vYMx2elWio0/sddefault.jpg)](https://www.youtube.com/watch?v=vYMx2elWio0)
 
 **Taiafox es la entrega del Grupo Gamma para el track de HappyRobot de HackSpain 2026.**
