@@ -1,0 +1,34 @@
+# MediaMTX: recibe el RTSP de ffmpeg (el contenedor `cam`) y lo sirve como HLS al
+# dashboard, detrás de Caddy en `/cam/*`. HLS y no WebRTC por defecto: la wifi del evento
+# bloquea UDP y solo deja 80/443; HLS va por HTTPS como todo lo demás.
+logLevel: info
+api: no
+metrics: no
+pprof: no
+playback: no
+
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]
+rtmp: no
+srt: no
+
+hls: yes
+hlsAddress: :8888
+hlsAlwaysRemux: yes
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsAllowOrigin: "*"
+
+# WebRTC queda encendido para quien lo quiera probar en una red que deje UDP
+# (`/cam/vela/whep` no pasa por Caddy: habría que publicar 8889 y 8189).
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+
+paths:
+  vela:
+    source: publisher

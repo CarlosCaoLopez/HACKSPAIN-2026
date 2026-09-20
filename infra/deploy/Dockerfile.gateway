@@ -1,0 +1,41 @@
+# El gateway de vela con el dashboard construido dentro: un solo proceso (uvicorn) que
+# sirve `/api`, `/ws`, `/webhooks` y `/`. Contexto de build: la raíz del repo.
+#
+# Tres etapas: Python (uv sync del workspace) → Node (pnpm build del dashboard, que
+# necesita el `types.ts` que genera Python) → la imagen final, que es la de Python con
+# el `dist` copiado. `types.ts` se genera aquí y nunca se escribe a mano (CLAUDE.md).
+
+FROM python:3.12-slim AS py
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 UV_PYTHON_DOWNLOADS=never
+WORKDIR /app
+# Primero solo lo que decide el lock: la capa de dependencias se cachea entre builds.
+COPY pyproject.toml uv.lock ./
+COPY packages ./packages
+COPY apps/gateway ./apps/gateway
+RUN uv sync --frozen --no-dev
+COPY scenarios ./scenarios
+COPY fixtures ./fixtures
+COPY scripts/gen_ts_types.py ./scripts/gen_ts_types.py
+RUN mkdir -p apps/dashboard/src && uv run --no-sync python scripts/gen_ts_types.py
+
+FROM node:22-slim AS dashboard
+RUN corepack enable && corepack prepare pnpm@9 --activate
+WORKDIR /src/apps/dashboard
+COPY apps/dashboard/package.json apps/dashboard/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY apps/dashboard ./
+COPY --from=py /app/apps/dashboard/src/types.ts ./src/types.ts
+RUN pnpm build
+
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 PATH="/app/.venv/bin:$PATH" VELA_MODE=dev
+WORKDIR /app
+COPY --from=py /app /app
+COPY --from=dashboard /src/apps/dashboard/dist /app/apps/dashboard/dist
+# `runs/` (los journals) y `memory/` (las reglas entre runs) son volúmenes en compose.
+RUN mkdir -p runs memory/rules
+EXPOSE 8000
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=6 \
+  CMD python -c "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health',timeout=2)"
+CMD ["uvicorn", "gateway.main:app", "--host", "0.0.0.0", "--port", "8000"]

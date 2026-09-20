@@ -11,7 +11,7 @@ import type { WorldState } from '../types'
 import { mmss } from '../story/format'
 import { VIEW_TITLE, ViewIcon } from './ViewIcon'
 
-const VIEWS: readonly View[] = ['dashboards', 'mapa']
+const VIEWS: readonly View[] = ['dashboards', 'mapa', 'minecraft']
 const STORAGE_KEY = 'vela.sidebar.collapsed'
 
 /** El plegado se recuerda, pero el almacenamiento puede no existir (ventana privada,

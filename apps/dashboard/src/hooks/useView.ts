@@ -1,12 +1,12 @@
 // La vista activa vive en el hash de la URL (SPEC-008 REQ-272).
 //
-// Dos vistas no justifican un router: con el hash, recargar conserva la vista y puedo
+// Tres vistas no justifican un router: con el hash, recargar conserva la vista y puedo
 // abrir el proyector directamente en `#/mapa`. Un hash desconocido cae en Dashboards.
 import { useCallback, useEffect, useState } from 'react'
 
-export type View = 'dashboards' | 'mapa'
+export type View = 'dashboards' | 'mapa' | 'minecraft'
 
-const VIEWS: readonly View[] = ['dashboards', 'mapa']
+const VIEWS: readonly View[] = ['dashboards', 'mapa', 'minecraft']
 
 function fromHash(): View {
   const name = window.location.hash.replace(/^#\/?/, '')

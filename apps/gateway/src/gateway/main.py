@@ -34,12 +34,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from datetime import UTC, datetime
+
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, field_validator
 
 from contracts.events import EventType, RunEnded, RunStarted
-from contracts.settings import settings
+from contracts.settings import E164, PHONE_KEYS, normalize_phone, settings
 from gateway import replay_source
 from gateway.bridges import mount_bridges
 from gateway.control import router as control_router
@@ -64,6 +68,45 @@ log = logging.getLogger("vela.gateway")
 SCENARIOS_DIR = Path("scenarios")
 RUNS_DIR = Path("runs")
 DEFAULT_SCENARIO = "wildfire_ridge"
+DASHBOARD_DIST = Path("apps/dashboard/dist")
+"""El dashboard construido (`pnpm build`). Si existe, el gateway lo sirve en `/`: en el
+VPS lo sirve Caddy igualmente, pero así `uvicorn` solo ya es una demo entera y el
+`Dockerfile` no necesita un segundo servidor para probarlo."""
+
+CAM_PLAYER_WAIT_S = 120.0
+CAM_PLAYER_POLL_S = 5.0
+"""Cuánto se espera a que el jugador-cámara entre en el servidor, y cada cuánto se mira.
+El cliente headless tarda en arrancar más que el sim en reconstruir el mundo."""
+
+PHONE_ROLES: tuple[dict[str, str], ...] = (
+    {
+        "key": "fire_crew",
+        "label": "Retén de bomberos",
+        "explica": "Recibe la primera llamada: qué camiones salen, a qué frente y por qué ruta.",
+    },
+    {
+        "key": "ambulance",
+        "label": "Dotación de la ambulancia",
+        "explica": "Recibe la petición de las ambulancias para evacuar y, si hace falta, un rescate.",
+    },
+    {
+        "key": "pueblo_a",
+        "label": "Responsable de Pueblo A",
+        "explica": "Recibe la orden de evacuación, con los medios que ya han confirmado.",
+    },
+    {
+        "key": "pueblo_b",
+        "label": "Pueblo B",
+        "explica": "Recibe el aviso de que puede llegarle gente huyendo y, si el viento gira, su propia orden.",
+    },
+    {
+        "key": "neighbor",
+        "label": "Vecino que llama",
+        "explica": "No recibe llamadas: es el móvil desde el que tú llamarás al 112 de la demo para contar lo que ves.",
+    },
+)
+"""Lo que la landing pinta al lado de cada campo. Vive aquí y no en la landing para que
+el orden y el texto salgan del mismo sitio que la validación."""
 
 
 # --- Ciclo de vida ---------------------------------------------------------------
@@ -205,16 +248,24 @@ async def start_run(
     minecraft: bool = True,
     mock_calls: bool = False,
     speed: float = 1.0,
+    phones: dict[str, str] | None = None,
 ) -> str:
     """Construye sim + core para ese escenario, abre el journal y publica
     `run.started`. Lo usan `POST /api/run` y el arranque del modo demo.
 
     `minecraft=False` y `mock_calls=True` son los planes B nivel 3 y 2: se deciden por
     run, quedan anotados en `Runtime` y salen en `/api/health`.
+
+    `phones` son los teléfonos de la /demo autoservicio (ya validados por `RunBody`):
+    se aplican sobre `settings` **antes** de construir `Core`, que los lee de ahí, y
+    `stop_run` devuelve los del `.env`. Sin `phones`, el run llama a los del `.env`.
     """
     rt.run_id = rt.new_run_id()
     rt.scenario_id = scenario_id
     rt.minecraft, rt.calls_mocked = minecraft, mock_calls
+    rt.started_at = datetime.now(UTC)
+    rt.phones_given = bool(phones)
+    rt.phones_prev = settings.apply_phones(phones) if phones else {}
 
     # PRIMERO el bus, y no es estilo: `Sim.__init__` y `Core.__init__` leen
     # `bus.current_run_id()`, y `sim._publish` guarda en una reserva todo lo que emite
@@ -278,8 +329,74 @@ async def start_run(
     # Después de `run.started`, no antes: así es lo primero que ve el journal del run y
     # ningún hecho de una fuente puede colarse por delante de él.
     _start_feeds(rt, scenario_id)
+    _schedule_auto_stop(rt)
+    _place_camera(rt, scenario_id)
     log.info("run %s arrancado · escenario %s", rt.run_id, scenario_id)
     return rt.run_id
+
+
+def _schedule_auto_stop(rt: Runtime) -> None:
+    """El run se para solo a los `VELA_RUN_MAX_S` segundos (0 = nunca).
+
+    Es el candado de la /demo autoservicio: Paper solo aguanta un mundo a la vez, así
+    que un run que nadie para bloquea la demo para el siguiente visitante. Se comprueba
+    el `run_id` antes de parar: si alguien lo paró y arrancó otro, este temporizador no
+    es el suyo."""
+    max_s = settings.vela_run_max_s
+    if max_s <= 0:
+        return
+    run_id = rt.run_id
+
+    async def auto_stop() -> None:
+        await asyncio.sleep(max_s)
+        if rt.run_id != run_id:
+            return
+        # Se da de baja antes de parar: `stop_run` cancela la task `auto_stop`, y
+        # cancelarse a uno mismo dejaría el `stop_run` a medias, con el journal abierto.
+        rt.tasks.pop("auto_stop", None)
+        log.info("run %s · %ss cumplidos, se para solo", run_id, max_s)
+        await stop_run(rt)
+
+    rt.spawn("auto_stop", auto_stop())
+
+
+def _place_camera(rt: Runtime, scenario_id: str) -> None:
+    """Pone al jugador-cámara (`VELA_CAM_PLAYER`) en espectador y en el plano `aguila`.
+
+    Es la cámara fija de la /demo: nadie pulsa teclas. Espera a que el jugador esté en
+    el servidor (el cliente headless tarda en entrar) y manda el `tp` por el RCON del
+    sim, que ya está conectado. El gateway es el único autorizado a importar de `sim`.
+    Sin jugador configurado, o sin Minecraft, no hace nada y no anota nada: no es una
+    degradación, es la demo de siempre."""
+    player = settings.vela_cam_player
+    if not player or not rt.minecraft or rt.sim is None:
+        return
+    run_id = rt.run_id
+
+    async def place() -> None:
+        from sim.camera import HIGH, LOW, shots
+        from sim.scenario import load
+
+        rcon = rt.sim.rcon
+        shot = shots(load(scenario_path(scenario_id)))["aguila"]
+        deadline = asyncio.get_running_loop().time() + CAM_PLAYER_WAIT_S
+        while rt.run_id == run_id:
+            answer = await rcon.send(f"execute if entity {player}", LOW)
+            if answer.startswith("Test passed"):
+                await rcon.send(f"gamemode spectator {player}", HIGH)
+                await rcon.send(shot.tp(player), HIGH)
+                rt.notes["camera"] = f"{player} en espectador · plano {shot.name}"
+                log.info("cámara · %s", rt.notes["camera"])
+                return
+            if asyncio.get_running_loop().time() > deadline:
+                rt.notes["camera"] = (
+                    f"{player} no ha entrado en {CAM_PLAYER_WAIT_S:.0f}s: sin cámara"
+                )
+                log.warning("cámara · %s", rt.notes["camera"])
+                return
+            await asyncio.sleep(CAM_PLAYER_POLL_S)
+
+    rt.spawn("camera", place())
 
 
 def _start_feeds(rt: Runtime, scenario_id: str) -> None:
@@ -368,6 +485,9 @@ async def stop_run(rt: Runtime) -> dict:
         return {"run_id": None, "stopped": False, "journal": None}
 
     run_id, scenario_id = rt.run_id, rt.scenario_id or DEFAULT_SCENARIO
+    # El temporizador y la cámara no publican nada, pero un `stop_run` que dispare
+    # dos veces (el temporizador y un `POST /api/run/stop` a la vez) sí sería un lío.
+    await rt.stop_tasks("auto_stop", "camera")
     # Las fuentes primero: si siguieran vivas, un hecho podría entrar después de `run.ended`.
     await rt.stop_tasks("feeds")
     rt.feeds = None
@@ -386,6 +506,12 @@ async def stop_run(rt: Runtime) -> dict:
 
     rt.core, rt.sim = None, None
     rt.run_id, rt.scenario_id = None, None
+    rt.started_at = None
+    # Los teléfonos del `.env` vuelven: el siguiente run sin `phones` no debe llamar a
+    # los del visitante anterior.
+    if rt.phones_prev:
+        settings.apply_phones(rt.phones_prev)
+    rt.phones_prev, rt.phones_given = {}, False
     rt.mark("sim", "degraded", "run parado")
     rt.mark("core", "degraded", "run parado")
     log.info("run %s parado", run_id)
@@ -405,6 +531,19 @@ def _close_journal(rt: Runtime) -> None:
 # --- La app ----------------------------------------------------------------------
 
 app = FastAPI(title="vela", lifespan=lifespan)
+
+# La landing (otro dominio) llama a `POST /api/run` y `GET /api/demo/status` desde el
+# navegador: sin CORS el preflight muere. Solo los orígenes de `VELA_CORS_ORIGINS`,
+# nunca `*`: es lo que separa «la landing arranca la demo» de «cualquier web arranca
+# la demo». Vacío en local, como siempre.
+_cors_origins = [o.strip() for o in settings.vela_cors_origins.split(",") if o.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
 
 TELEGRAM_WEBHOOK_PATH = "/webhooks/telegram"
 """Telegram no puede mandar `X-Vela-Token`: esa ruta trae su propio secreto
@@ -458,6 +597,25 @@ class RunBody(BaseModel):
     minecraft: bool = True  # False = plan B nivel 3: ni se abre el socket RCON
     mock_calls: bool = False  # True = plan B nivel 2: `voice.fake` en vez de telefonía
     speed: float = 1.0  # multiplicador del mundo, si el sim sabe hacerlo
+    # Los teléfonos de la /demo autoservicio, por interlocutor (`PHONE_KEYS`). Sin
+    # ellos mandan los del `.env`. Un mismo número puede repetirse en varios papeles:
+    # la landing lo avisa, no se prohíbe (un visitante solo tiene un móvil).
+    phones: dict[str, str] | None = None
+
+    @field_validator("phones")
+    @classmethod
+    def _phones_e164(cls, phones: dict[str, str] | None) -> dict[str, str] | None:
+        if phones is None:
+            return None
+        out: dict[str, str] = {}
+        for key, raw in phones.items():
+            if key not in PHONE_KEYS:
+                raise ValueError(f"teléfono desconocido: {key} (vale {', '.join(PHONE_KEYS)})")
+            value = normalize_phone(str(raw))
+            if not E164.match(value):
+                raise ValueError(f"{key}: {raw!r} no es un número internacional (+34…)")
+            out[key] = value
+        return out
 
 
 @app.get("/api/health")
@@ -542,7 +700,17 @@ async def post_run(body: RunBody, rt: Rt) -> dict:
     if rt.mode == "replay":
         raise HTTPException(409, "en modo replay no se arrancan runs")
     if rt.run_id is not None:
-        raise HTTPException(409, f"ya hay un run en curso: {rt.run_id}")
+        # La landing lee `retry_after_s` para decir «hay una demo en marcha, vuelve en
+        # N minutos»; sin tope de tiempo, no puede prometer nada.
+        raise HTTPException(
+            409,
+            {
+                "reason": "busy",
+                "message": f"ya hay un run en curso: {rt.run_id}",
+                "run_id": rt.run_id,
+                "retry_after_s": rt.ends_in_s(),
+            },
+        )
     if not scenario_path(body.scenario_id).exists():
         raise HTTPException(404, f"escenario desconocido: {body.scenario_id}")
     run_id = await start_run(
@@ -551,6 +719,7 @@ async def post_run(body: RunBody, rt: Rt) -> dict:
         minecraft=body.minecraft,
         mock_calls=body.mock_calls,
         speed=body.speed,
+        phones=body.phones,
     )
     return {
         "run_id": run_id,
@@ -560,6 +729,35 @@ async def post_run(body: RunBody, rt: Rt) -> dict:
         "minecraft": rt.minecraft,
         "mock_calls": rt.calls_mocked,
         "speed": rt.notes.get("speed", "1×"),
+        # Lo que la landing necesita para llevar al visitante a mirar.
+        "phones": "por petición" if rt.phones_given else "del .env",
+        "watch_url": settings.vela_public_url or "/",
+        "inbound_number": settings.happyrobot_inbound_number,
+        "ends_in_s": rt.ends_in_s(),
+    }
+
+
+@app.get("/api/demo/status")
+async def get_demo_status(rt: Rt) -> dict:
+    """Lo que la landing y la pantalla de espera del dashboard preguntan cada pocos
+    segundos: ¿hay demo en marcha, cuánto le queda, a qué número llama el vecino y
+    qué papel tiene cada teléfono? Nunca devuelve teléfonos: los del run son de quien
+    los tecleó."""
+    return {
+        "busy": rt.run_id is not None,
+        "run_id": rt.run_id,
+        "scenario_id": rt.scenario_id,
+        "started_at": rt.started_at.isoformat() if rt.started_at else None,
+        "ends_in_s": rt.ends_in_s(),
+        "run_max_s": settings.vela_run_max_s,
+        "inbound_number": settings.happyrobot_inbound_number,
+        "watch_url": settings.vela_public_url or "/",
+        "landing_url": settings.vela_landing_url,
+        "cam_hls_url": settings.vela_cam_hls_url if settings.vela_cam_player else "",
+        "minecraft": rt.minecraft if rt.run_id else None,
+        "calls": ("simuladas" if rt.calls_mocked else "reales") if rt.run_id else None,
+        "phone_roles": list(PHONE_ROLES),
+        "default_scenario": DEFAULT_SCENARIO,
     }
 
 
@@ -632,3 +830,9 @@ def _count_here(item: dict, path: Path) -> None:
     item["provisional"] = True
     item["incomplete"] = counted.incomplete
     item["notes"] = counted.notes
+
+
+# El último montaje, después de todas las rutas: `/` sirve el dashboard construido si
+# existe. En local sin `pnpm build` no hay carpeta y no pasa nada (Vite sigue en :5173).
+if DASHBOARD_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(DASHBOARD_DIST), html=True), name="dashboard")

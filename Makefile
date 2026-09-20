@@ -1,4 +1,4 @@
-.PHONY: help install server cam director dev-core dev-sim dev-voice dev-dash demo world replay feeds-probe check types clean
+.PHONY: help install server cam director dev-core dev-sim dev-voice dev-dash demo world replay feeds-probe check types clean deploy-up deploy-down deploy-logs deploy-login deploy-ps
 .DEFAULT_GOAL := help
 
 RUN ?=
@@ -83,6 +83,28 @@ replay: ## reproduce un journal a velocidad real · make replay RUN=<id>
 
 feeds-probe: ## prueba las fuentes reales del ancla sin publicar · make feeds-probe SCENARIO=wildfire_ridge
 	uv run python -m gateway.feeds --probe $(SCENARIO)
+
+# --- El VPS (infra/deploy): la /demo autoservicio. Se lanza desde la raíz, con el .env de la raíz. ---
+
+COMPOSE := docker compose --env-file .env -f infra/deploy/docker-compose.yml
+
+deploy-up: ## construye y levanta caddy + gateway + paper + mediamtx + cam en este host
+	$(COMPOSE) up -d --build
+
+deploy-down: ## para todo (los volúmenes —runs, mundo, cliente— se quedan)
+	$(COMPOSE) down
+
+deploy-logs: ## sigue los logs · make deploy-logs S=cam (por defecto, todos)
+	$(COMPOSE) logs -f --tail=100 $(S)
+
+deploy-ps: ## estado y salud de los cinco contenedores
+	$(COMPOSE) ps
+
+deploy-login: ## login de la cuenta de Minecraft de la cámara (una vez; código de dispositivo) · make deploy-login EMAIL=<cuenta>
+	@test -n "$(EMAIL)" || { echo "falta EMAIL=<cuenta Microsoft con Minecraft Java>"; exit 1; }
+	$(COMPOSE) run --rm --entrypoint portablemc cam login --auth-no-browser $(EMAIL)
+# Después: MC_LOGIN=<ese email> en el .env y `make deploy-up`. La sesión queda en el volumen
+# `mc-home` y portablemc la refresca sola; caduca si pasan ~90 días sin usarla.
 
 # --- Contratos verificados, no acordados. Verde en cada merge a main. ---
 

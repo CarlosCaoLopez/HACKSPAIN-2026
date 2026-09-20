@@ -5,6 +5,7 @@
 // eventos (REQ-275). Las vistas reciben props, no abren sockets.
 import { useState } from 'react'
 
+import { useDemoStatus } from './hooks/useDemoStatus'
 import { useEventStream } from './hooks/useEventStream'
 import { useHealth } from './hooks/useHealth'
 import { useScenarioId } from './hooks/useScenario'
@@ -14,6 +15,8 @@ import { Sidebar } from './components/Sidebar'
 import { RunsPanel } from './panels/RunsPanel'
 import { DashboardsView } from './views/DashboardsView'
 import { MapView } from './views/MapView'
+import { MinecraftView } from './views/MinecraftView'
+import { Waiting } from './components/Waiting'
 
 export default function App() {
   const { state, plan, events, connected, hydrated } = useEventStream()
@@ -42,6 +45,12 @@ export default function App() {
   // aquí una vez y baja como una sola prop, porque con el socket CAÍDO no hay esqueleto
   // que valga — ahí mandan los estados vacíos.
   const awaitingSnapshot = connected && !hydrated
+  // La /demo autoservicio: sin run, la sala de espera; con run, lo de siempre. En replay
+  // (`make dev-dash`) el gateway no tiene run y sí tiene eventos: los eventos mandan.
+  const demo = useDemoStatus()
+  const [peeking, setPeeking] = useState(false)
+  const waiting =
+    demo !== null && !demo.busy && !peeking && events.length === 0 && state === null
 
   return (
     // `relative`: el modo comparación se monta encima, dentro del mismo marco. No es una
@@ -71,6 +80,13 @@ export default function App() {
             awaitingSnapshot={awaitingSnapshot}
             focusCallId={focusCallId}
           />
+        ) : view === 'minecraft' ? (
+          <MinecraftView
+            events={events}
+            awaitingSnapshot={awaitingSnapshot}
+            demo={demo}
+            focusCallId={focusCallId}
+          />
         ) : (
           <MapView
             state={state}
@@ -85,6 +101,7 @@ export default function App() {
       </main>
 
       {comparing && <RunsPanel events={events} onClose={() => setComparing(false)} />}
+      {waiting && demo && <Waiting status={demo} onPeek={() => setPeeking(true)} />}
     </div>
   )
 }

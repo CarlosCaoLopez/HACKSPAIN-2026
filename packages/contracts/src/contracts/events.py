@@ -186,6 +186,9 @@ class CallStarted(BaseModel):
     to: str
     direction: Literal["outbound", "inbound"]
     channel: Literal["voice", "telegram"] = "voice"  # opcional con default: libre
+    # La entrante viene del móvil que el visitante declaró como «vecino» en la /demo
+    # (`PHONE_NEIGHBOR`): el dashboard la pinta como «tu llamada». Opcional con default.
+    known_caller: bool = False
 
 
 class CitizenLocation(BaseModel):

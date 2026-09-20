@@ -64,6 +64,15 @@ class Runtime:
     minecraft: bool = True
     calls_mocked: bool = False
 
+    # La /demo autoservicio: cuándo arrancó el run (para la cuenta atrás de
+    # `/api/demo/status`), si trajo sus propios teléfonos, y los valores del `.env` que
+    # `settings.apply_phones` pisó, para devolverlos al parar. Los teléfonos del run no
+    # se guardan en ningún sitio más: son datos personales de quien rellenó el formulario
+    # y no pintan nada en el journal.
+    started_at: datetime | None = None
+    phones_given: bool = False
+    phones_prev: dict[str, str] = field(default_factory=dict)
+
     # Los objetos de los demás. `Any` a propósito: el gateway los usa por su
     # superficie pública y no debe acoplarse a sus internos.
     core: Any | None = None
@@ -237,6 +246,15 @@ class Runtime:
             "seq": state.seq if state is not None else self.hub.last_seq,
         }
 
+    def ends_in_s(self) -> int | None:
+        """Segundos hasta que el run se pare solo, o None si no hay run o no se para."""
+        from contracts.settings import settings
+
+        if self.run_id is None or self.started_at is None or settings.vela_run_max_s <= 0:
+            return None
+        elapsed = (datetime.now(UTC) - self.started_at).total_seconds()
+        return max(0, int(settings.vela_run_max_s - elapsed))
+
     def health(self) -> dict:
         from contracts.settings import settings
 
@@ -249,6 +267,10 @@ class Runtime:
             # puede pintar en la cabecera sin interpretarla.
             "minecraft": "encendido" if self.minecraft else "apagado",
             "calls": "simuladas" if self.calls_mocked else "reales",
+            # De dónde salen los teléfonos de este run: los del formulario de la /demo o
+            # los del `.env`. Sin los números: aquí no se enseña ninguno.
+            "phones": "por petición" if self.phones_given else "del .env",
+            "ends_in_s": self.ends_in_s(),
             "components": dict(self.components),
             "notes": dict(self.notes),
             "duplicate_actions": dict(self.duplicate_actions),

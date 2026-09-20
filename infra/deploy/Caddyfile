@@ -1,0 +1,13 @@
+# TLS automático (Let's Encrypt) y reparto: `/cam/*` a MediaMTX, todo lo demás al
+# gateway, que sirve el dashboard construido en `/`. Solo este contenedor publica puertos.
+{$DOMAIN} {
+	encode zstd gzip
+
+	handle_path /cam/* {
+		reverse_proxy mediamtx:8888
+	}
+
+	handle {
+		reverse_proxy gateway:8000
+	}
+}

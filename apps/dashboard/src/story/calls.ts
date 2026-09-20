@@ -74,6 +74,9 @@ export interface Call {
   seq: number
   t_sim: number
   direction: 'inbound' | 'outbound' | null
+  /** La entrante viene del móvil que el visitante de la /demo declaró como «vecino»:
+   *  la tarjeta dice «tu llamada». Un journal anterior al campo no lo trae: `false`. */
+  knownCaller: boolean
   /** `voice` salvo que lo diga `call.started` o que la tarjeta la abra un pin de Telegram. */
   channel: CallStarted['channel']
   to: string
@@ -124,6 +127,7 @@ export function callCards(events: Event[]): Call[] {
       seq,
       t_sim,
       direction: null,
+      knownCaller: false,
       channel: 'voice',
       to: '',
       intent: '',
@@ -185,6 +189,7 @@ export function callCards(events: Event[]): Call[] {
         const call = get(ev.payload.call_id, ev.seq, ev.t_sim)
         startedAt.set(ev.seq, ev.payload.call_id)
         call.direction = ev.payload.direction
+        call.knownCaller = ev.payload.known_caller ?? false
         // Un journal anterior al canal no trae `channel`: era voz.
         call.channel = ev.payload.channel ?? 'voice'
         call.to = ev.payload.to

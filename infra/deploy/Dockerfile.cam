@@ -1,0 +1,30 @@
+# La cámara: un cliente Minecraft Java DE VERDAD, sin pantalla. Xvfb hace de monitor,
+# Mesa/llvmpipe de tarjeta gráfica y ffmpeg graba la pantalla y la manda a MediaMTX, que
+# la sirve al dashboard como HLS. Es la misma imagen que antes capturaba OBS de la
+# segunda pantalla, sin portátil ni persona.
+#
+# No es prismarine-viewer ni un visor propio: el sim pinta camiones como `block_display`
+# y carteles como `armor_stand`, que los visores web no dibujan (y el último llega a
+# 1.21.4; Paper aquí es 1.21.11). El cliente oficial lo pinta todo igual que en el pitch.
+#
+# El cliente se descarga de Mojang al primer arranque (portablemc) y se queda en el
+# volumen `mc-home`. Necesita una cuenta de Minecraft Java: ver README (`portablemc login`).
+
+FROM eclipse-temurin:21-jre-jammy
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      xvfb ffmpeg ca-certificates python3 python3-pip fontconfig \
+      libgl1 libglx-mesa0 libgl1-mesa-dri libegl1 mesa-utils \
+      libx11-6 libxext6 libxcursor1 libxrandr2 libxxf86vm1 libxi6 libxrender1 libxtst6 \
+      libasound2 libfreetype6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir --break-system-packages portablemc
+COPY infra/deploy/cam/options.txt /opt/vela/options.txt
+COPY infra/deploy/cam/entrypoint.sh /opt/vela/entrypoint.sh
+RUN chmod +x /opt/vela/entrypoint.sh
+# Xvfb no es una GPU: se fuerza el rasterizador por software de Mesa, que da OpenGL 4.5.
+ENV DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe HOME=/home/cam
+RUN useradd -m -d /home/cam -s /bin/bash cam && mkdir -p /home/cam/.minecraft && chown -R cam:cam /home/cam
+USER cam
+WORKDIR /home/cam
+ENTRYPOINT ["/opt/vela/entrypoint.sh"]

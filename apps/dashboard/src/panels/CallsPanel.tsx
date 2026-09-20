@@ -105,6 +105,7 @@ function CallRow({ call, focused }: { call: Call; focused: boolean }) {
           </span>
           {call.recipient}
           {telegram && <ChannelBadge />}
+          {call.knownCaller && <MineBadge />}
         </>
       }
       status={status}
@@ -145,6 +146,16 @@ function ChannelBadge() {
   return (
     <span className="ml-2 inline-block rounded-md border border-vela-edge px-1.5 align-baseline text-xs text-vela-dim">
       ✈ Telegram
+    </span>
+  )
+}
+
+/** La entrante del móvil que el visitante declaró como «vecino» en la /demo. Se dice con
+ *  el tono de llamada, no con el rojo del banner: es suya, no urgente. */
+function MineBadge() {
+  return (
+    <span className="ml-2 inline-block rounded-md border border-vela-call px-1.5 align-baseline text-xs text-vela-call">
+      tu llamada
     </span>
   )
 }

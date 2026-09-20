@@ -38,7 +38,7 @@ from contracts.bus import current_run_id, current_t_sim, make_event, publish
 from contracts.calls import CallFacts, Fact, Severity
 from contracts.events import Event, EventType
 from contracts.factkeys import validate_fact_key
-from contracts.settings import settings
+from contracts.settings import normalize_phone, settings
 from voice import humanlike, pois
 from voice.perception import CallPerception
 
@@ -317,19 +317,30 @@ async def _publish_started(
 ) -> int:
     """`call.started` de una llamada de voz, una vez: el seq se guarda en el estado
     para que un `citizen.location` posterior pueda declararlo en `causes`."""
+    number = to or mon.state.callback_number or ""
     ev = make_event(
         EventType.CALL_STARTED,
         {
             "call_id": mon.state.call_id,
             "task_id": task_id,
-            "to": to or mon.state.callback_number or "",
+            "to": number,
             "direction": direction,
+            # La /demo autoservicio: si el que llama es el móvil que el visitante declaró
+            # como «vecino», el dashboard la pinta como suya. Solo entrantes y solo si hay
+            # `PHONE_NEIGHBOR`; una web call («web») nunca lo es.
+            "known_caller": _known_caller(direction, number),
         },
         source="voice",
     )
     await publish(ev)
     mon.state.started_seq = ev.seq
     return ev.seq
+
+
+def _known_caller(direction: str, number: str) -> bool:
+    """¿Es la entrante del móvil «vecino» de la /demo? Compara en E.164 normalizado."""
+    neighbor = normalize_phone(settings.phone_neighbor)
+    return bool(neighbor) and direction == "inbound" and normalize_phone(number) == neighbor
 
 
 def _fact_event(f: Fact, session_id: str) -> Event:

@@ -113,9 +113,30 @@ def shots(scenario: Scenario) -> dict[str, Shot]:
     fx, fz = parse_cell(scenario.hazard.origin_cell)
     fx, fz = fx * scenario.hazard.cell_size, fz * scenario.hazard.cell_size
 
+    # La de águila encuadra **todo**: POIs (hospital y refugio incluidos) y carreteras.
+    # Es la cámara fija de la /demo autoservicio, donde no hay nadie pulsando teclas:
+    # tiene que verse a la vez los pueblos, el fuego y las ambulancias saliendo del
+    # hospital. Se paga en altura; si el escenario no cabe bajo el techo de la niebla,
+    # el plano se queda en el techo y recorta los bordes antes que lavar los colores.
+    axs = rxs + [p.x for p in scenario.pois]
+    azs = rzs + [p.z for p in scenario.pois]
+    ax, az = (min(axs) + max(axs)) / 2, (min(azs) + max(azs)) / 2
+
     return {
         s.name: s
         for s in [
+            Shot(
+                "aguila",
+                "vista de águila · todo el escenario, la cámara fija de la /demo",
+                ax,
+                min(
+                    GROUND_Y + height_to_frame(max(axs) - min(axs), max(azs) - min(azs)),
+                    MAX_CENITAL_Y,
+                ),
+                az,
+                -90,
+                90,
+            ),
             Shot(
                 "valle",
                 "cenital del valle · explica el mecanismo y la Y",
@@ -315,7 +336,7 @@ async def live(catalogue: dict[str, Shot], who: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Mueve la cámara del pitch.")
-    parser.add_argument("shot", nargs="?", help="valle | escorzo | pueblo | frente")
+    parser.add_argument("shot", nargs="?", help="aguila | valle | escorzo | pueblo | frente")
     parser.add_argument("--scenario", default="scenarios/wildfire_ridge.yaml")
     parser.add_argument("--who", default="@a", help="jugador; @a por defecto")
     parser.add_argument("--list", action="store_true", help="lista los encuadres")

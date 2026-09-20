@@ -1,0 +1,23 @@
+# Lo que NO entra en las imágenes de infra/deploy. El contexto es la raíz del repo.
+.git
+.venv
+node_modules
+**/node_modules
+**/__pycache__
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+apps/dashboard/dist
+apps/dashboard/*.tsbuildinfo
+runs
+*.duckdb
+*.duckdb.wal
+*.mp4
+.env
+.env.*
+!.env.example
+infra/server
+docs
+docs-nacho
+refs-dashboard
+.claude

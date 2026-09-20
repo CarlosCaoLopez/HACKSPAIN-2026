@@ -1,0 +1,129 @@
+# La demo entera en un VPS: caddy (TLS) → gateway (+dashboard) · paper · cam → mediamtx.
+#
+#   docker compose --env-file .env -f infra/deploy/docker-compose.yml up -d --build
+#   (o `make deploy-up`, desde la raíz del repo)
+#
+# Un solo `.env`, el de la raíz: las claves de siempre más el bloque «despliegue» de
+# `.env.example` (DOMAIN, MC_VERSION, MC_LOGIN…). `RCON_HOST` y las URLs se pisan aquí
+# porque dentro de la red de compose Paper se llama `paper` y el vídeo `mediamtx`.
+#
+# Solo `caddy` publica puertos. Paper NO se expone: nadie de fuera entra al servidor, y
+# un solo gateway manda sobre él (infra/README.md: «un solo mundo a la vez»).
+name: vela
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?falta DOMAIN en .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.gateway
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      VELA_MODE: dev            # el run lo arranca la landing con POST /api/run, no el proceso
+      RCON_HOST: paper
+      RCON_PORT: "25575"
+      VELA_PUBLIC_URL: https://${DOMAIN}/#/minecraft
+      VELA_CAM_PLAYER: ${MC_PLAYER:-vela_cam}
+      VELA_CAM_HLS_URL: /cam/vela/index.m3u8
+    volumes:
+      - runs:/app/runs
+      - memory:/app/memory
+    depends_on:
+      paper:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  paper:
+    image: itzg/minecraft-server:java21
+    restart: unless-stopped
+    environment:
+      EULA: "TRUE"
+      TYPE: PAPER
+      VERSION: ${MC_VERSION:-1.21.11}
+      MEMORY: ${PAPER_MEMORY:-4G}
+      ONLINE_MODE: "false"
+      ENABLE_RCON: "true"
+      RCON_PORT: "25575"
+      RCON_PASSWORD: ${RCON_PASSWORD:?falta RCON_PASSWORD en .env}
+      # Lo mismo que infra/server/server.properties.template: el valle plano que `make
+      # world` (y cada run) construye por RCON encima.
+      LEVEL_TYPE: minecraft:flat
+      GENERATOR_SETTINGS: '{"biome":"minecraft:plains","lakes":false,"features":false,"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":127},{"block":"minecraft:grass_block","height":1}]}'
+      VIEW_DISTANCE: "24"
+      SIMULATION_DISTANCE: "4"
+      SPAWN_PROTECTION: "0"
+      ENTITY_BROADCAST_RANGE_PERCENTAGE: "500"
+      ENABLE_AUTOPAUSE: "false"
+      SNOOPER_ENABLED: "false"
+      MOTD: vela · dispositivo de salida
+      TZ: Europe/Madrid
+    volumes:
+      - paper-data:/data
+    expose:
+      - "25565"
+      - "25575"
+    healthcheck:
+      test: ["CMD", "mc-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    expose:
+      - "8554"
+      - "8888"
+
+  cam:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.cam
+    restart: unless-stopped
+    environment:
+      MC_VERSION: ${MC_VERSION:-1.21.11}
+      MC_PLAYER: ${MC_PLAYER:-vela_cam}
+      MC_LOGIN: ${MC_LOGIN:-}
+      MC_XMX: ${MC_XMX:-3G}
+      CAM_RES: ${CAM_RES:-1280x720}
+      CAM_FPS: ${CAM_FPS:-15}
+    volumes:
+      - mc-home:/home/cam
+    depends_on:
+      paper:
+        condition: service_healthy
+      mediamtx:
+        condition: service_started
+    # llvmpipe come CPU: que no ahogue a Paper ni al gateway.
+    cpus: ${CAM_CPUS:-4}
+    shm_size: 1g
+
+volumes:
+  caddy-data:
+  caddy-config:
+  runs:
+  memory:
+  paper-data:
+  mc-home:
