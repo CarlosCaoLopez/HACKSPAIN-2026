@@ -84,6 +84,12 @@ class Runtime:
     duplicate_actions: dict[str, int] = field(default_factory=dict)
     paused: bool = False
 
+    # Velocidad de crucero del reloj de sim (`--speed`). Con llamadas reales el mundo
+    # corre a esto en tiempo muerto y `gateway.pacing` lo baja a 1× mientras hay una
+    # llamada viva: las retenciones miden en `t_sim` pero la voz tarda en `t_wall`, así
+    # que sin frenar, el hold vence antes de que la llamada real cuelgue.
+    cruise_speed: float = 1.0
+
     # Peticiones a `/webhooks/*` rechazadas por token (H4). Se cuenta y se enseña en
     # `/api/health`: si alguien escanea el túnel en la sala, quiero ver el número subir
     # y no descubrirlo porque suene un teléfono en mitad del pitch.
