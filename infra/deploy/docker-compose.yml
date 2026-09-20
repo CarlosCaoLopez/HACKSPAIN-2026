@@ -21,6 +21,7 @@ services:
       - "443:443/udp"
     environment:
       DOMAIN: ${DOMAIN:?falta DOMAIN en .env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -42,6 +43,7 @@ services:
       RCON_PORT: "25575"
       VELA_PUBLIC_URL: https://${DOMAIN}/#/minecraft
       VELA_CAM_PLAYER: ${MC_PLAYER:-vela_cam}
+      VELA_CAM_SHOT: ${VELA_CAM_SHOT:-aguila}
       VELA_CAM_HLS_URL: /cam/vela/index.m3u8
     volumes:
       - runs:/app/runs

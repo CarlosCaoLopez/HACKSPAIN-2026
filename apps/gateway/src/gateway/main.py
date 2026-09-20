@@ -361,7 +361,7 @@ def _schedule_auto_stop(rt: Runtime) -> None:
 
 
 def _place_camera(rt: Runtime, scenario_id: str) -> None:
-    """Pone al jugador-cámara (`VELA_CAM_PLAYER`) en espectador y en el plano `aguila`.
+    """Pone al jugador-cámara (`VELA_CAM_PLAYER`) en espectador y en el plano fijo.
 
     Es la cámara fija de la /demo: nadie pulsa teclas. Espera a que el jugador esté en
     el servidor (el cliente headless tarda en entrar) y manda el `tp` por el RCON del
@@ -378,14 +378,27 @@ def _place_camera(rt: Runtime, scenario_id: str) -> None:
         from sim.scenario import load
 
         rcon = rt.sim.rcon
-        shot = shots(load(scenario_path(scenario_id)))["aguila"]
+        catalogo = shots(load(scenario_path(scenario_id)))
+        # Un nombre de plano que no existe es una errata en el `.env`, no un motivo
+        # para quedarse sin cámara en mitad de la demo: se cae al primero y se anota.
+        shot = catalogo.get(settings.vela_cam_shot)
+        if shot is None:
+            shot = next(iter(catalogo.values()))
+            rt.notes["camera_shot"] = (
+                f"plano {settings.vela_cam_shot!r} desconocido; se usa {shot.name!r}"
+            )
+            log.warning("cámara · %s", rt.notes["camera_shot"])
         deadline = asyncio.get_running_loop().time() + CAM_PLAYER_WAIT_S
         while rt.run_id == run_id:
             answer = await rcon.send(f"execute if entity {player}", LOW)
             if answer.startswith("Test passed"):
                 await rcon.send(f"gamemode spectator {player}", HIGH)
                 await rcon.send(shot.tp(player), HIGH)
-                rt.notes["camera"] = f"{player} en espectador · plano {shot.name}"
+                recorta = " · RECORTA: el escenario no cabe bajo el techo de niebla"
+                rt.notes["camera"] = (
+                    f"{player} en espectador · plano {shot.name}"
+                    f"{recorta if shot.clips else ''}"
+                )
                 log.info("cámara · %s", rt.notes["camera"])
                 return
             if asyncio.get_running_loop().time() > deadline:

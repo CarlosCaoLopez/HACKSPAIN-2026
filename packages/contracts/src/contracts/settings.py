@@ -99,8 +99,14 @@ class Settings(BaseSettings):
     # todos. 0 = no se para solo (los ensayos con `make demo` lo paran a mano).
     vela_run_max_s: int = 420
     # El jugador-cámara del cliente headless. Con nombre, el gateway lo pone en
-    # espectador y lo lleva al plano `aguila` al arrancar cada run. Vacío = nadie.
+    # espectador y lo lleva al plano de `vela_cam_shot` al arrancar cada run.
+    # Vacío = nadie.
     vela_cam_player: str = ""
+    # Qué encuadre de `sim.camera.shots()` usa esa cámara fija. Es variable y no una
+    # constante porque cuál se lee mejor depende del tamaño del escenario, y eso se
+    # mide en el servidor, no aquí: en `wildfire_ridge`, `aguila` topa con el techo
+    # de niebla y recorta Pueblo B y el hospital, así que puede tocar `escorzo`.
+    vela_cam_shot: str = "aguila"
     # Dónde sirve MediaMTX el HLS del Minecraft, relativo al dashboard o absoluto.
     vela_cam_hls_url: str = "/cam/vela/index.m3u8"
     # P3 · Telegram: el «dónde» exacto tras la llamada. Sin token, canal ausente.

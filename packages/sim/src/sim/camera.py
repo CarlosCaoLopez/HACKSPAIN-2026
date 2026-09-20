@@ -35,12 +35,53 @@ ASPECT = 16 / 9
 """Proporción de la pantalla. El FOV de Minecraft es vertical, así que a lo ancho
 se ve bastante más — y el valle es más ancho que profundo."""
 
-MAX_CENITAL_Y = 175
-"""Techo del plano cenital. Medido en el servidor: por encima de ~170 la niebla
-de Minecraft lava los colores y los marcadores de POI llegan grises, que es
-justo lo que el plano tiene que distinguir. Si el valle no cabe por debajo de
-este techo, el valle es demasiado grande — y eso se arregla en el YAML, no
-subiendo la cámara."""
+CENITAL_YAW = 180.0
+"""Yaw de los planos cenitales: pone el **norte arriba** y, sobre todo, el eje X en
+el lado ancho de la pantalla.
+
+Estaba en -90, y con ese yaw el lado ancho de la pantalla cae sobre Z mientras que
+`height_to_frame` calcula la altura suponiendo que cae sobre X (de ahí el `ASPECT`
+que solo divide al ancho). Las dos mitades no hablaban del mismo eje, así que la Y
+salía calculada para un encuadre distinto del que se mandaba: en `wildfire_ridge`,
+cinco de los seis POIs se salían de plano. Medido con el frustum, no a ojo."""
+
+MARGEN = 1.1
+"""Aire alrededor del rectángulo a encuadrar. Sin él, lo que está justo en el borde
+sale cortado por la mitad."""
+
+RENDER_DISTANCE_CHUNKS = 16
+"""El `renderDistance` del cliente que graba (`infra/deploy/cam/options.txt`).
+
+Si alguien lo baja para ganar fps, los cenitales tienen que bajar con él: manda la
+misma constante los dos sitios."""
+
+FOG_CLEAN_RATIO = 0.75
+"""A partir de tres cuartos del render distance, la niebla de Minecraft empieza a
+lavar los colores. Es lo que hay detrás del «por encima de ~170 se ve gris» que se
+midió en el servidor: no era la altura, era la distancia a las esquinas del plano."""
+
+MAX_CENITAL_Y = 191
+"""Techo duro del plano cenital, por si el cálculo por niebla no aplica.
+
+Era 175 y se quedaba corto: con `renderDistance:16` la esquina más lejana de
+`wildfire_ridge` aguanta limpia hasta Y≈191, y a 175 se salían de plano Pueblo B y
+el hospital. Lo que de verdad manda es `fog_clean_y()`; esto es solo el tope."""
+
+
+def fog_clean_y(radius: float) -> float:
+    """Y más alta desde la que un plano de ese radio se ve sin niebla.
+
+    La niebla no depende de la altura sino de la distancia a lo que se mira, así
+    que el techo del cenital sale de Pitágoras entre el radio del encuadre y la
+    distancia a la que el cliente empieza a lavar: subir la cámara aleja las
+    esquinas, y son las esquinas las que se pierden primero.
+    """
+    limpio = FOG_CLEAN_RATIO * RENDER_DISTANCE_CHUNKS * 16
+    if radius >= limpio:
+        # El escenario ya no cabe limpio ni a ras de suelo: eso se arregla en el
+        # YAML, no subiendo la cámara.
+        return float(GROUND_Y)
+    return GROUND_Y + math.sqrt(limpio**2 - radius**2)
 
 
 @dataclass(frozen=True)
@@ -54,6 +95,15 @@ class Shot:
     z: float
     yaw: float
     pitch: float
+    clips: bool = False
+    """El techo deja cosas **fuera de plano** de verdad.
+
+    No es lo mismo que haber topado con el techo: `height_to_frame` pide un 10% de
+    aire alrededor, y quedarse sin ese aire solo significa un encuadre justo. Esto
+    solo se enciende cuando lo que se pierde es contenido, porque es lo único que
+    hay que ir a arreglar. Se cuenta en vez de callarse: una cámara que recorta el
+    hospital no se distingue de una bien puesta mirando el `tp`, y en la /demo no
+    hay nadie delante para darse cuenta."""
 
     def tp(self, who: str = "@s") -> str:
         return (
@@ -69,7 +119,7 @@ def height_to_frame(width: float, depth: float) -> float:
     solo por la profundidad dejaba la base y el pueblo fuera de plano.
     """
     half = math.tan(math.radians(FOV_VERTICAL / 2))
-    return 1.1 * max(depth / (2 * half), width / (2 * half * ASPECT))
+    return MARGEN * max(depth / (2 * half), width / (2 * half * ASPECT))
 
 
 def aim(x: float, y: float, z: float, ox: float, oz: float) -> tuple[float, float]:
@@ -122,6 +172,19 @@ def shots(scenario: Scenario) -> dict[str, Shot]:
     azs = rzs + [p.z for p in scenario.pois]
     ax, az = (min(axs) + max(axs)) / 2, (min(azs) + max(azs)) / 2
 
+    # Dos techos a la vez: el de la niebla (depende del tamaño del encuadre) y el
+    # tope duro. Manda el más bajo, y si alguno recorta se dice en `Shot.clips`.
+    y_aguila = GROUND_Y + height_to_frame(max(axs) - min(axs), max(azs) - min(azs))
+    y_valle = GROUND_Y + height_to_frame(max(rxs) - min(rxs), max(rzs) - min(rzs))
+    techo_aguila = min(
+        MAX_CENITAL_Y,
+        fog_clean_y(math.hypot((max(axs) - min(axs)) / 2, (max(azs) - min(azs)) / 2)),
+    )
+    techo_valle = min(
+        MAX_CENITAL_Y,
+        fog_clean_y(math.hypot((max(rxs) - min(rxs)) / 2, (max(rzs) - min(rzs)) / 2)),
+    )
+
     return {
         s.name: s
         for s in [
@@ -129,25 +192,21 @@ def shots(scenario: Scenario) -> dict[str, Shot]:
                 "aguila",
                 "vista de águila · todo el escenario, la cámara fija de la /demo",
                 ax,
-                min(
-                    GROUND_Y + height_to_frame(max(axs) - min(axs), max(azs) - min(azs)),
-                    MAX_CENITAL_Y,
-                ),
+                min(y_aguila, techo_aguila),
                 az,
-                -90,
+                CENITAL_YAW,
                 90,
+                clips=y_aguila / MARGEN > techo_aguila,
             ),
             Shot(
                 "valle",
                 "cenital del valle · explica el mecanismo y la Y",
                 cx,
-                min(
-                    GROUND_Y + height_to_frame(max(rxs) - min(rxs), max(rzs) - min(rzs)),
-                    MAX_CENITAL_Y,
-                ),
+                min(y_valle, techo_valle),
                 cz,
-                -90,
+                CENITAL_YAW,
                 90,
+                clips=y_valle / MARGEN > techo_valle,
             ),
             Shot(
                 "escorzo",
