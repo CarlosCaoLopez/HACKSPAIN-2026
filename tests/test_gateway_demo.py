@@ -100,6 +100,22 @@ async def _wait_ended(path: Path) -> list[Event]:
     raise AssertionError("el run no se paró solo")
 
 
+async def _wait_idle(rt) -> None:
+    """Espera a que el `Runtime` quede libre después del `run.ended`.
+
+    No es lo mismo que `_wait_ended`: la invariante 3 dice que el evento se escribe
+    al journal **antes** de repartirse, así que entre ver `run.ended` en el fichero y
+    ver el proceso recogido hay una ventana real. Mirar `rt.run_id` justo al salir de
+    `_wait_ended` es una carrera, y se pierde cuando la máquina va cargada.
+    """
+    deadline = time.monotonic() + WAIT_S
+    while time.monotonic() < deadline:
+        if rt.run_id is None and rt.journal_path is None:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"el auto-stop no recogió el proceso: run_id={rt.run_id}")
+
+
 def _run(**extra) -> dict:
     return {"scenario_id": SCENARIO, "minecraft": False, "speed": 20.0, **extra}
 
@@ -189,7 +205,7 @@ async def test_el_run_se_para_solo(gateway, monkeypatch) -> None:
 
     evs = await _wait_ended(journal)
     assert evs[0].type == EventType.RUN_STARTED
-    assert rt.run_id is None, "el auto-stop deja el proceso listo para otro run"
-    assert rt.journal_path is None, "y el journal cerrado (no se canceló a sí mismo)"
+    # Lo que se comprueba es que llega a recogerse, no que sea instantáneo.
+    await _wait_idle(rt)
     assert settings.phones() == DEFAULTS
     assert (await client.get("/api/demo/status")).json()["busy"] is False
