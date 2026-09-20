@@ -21,7 +21,9 @@ services:
       - "443:443/udp"
     environment:
       DOMAIN: ${DOMAIN:?falta DOMAIN en .env}
-      ACME_EMAIL: ${ACME_EMAIL:-}
+      # La directiva entera, no el valor: ver el comentario del Caddyfile. Sin
+      # ACME_EMAIL esto queda vacío y el bloque global de Caddy se queda en blanco.
+      CADDY_ACME_EMAIL: ${ACME_EMAIL:+email ${ACME_EMAIL}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

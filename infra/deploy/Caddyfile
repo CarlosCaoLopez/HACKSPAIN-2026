@@ -2,9 +2,13 @@
 # gateway, que sirve el dashboard construido en `/`. Solo este contenedor publica puertos.
 {
 	# Sin correo el certificado se saca igual, pero Let's Encrypt no tiene a quién
-	# avisar antes de que caduque. En un finde da igual; en un dominio que se queda,
-	# no. Vacío = Caddy lo omite.
-	email {$ACME_EMAIL}
+	# avisar antes de que caduque. En un finde da igual; en un dominio que se queda, no.
+	#
+	# La variable trae la **directiva entera**, no solo el valor, y es a propósito: con
+	# `email {$ACME_EMAIL}` y la variable vacía queda un `email` sin argumento y Caddy se
+	# niega a arrancar. El compose la rellena con `${ACME_EMAIL:+email ${ACME_EMAIL}}`,
+	# así que sin correo esto queda en blanco y el bloque global vacío, que sí vale.
+	{$CADDY_ACME_EMAIL}
 }
 
 {$DOMAIN} {
