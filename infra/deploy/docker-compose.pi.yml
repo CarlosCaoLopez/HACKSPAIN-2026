@@ -1,0 +1,79 @@
+# vela en una Raspberry Pi (arm64, 2 GB): solo el gateway (+dashboard), sin Minecraft.
+#
+# Es docker-compose.yml sin paper, cam ni mediamtx: sin mundo que pintar no hay nada
+# que grabar ni que servir por HLS. Lo que queda (un uvicorn y la entrada HTTPS) cabe
+# en 2 GB; paper pedía 4 GB y cam 4 vCPU al 100 %.
+#
+# La entrada se elige con un perfil (hay que pasar uno, sin perfil solo arranca el gateway):
+#   caddy  → TLS con Let's Encrypt; el router tiene que redirigir el 80 y el 443 a la Pi.
+#   tunel  → Cloudflare Tunnel; sin abrir puertos, vale detrás de CGNAT. Pide
+#            CLOUDFLARE_TUNNEL_TOKEN en .env y en Cloudflare el hostname público
+#            apuntando a http://gateway:8000.
+#
+#   docker compose --env-file .env -f infra/deploy/docker-compose.pi.yml --profile caddy up -d --build
+#   docker compose --env-file .env -f infra/deploy/docker-compose.pi.yml --profile tunel up -d --build
+#
+# OJO, dos cosas que el compose no puede resolver:
+#   1. Cada `POST /api/run` tiene que llevar `"minecraft": false`. `RunBody.minecraft`
+#      vale True por defecto, y entonces el run intenta conectar por RCON a un Paper que
+#      no existe (reintenta con backoff y el sim no arranca).
+#   2. El build ejecuta `pnpm build` del dashboard en la propia Pi. Con 2 GB va justo:
+#      antes, 1-2 GB de swap. También se puede construir en otra máquina con
+#      `docker buildx build --platform linux/arm64` y traer la imagen.
+name: vela
+
+services:
+  caddy:
+    profiles: ["caddy"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?falta DOMAIN en .env}
+      CADDY_ACME_EMAIL: ${ACME_EMAIL:+email ${ACME_EMAIL}}
+    volumes:
+      # El mismo Caddyfile: su `/cam/*` apunta a un mediamtx que aquí no existe y
+      # devuelve 502, que es lo que toca sin cámara.
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  tunel:
+    profiles: ["tunel"]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?falta CLOUDFLARE_TUNNEL_TOKEN en .env}
+    depends_on:
+      gateway:
+        condition: service_healthy
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: infra/deploy/Dockerfile.gateway
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      VELA_MODE: dev            # el run lo arranca la landing con POST /api/run, no el proceso
+      VELA_PUBLIC_URL: https://${DOMAIN:?falta DOMAIN en .env}/
+      # Sin RCON_HOST ni VELA_CAM_*: no hay Paper ni cámara a los que apuntar.
+    volumes:
+      - runs:/app/runs
+      - memory:/app/memory
+    expose:
+      - "8000"
+
+volumes:
+  caddy-data:
+  caddy-config:
+  runs:
+  memory:
