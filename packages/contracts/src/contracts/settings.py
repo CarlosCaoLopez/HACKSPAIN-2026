@@ -98,6 +98,10 @@ class Settings(BaseSettings):
     # Un run se para solo a los N segundos: sin esto uno colgado bloquea la demo para
     # todos. 0 = no se para solo (los ensayos con `make demo` lo paran a mano).
     vela_run_max_s: int = 420
+    # Qué hace un `POST /api/run` que no dice `minecraft`. false = plan B nivel 3 por
+    # defecto: el despliegue sin Paper (la Pi) no abre el socket RCON aunque la landing
+    # no mande el campo.
+    vela_minecraft: bool = True
     # El jugador-cámara del cliente headless. Con nombre, el gateway lo pone en
     # espectador y lo lleva al plano de `vela_cam_shot` al arrancar cada run.
     # Vacío = nadie.

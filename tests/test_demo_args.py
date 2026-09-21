@@ -136,6 +136,23 @@ def test_con_minecraft_el_rcon_es_el_de_p2(
     client.post("/api/run/stop")
 
 
+def test_vela_minecraft_false_apaga_minecraft_si_el_cuerpo_no_lo_dice(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """El despliegue sin Paper: la landing no manda `minecraft` y el run no puede
+    abrir el socket. Si el cuerpo lo pide, el cuerpo manda."""
+    _patch_sim(monkeypatch)
+    monkeypatch.setattr(settings, "vela_minecraft", False)
+    res = client.post("/api/run", json={"scenario_id": "wildfire_ridge"})
+    assert res.json()["minecraft"] is False
+    assert isinstance(_SpySim.last_rcon, NullRcon)
+    client.post("/api/run/stop")
+
+    client.post("/api/run", json={"scenario_id": "wildfire_ridge", "minecraft": True})
+    assert not isinstance(_SpySim.last_rcon, NullRcon)
+    client.post("/api/run/stop")
+
+
 def test_health_anuncia_los_dos_planes_b(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

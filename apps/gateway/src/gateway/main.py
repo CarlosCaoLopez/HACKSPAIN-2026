@@ -40,7 +40,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from contracts.events import EventType, RunEnded, RunStarted
 from contracts.settings import E164, PHONE_KEYS, normalize_phone, settings
@@ -604,10 +604,15 @@ class RunBody(BaseModel):
     modelo es del gateway, así que la bandera viaja con la petición que la usa y
     `packages/contracts/**` no se entera. `scripts/demo.py` los manda desde
     `--no-minecraft` y `--mock-calls`.
+
+    Sin `minecraft` en el cuerpo manda `VELA_MINECRAFT`: el despliegue sin Paper lo pone
+    a false y la landing no tiene que saber dónde corre el gateway.
     """
 
     scenario_id: str
-    minecraft: bool = True  # False = plan B nivel 3: ni se abre el socket RCON
+    # False = plan B nivel 3: ni se abre el socket RCON. `default_factory` y no un valor
+    # fijo: se lee `settings` en cada petición, no al importar el módulo.
+    minecraft: bool = Field(default_factory=lambda: settings.vela_minecraft)
     mock_calls: bool = False  # True = plan B nivel 2: `voice.fake` en vez de telefonía
     speed: float = 1.0  # multiplicador del mundo, si el sim sabe hacerlo
     # Los teléfonos de la /demo autoservicio, por interlocutor (`PHONE_KEYS`). Sin

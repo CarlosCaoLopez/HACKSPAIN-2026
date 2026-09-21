@@ -13,11 +13,7 @@
 #   docker compose --env-file .env -f infra/deploy/docker-compose.pi.yml --profile caddy up -d --build
 #   docker compose --env-file .env -f infra/deploy/docker-compose.pi.yml --profile tunel up -d --build
 #
-# OJO, dos cosas que el compose no puede resolver:
-#   1. Cada `POST /api/run` tiene que llevar `"minecraft": false`. `RunBody.minecraft`
-#      vale True por defecto, y entonces el run intenta conectar por RCON a un Paper que
-#      no existe (reintenta con backoff y el sim no arranca).
-#   2. El build ejecuta `pnpm build` del dashboard en la propia Pi. Con 2 GB va justo:
+# OJO: el build ejecuta `pnpm build` del dashboard en la propia Pi. Con 2 GB va justo:
 #      antes, 1-2 GB de swap. También se puede construir en otra máquina con
 #      `docker buildx build --platform linux/arm64` y traer la imagen.
 name: vela
@@ -65,6 +61,8 @@ services:
     environment:
       VELA_MODE: dev            # el run lo arranca la landing con POST /api/run, no el proceso
       VELA_PUBLIC_URL: https://${DOMAIN:?falta DOMAIN en .env}/
+      # Sin Paper: un POST /api/run que no diga `minecraft` arranca sin abrir el socket.
+      VELA_MINECRAFT: "false"
       # Sin RCON_HOST ni VELA_CAM_*: no hay Paper ni cámara a los que apuntar.
     volumes:
       - runs:/app/runs
