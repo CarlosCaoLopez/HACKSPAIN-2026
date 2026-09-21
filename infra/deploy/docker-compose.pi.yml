@@ -46,7 +46,10 @@ services:
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?falta CLOUDFLARE_TUNNEL_TOKEN en .env}
+      # `:-` y no `:?`: compose interpola también los servicios de perfiles apagados, y
+      # con `:?` el perfil caddy no arrancaba sin token. Sin él, cloudflared sale con
+      # error en sus logs, que es donde toca verlo.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       gateway:
         condition: service_healthy
