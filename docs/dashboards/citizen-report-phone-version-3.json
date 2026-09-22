@@ -1,0 +1,1246 @@
+{
+  "version": {
+    "id": "01a0b998-d333-7796-9939-86f2df3c87da",
+    "slug": "dr0t8joy8ran",
+    "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+    "use_case_id": "01a0b90f-c9e7-7869-8c0d-586d9c760ca1",
+    "version_number": 3,
+    "name": "Version 3",
+    "is_published": true,
+    "is_live": true,
+    "source_version_id": null,
+    "timestamp": "2026-09-19T12:16:35.629Z",
+    "published_at": null,
+    "is_deleted": false,
+    "description": "",
+    "environment": "production",
+    "created_by": "01a0b5f2-e650-767d-8889-a145dff53da2",
+    "created_by_api_key": null,
+    "created_by_entity": "user",
+    "in_experiment": false,
+    "workflow_version": 3
+  },
+  "nodes": [
+    {
+      "id": "01a0b998-d33e-7d41-830e-ed89598aba4b",
+      "persistent_id": "01a0b90f-d510-79f1-bd27-173080f73016",
+      "slug": "oaa4t2ojz0qj",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b90f-c9e7-7869-8c0d-586d9c760ca1",
+      "parent_id": "01a0b998-d33d-7f6e-b144-6bf191343e2f",
+      "version_id": "01a0b998-d333-7796-9939-86f2df3c87da",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "prompt",
+      "name": "Prompt",
+      "is_complete": false,
+      "node_output_id": null,
+      "node_generated_schema_id": null,
+      "sort_index": -1,
+      "timestamp": "2026-09-19T12:16:35.629Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {},
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": null,
+      "prompt": [
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "Eres el operador de emergencias del 112 durante un incendio forestal. Hablas en español de España, siempre de usted, con calma, frases cortas, sin tecnicismos. Primero pregunta dónde está la persona. Luego: cuántos son, si alguien no puede moverse por su cuenta, si hay heridos, y qué carretera o pista está cortada. Repite lo importante para confirmar. No cuelgues hasta tener la localización."
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "En cuanto la persona te dé una localización y al menos un dato más (carretera cortada, personas sin movilidad, heridos), llama a la herramienta report_fact con lo que sepas. Puedes llamarla más de una vez si la persona añade información. Di al vecino exactamente el campo \"message\" que devuelve la herramienta: incluye qué unidad va y por dónde."
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "Recibirás señales durante la llamada:"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "indent": 1,
+          "children": [
+            {
+              "text": "unit_dispatched: di al vecino exactamente el campo \"message\"."
+            }
+          ],
+          "listStyleType": "disc"
+        },
+        {
+          "type": "p",
+          "indent": 1,
+          "children": [
+            {
+              "text": "coach: es una indicación sobre cómo hablar, no algo que decir. Si \"action\" es \"hold\", guarda silencio y deja que la persona termine. Si es \"acknowledge\", di solo una muletilla corta como «sí, le escucho». Si es \"speak\" y trae \"say\", dilo. Adapta el tono (\"tone\": calm, firm, warm) y el ritmo (\"pace\": si es \"slow\", frases más cortas y más pausa).\nNunca repitas una señal ya dicha ni menciones que recibes señales."
+            }
+          ],
+          "listStyleType": "disc"
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "Si el vecino no sabe decir dónde está exactamente:"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "indent": 1,
+          "children": [
+            {
+              "text": "Llama a report_fact igualmente en cuanto tengas cualquier dato: un lugar aproximado («cerca de unas casas al final de la pista»), una carretera o pista cortada, personas que no pueden moverse o heridos. No esperes a tener la ubicación exacta."
+            }
+          ],
+          "listStyleType": "disc"
+        },
+        {
+          "type": "p",
+          "indent": 1,
+          "children": [
+            {
+              "text": "Di exactamente el campo \"message\" del resultado de la herramienta, sin añadir nada: si hay que pedir la ubicación por Telegram, la petición ya viene dentro de \"message\". No la repitas con otras palabras."
+            }
+          ],
+          "listStyleType": "disc"
+        },
+        {
+          "type": "p",
+          "indent": 1,
+          "children": [
+            {
+              "text": "Si \"telegram_hint\" es true, no cuelgues: quédate en línea, pregunta al vecino si ha podido enviar la ubicación y sigue atendiendo las señales unit_dispatched y coach como siempre."
+            }
+          ],
+          "listStyleType": "disc"
+        }
+      ],
+      "prompt_md": "Eres el operador de emergencias del 112 durante un incendio forestal. Hablas en español de España, siempre de usted, con calma, frases cortas, sin tecnicismos. Primero pregunta dónde está la persona. Luego: cuántos son, si alguien no puede moverse por su cuenta, si hay heridos, y qué carretera o pista está cortada. Repite lo importante para confirmar. No cuelgues hasta tener la localización.\n\nEn cuanto la persona te dé una localización y al menos un dato más (carretera cortada, personas sin movilidad, heridos), llama a la herramienta report_fact con lo que sepas. Puedes llamarla más de una vez si la persona añade información. Di al vecino exactamente el campo \"message\" que devuelve la herramienta: incluye qué unidad va y por dónde.\n\nRecibirás señales durante la llamada:\n- unit_dispatched: di al vecino exactamente el campo \"message\".\n- coach: es una indicación sobre cómo hablar, no algo que decir. Si \"action\" es \"hold\", guarda silencio y deja que la persona termine. Si es \"acknowledge\", di solo una muletilla corta como «sí, le escucho». Si es \"speak\" y trae \"say\", dilo. Adapta el tono (\"tone\": calm, firm, warm) y el ritmo (\"pace\": si es \"slow\", frases más cortas y más pausa).\nNunca repitas una señal ya dicha ni menciones que recibes señales.\n\nSi el vecino no sabe decir dónde está exactamente:\n- Llama a report_fact igualmente en cuanto tengas cualquier dato: un lugar aproximado («cerca de unas casas al final de la pista»), una carretera o pista cortada, personas que no pueden moverse o heridos. No esperes a tener la ubicación exacta.\n- Di exactamente el campo \"message\" del resultado de la herramienta, sin añadir nada: si hay que pedir la ubicación por Telegram, la petición ya viene dentro de \"message\". No la repitas con otras palabras.\n- Si \"telegram_hint\" es true, no cuelgues: quédate en línea, pregunta al vecino si ha podido enviar la ubicación y sigue atendiendo las señales unit_dispatched y coach como siempre.",
+      "inbound_prompt": null,
+      "inbound_prompt_md": null,
+      "initial_message": [
+        {
+          "type": "paragraph",
+          "children": [
+            {
+              "text": "Emergencias, dígame. ¿Dónde está usted?"
+            }
+          ]
+        }
+      ],
+      "initial_message_uninterruptible": false,
+      "receiving_initial_message": null,
+      "model": {
+        "type": "static",
+        "static": {
+          "id": "gpt-5.6-luna",
+          "name": "gpt-5.6-luna"
+        }
+      },
+      "use_custom_llm": false,
+      "custom_llm_credential": null
+    },
+    {
+      "id": "01a0b998-d33b-7a44-8c48-57b7da144b06",
+      "persistent_id": "01a0b90f-d375-724d-b54e-1ae941bf1b5f",
+      "slug": "dyzw2c6d4i6y",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b90f-c9e7-7869-8c0d-586d9c760ca1",
+      "parent_id": null,
+      "version_id": "01a0b998-d333-7796-9939-86f2df3c87da",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "action",
+      "name": "Llamada al 112",
+      "is_complete": true,
+      "node_output_id": "01a0b998-d340-718a-8e94-a9025fd3c2c9",
+      "node_generated_schema_id": "01a0b998-d340-718a-8e94-a9025fd3c2c9",
+      "sort_index": 0,
+      "timestamp": "2026-09-19T12:16:35.629Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {
+        "numbers": [
+          {
+            "id": "PN9a19b8b67a8b85d1344a77edccaedbf5",
+            "name": "vela-out-twilio",
+            "number": "+14845581911"
+          }
+        ],
+        "require_webcall_auth": false,
+        "open_runs_page_on_trigger": true
+      },
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": {
+        "id": "01a0b998-d340-718a-8e94-a9025fd3c2c9",
+        "run_id": null,
+        "node_id": "01a0b998-d33b-7a44-8c48-57b7da144b06",
+        "node_persistent_id": "01a0b90f-d375-724d-b54e-1ae941bf1b5f",
+        "event_id": "0192a20c-cb70-7bf2-977a-b7edc14dcd66",
+        "session_id": null,
+        "chat_session_id": null,
+        "name": null,
+        "data": {
+          "room_name": "8b1fc447-3532-44d1-8d7e-6433e2ccf9d9_+12345678902_0",
+          "to_number": "+12345678901",
+          "from_number": "+12345678902",
+          "raw_headers": "{\"x-sample-header\": \"sample-value\"}",
+          "user_to_user": "UUI data, if any"
+        },
+        "is_multiple": false,
+        "error": null,
+        "llm_model": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "input": null,
+        "status": "succeeded",
+        "scope": "",
+        "data_deleted": false,
+        "started_at": null,
+        "timestamp": "2026-09-19T09:47:48.423Z",
+        "updated_at": "2026-09-19T09:47:48.423Z",
+        "flat_data": {
+          "room_name": "8b1fc447-3532-44d1-8d7e-6433e2ccf9d9_+12345678902_0",
+          "to_number": "+12345678901",
+          "from_number": "+12345678902",
+          "raw_headers": "{\"x-sample-header\": \"sample-value\"}",
+          "user_to_user": "UUI data, if any"
+        }
+      },
+      "integration_id": "01929780-8602-73c2-a955-f6015e3b780d",
+      "event_id": "0192a20c-cb70-7bf2-977a-b7edc14dcd66",
+      "trigger_interval": null,
+      "multi_event_behavior": "parallel",
+      "hidden_fields": [],
+      "is_response_node": false,
+      "integration": {
+        "id": "01929780-8602-73c2-a955-f6015e3b780d",
+        "name": "Phone calls",
+        "group": "built-in",
+        "icon": "/integrations/phone.svg",
+        "description": "Give your voice agents phone call tooling",
+        "docs_url": "https://docs.happyrobot.ai/integrations/phone",
+        "website_url": "https://docs.happyrobot.ai/integrations/phone",
+        "is_top": true,
+        "requires_credentials": false,
+        "agent_specific": false
+      },
+      "event": {
+        "id": "0192a20c-cb70-7bf2-977a-b7edc14dcd66",
+        "name": "Inbound to number",
+        "integration_id": "01929780-8602-73c2-a955-f6015e3b780d",
+        "type": 0,
+        "description": "Catch an incoming phone call to a specific number.",
+        "is_instant": true,
+        "has_cron_trigger": false,
+        "activity_name": "",
+        "task_queue": "",
+        "timeout_seconds": 10,
+        "retry_policy": {
+          "InitialInterval": 10,
+          "MaximumAttempts": 2,
+          "BackoffCoefficient": 2
+        },
+        "wait_for_signal_seconds": 0,
+        "key_for_sleep": null,
+        "coming_soon": false,
+        "metadata": {},
+        "delegated_category": null
+      }
+    },
+    {
+      "id": "01a0b998-d33c-737d-9ff0-f0971e03b65b",
+      "persistent_id": "01a0b90f-d844-761a-a21a-8aef50bdead8",
+      "slug": "ip0xtc1sdecx",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b90f-c9e7-7869-8c0d-586d9c760ca1",
+      "parent_id": "01a0b998-d33d-7f6e-b144-6bf191343e2f",
+      "version_id": "01a0b998-d333-7796-9939-86f2df3c87da",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "action",
+      "name": "POST call end",
+      "is_complete": true,
+      "node_output_id": "01a0b998-d340-7615-8008-7ffc7eb223bd",
+      "node_generated_schema_id": "01a0b998-d340-7615-8008-7ffc7eb223bd",
+      "sort_index": 0,
+      "timestamp": "2026-09-19T12:16:35.629Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {
+        "url": [
+          {
+            "type": "paragraph",
+            "children": [
+              {
+                "text": ""
+              },
+              {
+                "type": "variable",
+                "children": [
+                  {
+                    "text": ""
+                  }
+                ],
+                "group_id": "use_case_variables",
+                "variable_id": "VELA_URL"
+              },
+              {
+                "text": "/webhooks/happyrobot/call"
+              }
+            ]
+          }
+        ],
+        "params": [],
+        "headers": [
+          {
+            "key": "X-Vela-Token",
+            "value": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "text": ""
+                  },
+                  {
+                    "type": "variable",
+                    "children": [
+                      {
+                        "text": ""
+                      }
+                    ],
+                    "group_id": "use_case_variables",
+                    "variable_id": "VELA_TOKEN"
+                  },
+                  {
+                    "text": ""
+                  }
+                ]
+              }
+            ],
+            "enabled": true
+          }
+        ],
+        "authType": "none",
+        "ignore5XX": true,
+        "responseHeaders": [],
+        "contentType": "application/json",
+        "xssProtection": true,
+        "webhookSchemaVersion": 2,
+        "body": {
+          "schemaVersion": 2,
+          "contentType": "application/json",
+          "raw": "{\"type\": \"end\", \"session_id\": \"{{$var:01a0b90f-d510-79f1-bd27-172f4b71123e.session_id}}\", \"run_id\": \"{{$var:current.run_id}}\", \"direction\": \"inbound\", \"status\": \"{{$var:01a0b90f-d510-79f1-bd27-172f4b71123e.status}}\", \"transcript\": \"{{$var:01a0b90f-d510-79f1-bd27-172f4b71123e.transcript}}\"}"
+        }
+      },
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": {
+        "id": "01a0b998-d340-7615-8008-7ffc7eb223bd",
+        "run_id": null,
+        "node_id": "01a0b998-d33c-737d-9ff0-f0971e03b65b",
+        "node_persistent_id": "01a0b90f-d844-761a-a21a-8aef50bdead8",
+        "event_id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+        "session_id": null,
+        "chat_session_id": null,
+        "name": null,
+        "data": {
+          "error": "{\"detail\":\"session_id\"}"
+        },
+        "is_multiple": false,
+        "error": null,
+        "llm_model": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "input": null,
+        "status": "succeeded",
+        "scope": "",
+        "data_deleted": false,
+        "started_at": null,
+        "timestamp": "2026-09-19T09:47:48.786Z",
+        "updated_at": "2026-09-19T09:47:48.786Z",
+        "flat_data": {
+          "error": "{\"detail\":\"session_id\"}"
+        }
+      },
+      "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+      "event_id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+      "trigger_interval": null,
+      "multi_event_behavior": "group",
+      "hidden_fields": [],
+      "is_response_node": false,
+      "integration": {
+        "id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "name": "Webhook",
+        "group": "built-in",
+        "icon": "/integrations/webhook.svg",
+        "description": "Connect your agents to external systems via REST APIs",
+        "docs_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "website_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "is_top": true,
+        "requires_credentials": false,
+        "agent_specific": false
+      },
+      "event": {
+        "id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+        "name": "POST",
+        "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "type": 1,
+        "description": "Execute  POST request to an endpoint.",
+        "is_instant": false,
+        "has_cron_trigger": false,
+        "activity_name": "WebhookPost",
+        "task_queue": "go-worker",
+        "timeout_seconds": 300,
+        "retry_policy": {
+          "InitialInterval": 10,
+          "MaximumAttempts": 2,
+          "BackoffCoefficient": 2
+        },
+        "wait_for_signal_seconds": 0,
+        "key_for_sleep": null,
+        "coming_soon": false,
+        "metadata": {},
+        "delegated_category": null
+      }
+    },
+    {
+      "id": "01a0b998-d33d-7f6e-b144-6bf191343e2f",
+      "persistent_id": "01a0b90f-d510-79f1-bd27-172f4b71123e",
+      "slug": "hcc7l5x1ut3j",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b90f-c9e7-7869-8c0d-586d9c760ca1",
+      "parent_id": "01a0b998-d33b-7a44-8c48-57b7da144b06",
+      "version_id": "01a0b998-d333-7796-9939-86f2df3c87da",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "action",
+      "name": "Operador 112",
+      "is_complete": true,
+      "node_output_id": "01a0b998-d340-7c73-af78-43140e686cd6",
+      "node_generated_schema_id": "01a0b998-d340-7c73-af78-43140e686cd6",
+      "sort_index": 0,
+      "timestamp": "2026-09-19T12:16:35.629Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {
+        "agent": {
+          "name": [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "Operador 112"
+                }
+              ]
+            }
+          ],
+          "languages": [
+            {
+              "type": "static",
+              "static": {
+                "id": "es",
+                "name": "Spanish"
+              }
+            }
+          ],
+          "voices": [
+            {
+              "type": "static",
+              "static": {
+                "id": "ol95iljphtct",
+                "name": "Clara HR",
+                "settings": {
+                  "speed": 0.95
+                }
+              }
+            }
+          ]
+        },
+        "multi_lingual": false,
+        "record": true,
+        "recording_style": "ai_recording",
+        "recording_language": {
+          "type": "auto"
+        },
+        "background": {
+          "type": "static",
+          "static": {
+            "id": "https://storage.googleapis.com/happyrobot-public/backgrounds/call-center.8k.wav",
+            "name": "Call center",
+            "description": "https://storage.googleapis.com/happyrobot-public/backgrounds/call-center.8k.wav"
+          }
+        },
+        "stay_silent": true,
+        "disable_stay_silent_filler": false,
+        "max_call_duration": 300,
+        "business_hours_setting_name": "default",
+        "transcription_context": [
+          {
+            "type": "paragraph",
+            "children": [
+              {
+                "text": "Llamadas de vecinos durante un incendio forestal en un valle de Castilla. Mencionan pueblos, el molino viejo, el hospital, el refugio, la pista del sur y la del norte, personas que no pueden andar, heridos, humo."
+              }
+            ]
+          }
+        ],
+        "keyterms": [
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "molino viejo"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "pista del sur"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "pista del norte"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "Pueblo A"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "Pueblo B"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "refugio"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "hospital"
+                }
+              ]
+            }
+          ]
+        ],
+        "agentSignalsConfig": {
+          "enabled": true,
+          "shouldRespondOnSignal": true,
+          "customTopics": []
+        }
+      },
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": {
+        "id": "01a0b998-d340-7c73-af78-43140e686cd6",
+        "run_id": null,
+        "node_id": "01a0b998-d33d-7f6e-b144-6bf191343e2f",
+        "node_persistent_id": "01a0b90f-d510-79f1-bd27-172f4b71123e",
+        "event_id": "0192e5dc-08df-78bf-a549-f43c6bf9f087",
+        "session_id": null,
+        "chat_session_id": null,
+        "name": null,
+        "data": {
+          "now": {
+            "ts": 1789811268,
+            "day": 19,
+            "iso": "2026-09-19T04:47:48-05:00",
+            "year": 2026,
+            "month": 9,
+            "friendly": "Saturday, September 19, 2026 04:47:48 -0500"
+          },
+          "from": "+12345678902",
+          "agent": {
+            "name": "Operador 112",
+            "voice": {
+              "id": "ol95iljphtct",
+              "name": "Clara HR",
+              "language": "ca-ES",
+              "cloned_language_accents": [
+                {
+                  "locale": "ca-ES",
+                  "language": "ca",
+                  "accent_key": "ca",
+                  "accent_label": "Catalan"
+                },
+                {
+                  "locale": "es-ES",
+                  "language": "es",
+                  "accent_key": "es-es",
+                  "accent_label": "Spanish (Spain)"
+                }
+              ]
+            },
+            "voices": [
+              {
+                "id": "ol95iljphtct",
+                "name": "Clara HR",
+                "language": "ca-ES",
+                "cloned_language_accents": [
+                  {
+                    "locale": "ca-ES",
+                    "language": "ca",
+                    "accent_key": "ca",
+                    "accent_label": "Catalan"
+                  },
+                  {
+                    "locale": "es-ES",
+                    "language": "es",
+                    "accent_key": "es-es",
+                    "accent_label": "Spanish (Spain)"
+                  }
+                ]
+              }
+            ],
+            "languages": [
+              "es"
+            ]
+          },
+          "number": "+12345678901",
+          "record": true,
+          "redact": null,
+          "status": "in-progress",
+          "duration": 0,
+          "keyterms": "[\"molino viejo\",\"pista del sur\",\"pista del norte\",\"Pueblo A\",\"Pueblo B\",\"refugio\",\"hospital\"]",
+          "numerals": true,
+          "sip_code": 0,
+          "room_name": "test-room",
+          "sentiment": "",
+          "background": "https://storage.googleapis.com/happyrobot-public/backgrounds/call-center.8k.wav",
+          "contact_id": "",
+          "session_id": "0a024f80-6079-42b3-aeb6-53f6d2fbbb4a",
+          "sip_status": "",
+          "transcript": "[]",
+          "stay_silent": true,
+          "transcriber": "legacy",
+          "tools_result": [],
+          "multi_lingual": false,
+          "voice_notices": [],
+          "call_end_event": "unknown",
+          "failure_reason": "",
+          "num_tool_calls": 0,
+          "num_user_turns": 0,
+          "p70_latency_ms": 0,
+          "p90_latency_ms": 0,
+          "num_total_turns": 0,
+          "recording_style": "ai_recording",
+          "keyterms_dropped": [],
+          "transcriber_tier": "",
+          "enable_ring_cxiva": false,
+          "max_call_duration": 300,
+          "phone_tree_prompt": "",
+          "call_end_initiator": "unknown",
+          "recording_language": "auto",
+          "enable_denoised_stt": false,
+          "is_external_account": false,
+          "num_assistant_turns": 0,
+          "disable_time_fillers": false,
+          "keyterms_drop_reason": "",
+          "navigate_phone_trees": false,
+          "caller_audio_received": false,
+          "messages_per_turn_avg": 0,
+          "real_time_classifiers": null,
+          "transcription_context": "Llamadas de vecinos durante un incendio forestal en un valle de Castilla. Mencionan pueblos, el molino viejo, el hospital, el refugio, la pista del sur y la del norte, personas que no pueden andar, heridos, humo.",
+          "keyterms_dropped_count": 0,
+          "play_recording_message": false,
+          "num_user_filler_messages": 0,
+          "user_filler_message_ratio": 0,
+          "disable_stay_silent_filler": false,
+          "num_assistant_cut_messages": 0,
+          "user_messages_per_turn_avg": 0,
+          "assistant_cut_message_ratio": 0,
+          "max_duration_transfer_number": "",
+          "out_of_business_hours_blocked": false,
+          "disable_keypress_transcription": false,
+          "real_time_sentiment_classifier": false,
+          "assistant_messages_per_turn_avg": 0,
+          "contact_intelligence_collection_enabled": false
+        },
+        "is_multiple": false,
+        "error": null,
+        "llm_model": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "input": null,
+        "status": "succeeded",
+        "scope": "",
+        "data_deleted": false,
+        "started_at": null,
+        "timestamp": "2026-09-19T09:47:48.801Z",
+        "updated_at": "2026-09-19T09:47:48.801Z",
+        "flat_data": {
+          "now.ts": 1789811268,
+          "now.day": 19,
+          "now.iso": "2026-09-19T04:47:48-05:00",
+          "now.year": 2026,
+          "now.month": 9,
+          "now.friendly": "Saturday, September 19, 2026 04:47:48 -0500",
+          "from": "+12345678902",
+          "agent.name": "Operador 112",
+          "agent.voice.id": "ol95iljphtct",
+          "agent.voice.name": "Clara HR",
+          "agent.voice.language": "ca-ES",
+          "agent.voice.cloned_language_accents.0.locale": "ca-ES",
+          "agent.voice.cloned_language_accents.0.language": "ca",
+          "agent.voice.cloned_language_accents.0.accent_key": "ca",
+          "agent.voice.cloned_language_accents.0.accent_label": "Catalan",
+          "agent.voice.cloned_language_accents.1.locale": "es-ES",
+          "agent.voice.cloned_language_accents.1.language": "es",
+          "agent.voice.cloned_language_accents.1.accent_key": "es-es",
+          "agent.voice.cloned_language_accents.1.accent_label": "Spanish (Spain)",
+          "agent.voice.cloned_language_accents": "[{\"locale\":\"ca-ES\",\"language\":\"ca\",\"accent_key\":\"ca\",\"accent_label\":\"Catalan\"},{\"locale\":\"es-ES\",\"language\":\"es\",\"accent_key\":\"es-es\",\"accent_label\":\"Spanish (Spain)\"}]",
+          "agent.voices.0.id": "ol95iljphtct",
+          "agent.voices.0.name": "Clara HR",
+          "agent.voices.0.language": "ca-ES",
+          "agent.voices.0.cloned_language_accents.0.locale": "ca-ES",
+          "agent.voices.0.cloned_language_accents.0.language": "ca",
+          "agent.voices.0.cloned_language_accents.0.accent_key": "ca",
+          "agent.voices.0.cloned_language_accents.0.accent_label": "Catalan",
+          "agent.voices.0.cloned_language_accents.1.locale": "es-ES",
+          "agent.voices.0.cloned_language_accents.1.language": "es",
+          "agent.voices.0.cloned_language_accents.1.accent_key": "es-es",
+          "agent.voices.0.cloned_language_accents.1.accent_label": "Spanish (Spain)",
+          "agent.voices.0.cloned_language_accents": "[{\"locale\":\"ca-ES\",\"language\":\"ca\",\"accent_key\":\"ca\",\"accent_label\":\"Catalan\"},{\"locale\":\"es-ES\",\"language\":\"es\",\"accent_key\":\"es-es\",\"accent_label\":\"Spanish (Spain)\"}]",
+          "agent.voices": "[{\"id\":\"ol95iljphtct\",\"name\":\"Clara HR\",\"language\":\"ca-ES\",\"cloned_language_accents\":[{\"locale\":\"ca-ES\",\"language\":\"ca\",\"accent_key\":\"ca\",\"accent_label\":\"Catalan\"},{\"locale\":\"es-ES\",\"language\":\"es\",\"accent_key\":\"es-es\",\"accent_label\":\"Spanish (Spain)\"}]}]",
+          "agent.languages.0": "es",
+          "agent.languages": "[\"es\"]",
+          "number": "+12345678901",
+          "record": true,
+          "redact": null,
+          "status": "in-progress",
+          "duration": 0,
+          "keyterms": "[\"molino viejo\",\"pista del sur\",\"pista del norte\",\"Pueblo A\",\"Pueblo B\",\"refugio\",\"hospital\"]",
+          "numerals": true,
+          "sip_code": 0,
+          "room_name": "test-room",
+          "sentiment": "",
+          "background": "https://storage.googleapis.com/happyrobot-public/backgrounds/call-center.8k.wav",
+          "contact_id": "",
+          "session_id": "0a024f80-6079-42b3-aeb6-53f6d2fbbb4a",
+          "sip_status": "",
+          "transcript": "[]",
+          "stay_silent": true,
+          "transcriber": "legacy",
+          "tools_result": "[]",
+          "multi_lingual": false,
+          "voice_notices": "[]",
+          "call_end_event": "unknown",
+          "failure_reason": "",
+          "num_tool_calls": 0,
+          "num_user_turns": 0,
+          "p70_latency_ms": 0,
+          "p90_latency_ms": 0,
+          "num_total_turns": 0,
+          "recording_style": "ai_recording",
+          "keyterms_dropped": "[]",
+          "transcriber_tier": "",
+          "enable_ring_cxiva": false,
+          "max_call_duration": 300,
+          "phone_tree_prompt": "",
+          "call_end_initiator": "unknown",
+          "recording_language": "auto",
+          "enable_denoised_stt": false,
+          "is_external_account": false,
+          "num_assistant_turns": 0,
+          "disable_time_fillers": false,
+          "keyterms_drop_reason": "",
+          "navigate_phone_trees": false,
+          "caller_audio_received": false,
+          "messages_per_turn_avg": 0,
+          "real_time_classifiers": null,
+          "transcription_context": "Llamadas de vecinos durante un incendio forestal en un valle de Castilla. Mencionan pueblos, el molino viejo, el hospital, el refugio, la pista del sur y la del norte, personas que no pueden andar, heridos, humo.",
+          "keyterms_dropped_count": 0,
+          "play_recording_message": false,
+          "num_user_filler_messages": 0,
+          "user_filler_message_ratio": 0,
+          "disable_stay_silent_filler": false,
+          "num_assistant_cut_messages": 0,
+          "user_messages_per_turn_avg": 0,
+          "assistant_cut_message_ratio": 0,
+          "max_duration_transfer_number": "",
+          "out_of_business_hours_blocked": false,
+          "disable_keypress_transcription": false,
+          "real_time_sentiment_classifier": false,
+          "assistant_messages_per_turn_avg": 0,
+          "contact_intelligence_collection_enabled": false
+        }
+      },
+      "integration_id": "0192e48a-81d8-71cb-93dc-efd8ad63d86b",
+      "event_id": "0192e5dc-08df-78bf-a549-f43c6bf9f087",
+      "trigger_interval": null,
+      "multi_event_behavior": "parallel",
+      "hidden_fields": [],
+      "is_response_node": false,
+      "integration": {
+        "id": "0192e48a-81d8-71cb-93dc-efd8ad63d86b",
+        "name": "AI Agent",
+        "group": "built-in",
+        "icon": "/integrations/agents.svg",
+        "description": "Create AI Agents",
+        "docs_url": "https://docs.happyrobot.ai/integrations/phone",
+        "website_url": "https://docs.happyrobot.ai/integrations/phone",
+        "is_top": true,
+        "requires_credentials": false,
+        "agent_specific": false
+      },
+      "event": {
+        "id": "0192e5dc-08df-78bf-a549-f43c6bf9f087",
+        "name": "Inbound Voice Agent",
+        "integration_id": "0192e48a-81d8-71cb-93dc-efd8ad63d86b",
+        "type": 1,
+        "description": "Receive inbound call",
+        "is_instant": false,
+        "has_cron_trigger": false,
+        "activity_name": "InboundVoiceAgent",
+        "task_queue": "go-worker",
+        "timeout_seconds": 20,
+        "retry_policy": {
+          "InitialInterval": 10,
+          "MaximumAttempts": 2,
+          "BackoffCoefficient": 2
+        },
+        "wait_for_signal_seconds": 3600,
+        "key_for_sleep": null,
+        "coming_soon": false,
+        "metadata": {},
+        "delegated_category": null
+      }
+    },
+    {
+      "id": "01a0b998-d33e-7b7e-ae6f-e5ec829cc55d",
+      "persistent_id": "01a0b90f-d8fb-7df1-b4bb-621e49ec9eeb",
+      "slug": "b8uzzr895iut",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b90f-c9e7-7869-8c0d-586d9c760ca1",
+      "parent_id": "01a0b998-d33f-7d41-bdb7-b64dd40daf2b",
+      "version_id": "01a0b998-d333-7796-9939-86f2df3c87da",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "action",
+      "name": "POST fact",
+      "is_complete": true,
+      "node_output_id": "01a0b99a-31e8-76a7-b06a-d5b4cf47533d",
+      "node_generated_schema_id": "01a0b99a-31e8-76a7-b06a-d5b4cf47533d",
+      "sort_index": 0,
+      "timestamp": "2026-09-19T12:16:35.629Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {
+        "url": [
+          {
+            "type": "paragraph",
+            "children": [
+              {
+                "text": ""
+              },
+              {
+                "type": "variable",
+                "children": [
+                  {
+                    "text": ""
+                  }
+                ],
+                "group_id": "use_case_variables",
+                "variable_id": "VELA_URL"
+              },
+              {
+                "text": "/webhooks/happyrobot/fact"
+              }
+            ]
+          }
+        ],
+        "params": [],
+        "headers": [
+          {
+            "key": "X-Vela-Token",
+            "value": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "text": ""
+                  },
+                  {
+                    "type": "variable",
+                    "children": [
+                      {
+                        "text": ""
+                      }
+                    ],
+                    "group_id": "use_case_variables",
+                    "variable_id": "VELA_TOKEN"
+                  },
+                  {
+                    "text": ""
+                  }
+                ]
+              }
+            ],
+            "enabled": true
+          }
+        ],
+        "authType": "none",
+        "ignore5XX": true,
+        "responseHeaders": [],
+        "contentType": "application/json",
+        "xssProtection": true,
+        "webhookSchemaVersion": 2,
+        "body": {
+          "schemaVersion": 2,
+          "contentType": "application/json",
+          "raw": "{\"session_id\": \"{{$var:01a0b90f-d510-79f1-bd27-172f4b71123e.session_id}}\", \"run_id\": \"{{$var:current.run_id}}\", \"params\": {\"location_hint\": \"{{$var:01a0b90f-d780-7718-886f-b65cf42998f7.location_hint}}\", \"road_blocked\": \"{{$var:01a0b90f-d780-7718-886f-b65cf42998f7.road_blocked}}\", \"people_immobile\": \"{{$var:01a0b90f-d780-7718-886f-b65cf42998f7.people_immobile}}\", \"injuries\": \"{{$var:01a0b90f-d780-7718-886f-b65cf42998f7.injuries}}\", \"urgency\": \"{{$var:01a0b90f-d780-7718-886f-b65cf42998f7.urgency}}\", \"callback_number\": \"{{$var:01a0b90f-d780-7718-886f-b65cf42998f7.callback_number}}\"}}"
+        }
+      },
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": {
+        "id": "01a0b99a-31e8-76a7-b06a-d5b4cf47533d",
+        "run_id": null,
+        "node_id": "01a0b998-d33e-7b7e-ae6f-e5ec829cc55d",
+        "node_persistent_id": "01a0b90f-d8fb-7df1-b4bb-621e49ec9eeb",
+        "event_id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+        "session_id": null,
+        "chat_session_id": null,
+        "name": null,
+        "data": {
+          "ack": true,
+          "message": "Anotado, cerca de unas casas al final de la pista. Va el camión 1 por la pista norte. Si tiene Telegram, mande su ubicación al bot @vela_112_bot y sabremos exactamente dónde está.",
+          "telegram_bot": "vela_112_bot",
+          "plan_included": true,
+          "telegram_hint": true,
+          "facts_published": 1,
+          "resolved_poi_name": "cerca de unas casas al final de la pista"
+        },
+        "is_multiple": false,
+        "error": null,
+        "llm_model": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "input": null,
+        "status": "succeeded",
+        "scope": "",
+        "data_deleted": false,
+        "started_at": null,
+        "timestamp": "2026-09-19T12:18:05.415Z",
+        "updated_at": "2026-09-19T12:18:05.415Z",
+        "flat_data": {
+          "ack": true,
+          "message": "Anotado, cerca de unas casas al final de la pista. Va el camión 1 por la pista norte. Si tiene Telegram, mande su ubicación al bot @vela_112_bot y sabremos exactamente dónde está.",
+          "telegram_bot": "vela_112_bot",
+          "plan_included": true,
+          "telegram_hint": true,
+          "facts_published": 1,
+          "resolved_poi_name": "cerca de unas casas al final de la pista"
+        }
+      },
+      "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+      "event_id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+      "trigger_interval": null,
+      "multi_event_behavior": "group",
+      "hidden_fields": [
+        "ack",
+        "plan_included",
+        "facts_published"
+      ],
+      "is_response_node": false,
+      "integration": {
+        "id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "name": "Webhook",
+        "group": "built-in",
+        "icon": "/integrations/webhook.svg",
+        "description": "Connect your agents to external systems via REST APIs",
+        "docs_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "website_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "is_top": true,
+        "requires_credentials": false,
+        "agent_specific": false
+      },
+      "event": {
+        "id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+        "name": "POST",
+        "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "type": 1,
+        "description": "Execute  POST request to an endpoint.",
+        "is_instant": false,
+        "has_cron_trigger": false,
+        "activity_name": "WebhookPost",
+        "task_queue": "go-worker",
+        "timeout_seconds": 300,
+        "retry_policy": {
+          "InitialInterval": 10,
+          "MaximumAttempts": 2,
+          "BackoffCoefficient": 2
+        },
+        "wait_for_signal_seconds": 0,
+        "key_for_sleep": null,
+        "coming_soon": false,
+        "metadata": {},
+        "delegated_category": null
+      }
+    },
+    {
+      "id": "01a0b998-d33f-7d41-bdb7-b64dd40daf2b",
+      "persistent_id": "01a0b90f-d780-7718-886f-b65cf42998f7",
+      "slug": "vlb815oevs4l",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b90f-c9e7-7869-8c0d-586d9c760ca1",
+      "parent_id": "01a0b998-d33e-7d41-830e-ed89598aba4b",
+      "version_id": "01a0b998-d333-7796-9939-86f2df3c87da",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "tool",
+      "name": "report_fact",
+      "is_complete": false,
+      "node_output_id": null,
+      "node_generated_schema_id": null,
+      "sort_index": 0,
+      "timestamp": "2026-09-19T12:16:35.629Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {
+        "tool_call_result_ack": "ack"
+      },
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": null,
+      "function": {
+        "description": [
+          {
+            "type": "p",
+            "children": [
+              {
+                "text": "Usa esta herramienta en cuanto sepas dónde está el vecino y al menos un dato más: carretera cortada, personas que no pueden moverse, heridos. Registra el incidente en el centro de coordinación y devuelve lo que debes decirle al vecino."
+              }
+            ]
+          }
+        ],
+        "message": {
+          "type": "ai",
+          "description": [
+            {
+              "type": "p",
+              "children": [
+                {
+                  "text": "Dile al vecino que lo estás anotando, en una frase corta"
+                }
+              ]
+            }
+          ],
+          "example": ""
+        },
+        "parameters": [
+          {
+            "name": "location_hint",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "lugar donde está la persona, tal cual lo dice"
+                  }
+                ]
+              }
+            ],
+            "required": true
+          },
+          {
+            "name": "road_blocked",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "carretera o pista cortada, tal cual lo dice"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "people_immobile",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "número de personas que no pueden moverse; solo el número"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "injuries",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "número de heridos; solo el número"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "urgency",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "low, medium o critical"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "callback_number",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "teléfono para devolver la llamada, si lo da"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "01a0b998-d33b-7a44-8c48-57b7da144b06",
+      "to_node": "01a0b998-d33d-7f6e-b144-6bf191343e2f",
+      "created_at": "2026-09-19T12:16:35.629Z",
+      "updated_at": "2026-09-19T12:16:35.629Z",
+      "deleted_at": null
+    },
+    {
+      "from_node": "01a0b998-d33d-7f6e-b144-6bf191343e2f",
+      "to_node": "01a0b998-d33c-737d-9ff0-f0971e03b65b",
+      "created_at": "2026-09-19T12:16:35.629Z",
+      "updated_at": "2026-09-19T12:16:35.629Z",
+      "deleted_at": null
+    },
+    {
+      "from_node": "01a0b998-d33d-7f6e-b144-6bf191343e2f",
+      "to_node": "01a0b998-d33e-7d41-830e-ed89598aba4b",
+      "created_at": "2026-09-19T12:16:35.629Z",
+      "updated_at": "2026-09-19T12:16:35.629Z",
+      "deleted_at": null
+    },
+    {
+      "from_node": "01a0b998-d33e-7d41-830e-ed89598aba4b",
+      "to_node": "01a0b998-d33f-7d41-bdb7-b64dd40daf2b",
+      "created_at": "2026-09-19T12:16:35.629Z",
+      "updated_at": "2026-09-19T12:16:35.629Z",
+      "deleted_at": null
+    },
+    {
+      "from_node": "01a0b998-d33f-7d41-bdb7-b64dd40daf2b",
+      "to_node": "01a0b998-d33e-7b7e-ae6f-e5ec829cc55d",
+      "created_at": "2026-09-19T12:16:35.629Z",
+      "updated_at": "2026-09-19T12:16:35.629Z",
+      "deleted_at": null
+    }
+  ],
+  "workflowVersion": 3
+}

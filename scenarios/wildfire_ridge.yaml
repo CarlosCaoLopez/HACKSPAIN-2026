@@ -107,6 +107,15 @@ units:
     z: 10
     capabilities: [extinguish]
     capacity: 0
+  # El tercero es lo que hace que la reserva no cueste extinción: con dos, guardar uno
+  # dejaba el frente a media potencia; con tres, salen dos y queda uno para lo que
+  # venga. Aparcado dentro de los 3 m de `wp_base` (-44, 0) como los otros.
+  - id: unit_truck3
+    kind: fire_truck
+    x: -44
+    z: -10
+    capabilities: [extinguish]
+    capacity: 0
   # Las cuatro aparcadas DENTRO de los 3 m de `wp_hospital` (22, -77): fuera del
   # radio, `_return_home` les manda un `goto` nada más arrancar el run para que se
   # coloquen. Separadas lo justo para no pisarse en el render.

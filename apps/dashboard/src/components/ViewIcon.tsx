@@ -1,4 +1,4 @@
-// Iconos de las tres vistas. SVG en línea: sin librería de iconos (SPEC-008 REQ-270).
+// Iconos de las cuatro vistas. SVG en línea: sin librería de iconos (SPEC-008 REQ-270).
 // Los usan la sidebar y la cabecera de cada vista, y por eso viven aparte.
 import type { View } from '../hooks/useView'
 
@@ -26,6 +26,12 @@ export function ViewIcon({ view, className = 'h-5 w-5' }: { view: View; classNam
           <path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z" />
           <circle cx="12" cy="10" r="2.5" />
         </>
+      ) : view === 'simulacion' ? (
+        <>
+          {/* Un play dentro de un marco: algo que se ejecuta, no un sitio al que se va. */}
+          <rect x="3" y="3" width="18" height="18" rx="3" />
+          <path d="M10 8.5l5.5 3.5L10 15.5z" />
+        </>
       ) : (
         <>
           {/* Un cubo: el bloque de Minecraft, sin decirlo. */}
@@ -40,6 +46,7 @@ export function ViewIcon({ view, className = 'h-5 w-5' }: { view: View; classNam
 export const VIEW_TITLE: Record<View, string> = {
   dashboards: 'Dashboards',
   mapa: 'Mapa',
+  simulacion: 'Simulación 2D',
   minecraft: 'Minecraft',
 }
 

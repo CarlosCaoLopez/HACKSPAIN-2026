@@ -1,0 +1,1543 @@
+{
+  "version": {
+    "id": "01a0bb0c-85cb-721c-868e-973bbe7bcc7c",
+    "slug": "941p3golw5im",
+    "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+    "use_case_id": "01a0b58d-7d6e-7511-b01b-334760374047",
+    "version_number": 16,
+    "name": "Version 16",
+    "is_published": true,
+    "is_live": true,
+    "source_version_id": null,
+    "timestamp": "2026-09-19T19:02:35.205Z",
+    "published_at": null,
+    "is_deleted": false,
+    "description": "",
+    "environment": "development",
+    "created_by": "01a0b5f2-e650-767d-8889-a145dff53da2",
+    "created_by_api_key": null,
+    "created_by_entity": "user",
+    "in_experiment": false,
+    "workflow_version": 3
+  },
+  "nodes": [
+    {
+      "id": "01a0bb0c-85d7-7705-b6c7-e2cb1f8006d5",
+      "persistent_id": "01a0b8d9-d18f-70c2-a4cd-b3f73f35a660",
+      "slug": "e43de8l6l7qy",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b58d-7d6e-7511-b01b-334760374047",
+      "parent_id": "01a0bb0c-85d6-73dc-b081-e8cf58eae6b9",
+      "version_id": "01a0bb0c-85cb-721c-868e-973bbe7bcc7c",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "prompt",
+      "name": "Prompt",
+      "is_complete": false,
+      "node_output_id": null,
+      "node_generated_schema_id": null,
+      "sort_index": -1,
+      "timestamp": "2026-09-19T19:02:35.205Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {},
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": null,
+      "prompt": [
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "Eres el coordinador del centro de emergencias del 112 durante un "
+            },
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.hazard_kind"
+            },
+            {
+              "text": ". Hablas en español de España, siempre de usted, con calma, frases cortas y sin tecnicismos. Estás llamando a "
+            },
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.callee"
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "h2",
+          "children": [
+            {
+              "text": "Situación y encargo"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.situation_brief"
+            }
+          ]
+        },
+        {
+          "type": "h2",
+          "children": [
+            {
+              "text": "Datos en tiempo real del centro de coordinación"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "Son del momento exacto de esta llamada. Úsalos para responder y para recomendar:"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "indent": 1,
+          "children": [
+            {
+              "text": "Medios disponibles ahora: "
+            },
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.resources"
+            }
+          ],
+          "listStyleType": "disc"
+        },
+        {
+          "type": "p",
+          "indent": 1,
+          "children": [
+            {
+              "text": "Frente de fuego: "
+            },
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.fire_status"
+            }
+          ],
+          "listStyleType": "disc"
+        },
+        {
+          "type": "p",
+          "indent": 1,
+          "children": [
+            {
+              "text": "Carreteras: "
+            },
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.roads_status"
+            }
+          ],
+          "listStyleType": "disc"
+        },
+        {
+          "type": "p",
+          "indent": 1,
+          "children": [
+            {
+              "text": "Hacia ese punto: "
+            },
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.unit_eta"
+            }
+          ],
+          "listStyleType": "disc"
+        },
+        {
+          "type": "h2",
+          "children": [
+            {
+              "text": "Cómo recomendar"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.advice_rules"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "Si te preguntan «¿qué hacemos?», contesta con lo que hay: por dónde ir o salir (nunca por una carretera cortada), cuánto tiempo hay y qué unidad va de camino. Si te preguntan por medios, di los que aparecen arriba y en qué estado están; no añadas ninguno."
+            }
+          ]
+        },
+        {
+          "type": "h2",
+          "children": [
+            {
+              "text": "Qué tienes que averiguar"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.checklist"
+            }
+          ]
+        },
+        {
+          "type": "h2",
+          "children": [
+            {
+              "text": "Herramienta"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "Tienes "
+            },
+            {
+              "code": true,
+              "text": "reportar_situacion"
+            },
+            {
+              "text": " para anotar en el centro lo que te digan. Llámala en cuanto tengas cualquier dato, aunque sea parcial, y vuelve a llamarla si te dan más información después. Cuando responda, di a la persona exactamente el campo "
+            },
+            {
+              "code": true,
+              "text": "message"
+            },
+            {
+              "text": " que devuelve: es la respuesta del centro. No prometas ninguna unidad antes de que la herramienta lo diga."
+            }
+          ]
+        },
+        {
+          "type": "h2",
+          "children": [
+            {
+              "text": "Cierre"
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "No cuelgues sin haber usado "
+            },
+            {
+              "code": true,
+              "text": "reportar_situacion"
+            },
+            {
+              "text": " al menos una vez. Lo único que termina la llamada antes de eso es que cuelgue la otra persona."
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "Que tarden en contestar no es que no haya nadie: al otro lado hay alguien mirando un incendio. Espera en silencio, y si no te responden repite la pregunta al menos dos veces antes de darte por vencido. Si no entiendes lo que dicen, pide que te lo repitan: una mala línea o un ruido no son motivo para terminar la llamada, y menos a mitad de un dato. Y nunca le digas a nadie que llame al 112: el 112 eres tú."
+            }
+          ]
+        },
+        {
+          "type": "p",
+          "children": [
+            {
+              "text": "Si estás llamando a un medio (bomberos o ambulancia) la llamada es de treinta segundos: di lo que pasa, pregunta si pueden salir, anótalo y despídete."
+            }
+          ]
+        }
+      ],
+      "prompt_md": "Eres el coordinador del centro de emergencias del 112 durante un {{ index . \"01a0b68a-18ca-7d39-99eb-94f4887811fb.data.hazard_kind\" }}. Hablas en español de España, siempre de usted, con calma, frases cortas y sin tecnicismos. Estás llamando a {{ index . \"01a0b68a-18ca-7d39-99eb-94f4887811fb.data.callee\" }}.\n\n## Situación y encargo\n{{ index . \"01a0b68a-18ca-7d39-99eb-94f4887811fb.data.situation_brief\" }}\n\n## Datos en tiempo real del centro de coordinación\nSon del momento exacto de esta llamada. Úsalos para responder y para recomendar:\n- Medios disponibles ahora: {{ index . \"01a0b68a-18ca-7d39-99eb-94f4887811fb.data.resources\" }}\n- Frente de fuego: {{ index . \"01a0b68a-18ca-7d39-99eb-94f4887811fb.data.fire_status\" }}\n- Carreteras: {{ index . \"01a0b68a-18ca-7d39-99eb-94f4887811fb.data.roads_status\" }}\n- Hacia ese punto: {{ index . \"01a0b68a-18ca-7d39-99eb-94f4887811fb.data.unit_eta\" }}\n\n## Cómo recomendar\n{{ index . \"01a0b68a-18ca-7d39-99eb-94f4887811fb.data.advice_rules\" }}\n\nSi te preguntan «¿qué hacemos?», contesta con lo que hay: por dónde ir o salir (nunca por una carretera cortada), cuánto tiempo hay y qué unidad va de camino. Si te preguntan por medios, di los que aparecen arriba y en qué estado están; no añadas ninguno.\n\n## Qué tienes que averiguar\n{{ index . \"01a0b68a-18ca-7d39-99eb-94f4887811fb.data.checklist\" }}\n\n## Herramienta\nTienes `reportar_situacion` para anotar en el centro lo que te digan. Llámala en cuanto tengas cualquier dato, aunque sea parcial, y vuelve a llamarla si te dan más información después. Cuando responda, di a la persona exactamente el campo `message` que devuelve: es la respuesta del centro. No prometas ninguna unidad antes de que la herramienta lo diga.\n\n## Cierre\nNo cuelgues sin haber usado `reportar_situacion` al menos una vez. Lo único que termina la llamada antes de eso es que cuelgue la otra persona.\n\nQue tarden en contestar no es que no haya nadie: al otro lado hay alguien mirando un incendio. Espera en silencio, y si no te responden repite la pregunta al menos dos veces antes de darte por vencido. Si no entiendes lo que dicen, pide que te lo repitan: una mala línea o un ruido no son motivo para terminar la llamada, y menos a mitad de un dato. Y nunca le digas a nadie que llame al 112: el 112 eres tú.\n\nSi estás llamando a un medio (bomberos o ambulancia) la llamada es de treinta segundos: di lo que pasa, pregunta si pueden salir, anótalo y despídete.",
+      "inbound_prompt": null,
+      "inbound_prompt_md": null,
+      "initial_message": [
+        {
+          "type": "paragraph",
+          "children": [
+            {
+              "text": "Buenos días, le llamo del centro de coordinación de emergencias por el "
+            },
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.hazard_kind"
+            },
+            {
+              "text": ". Es una llamada importante sobre "
+            },
+            {
+              "type": "variable",
+              "children": [
+                {
+                  "text": ""
+                }
+              ],
+              "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+              "variable_id": "data.poi_name"
+            },
+            {
+              "text": ", ¿puede atenderme un momento?"
+            }
+          ]
+        }
+      ],
+      "initial_message_uninterruptible": false,
+      "receiving_initial_message": null,
+      "model": {
+        "type": "static",
+        "static": {
+          "id": "gpt-5.6-luna",
+          "name": "gpt-5.6-luna"
+        }
+      },
+      "use_custom_llm": false,
+      "custom_llm_credential": null
+    },
+    {
+      "id": "01a0bb0c-85d3-7a89-be44-64b5a5af6345",
+      "persistent_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+      "slug": "0b5n1xvg42lv",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b58d-7d6e-7511-b01b-334760374047",
+      "parent_id": null,
+      "version_id": "01a0bb0c-85cb-721c-868e-973bbe7bcc7c",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "action",
+      "name": "Receive external update",
+      "is_complete": true,
+      "node_output_id": "01a0bb0c-85d9-7827-a743-ffe4be85359e",
+      "node_generated_schema_id": "01a0bb0c-85d9-7827-a743-ffe4be85359e",
+      "sort_index": 0,
+      "timestamp": "2026-09-19T19:02:35.205Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {},
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": {
+        "id": "01a0bb0c-85d9-7827-a743-ffe4be85359e",
+        "run_id": null,
+        "node_id": "01a0bb0c-85d3-7a89-be44-64b5a5af6345",
+        "node_persistent_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+        "event_id": "01929b66-a335-7514-a159-cae2fe715286",
+        "session_id": null,
+        "chat_session_id": null,
+        "name": null,
+        "data": {
+          "data": {
+            "to": "+34600000000",
+            "role": "ambulance_queued",
+            "callee": "la dotación de la ambulancia",
+            "poi_id": "poi_pueblo_a",
+            "run_id": "run_ejemplo",
+            "task_id": "task_rescue_poi_pueblo_a",
+            "unit_id": "unit_ambulance",
+            "immobile": "2",
+            "metadata": {
+              "custom": {
+                "poi_id": "poi_pueblo_a",
+                "task_id": "task_rescue_poi_pueblo_a"
+              }
+            },
+            "poi_name": "Pueblo A",
+            "severity": "critical",
+            "unit_eta": "va la ambulancia y llega en unos 4 minutos",
+            "base_name": "Hospital comarcal",
+            "checklist": "Pregunta si podrán ir en cuanto terminen y en cuántos minutos.",
+            "resources": "2 camiones trabajando el fuego; 2 ambulancias de camino",
+            "route_name": "pista norte",
+            "fire_status": "el frente más cercano está a unos 140 metros y el viento lo empuja hacia ustedes",
+            "hazard_kind": "incendio forestal",
+            "advice_rules": "Todo lo que digas sobre medios, rutas y tiempos sale de los datos de esta llamada.",
+            "deadline_min": "9",
+            "must_go_next": "sí",
+            "roads_status": "no hay ninguna carretera cortada",
+            "incoming_people": "24",
+            "situation_brief": "Están todas las ambulancias ocupadas y hay alguien esperando al teléfono.",
+            "source_poi_name": "Pueblo B",
+            "waiting_call_id": "sess_vecino"
+          },
+          "query": {},
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "is_multiple": false,
+        "error": null,
+        "llm_model": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "input": null,
+        "status": "succeeded",
+        "scope": "",
+        "data_deleted": false,
+        "started_at": null,
+        "timestamp": "2026-09-19T14:56:21.619Z",
+        "updated_at": "2026-09-19T14:56:21.619Z",
+        "flat_data": {
+          "data.to": "+34600000000",
+          "data.role": "ambulance_queued",
+          "data.callee": "la dotación de la ambulancia",
+          "data.poi_id": "poi_pueblo_a",
+          "data.run_id": "run_ejemplo",
+          "data.task_id": "task_rescue_poi_pueblo_a",
+          "data.unit_id": "unit_ambulance",
+          "data.immobile": "2",
+          "data.metadata.custom.poi_id": "poi_pueblo_a",
+          "data.metadata.custom.task_id": "task_rescue_poi_pueblo_a",
+          "data.poi_name": "Pueblo A",
+          "data.severity": "critical",
+          "data.unit_eta": "va la ambulancia y llega en unos 4 minutos",
+          "data.base_name": "Hospital comarcal",
+          "data.checklist": "Pregunta si podrán ir en cuanto terminen y en cuántos minutos.",
+          "data.resources": "2 camiones trabajando el fuego; 2 ambulancias de camino",
+          "data.route_name": "pista norte",
+          "data.fire_status": "el frente más cercano está a unos 140 metros y el viento lo empuja hacia ustedes",
+          "data.hazard_kind": "incendio forestal",
+          "data.advice_rules": "Todo lo que digas sobre medios, rutas y tiempos sale de los datos de esta llamada.",
+          "data.deadline_min": "9",
+          "data.must_go_next": "sí",
+          "data.roads_status": "no hay ninguna carretera cortada",
+          "data.incoming_people": "24",
+          "data.situation_brief": "Están todas las ambulancias ocupadas y hay alguien esperando al teléfono.",
+          "data.source_poi_name": "Pueblo B",
+          "data.waiting_call_id": "sess_vecino",
+          "method": "POST",
+          "headers.Content-Type": "application/json"
+        }
+      },
+      "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+      "event_id": "01929b66-a335-7514-a159-cae2fe715286",
+      "trigger_interval": null,
+      "multi_event_behavior": "parallel",
+      "hidden_fields": [],
+      "is_response_node": false,
+      "integration": {
+        "id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "name": "Webhook",
+        "group": "built-in",
+        "icon": "/integrations/webhook.svg",
+        "description": "Connect your agents to external systems via REST APIs",
+        "docs_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "website_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "is_top": true,
+        "requires_credentials": false,
+        "agent_specific": false
+      },
+      "event": {
+        "id": "01929b66-a335-7514-a159-cae2fe715286",
+        "name": "Incoming hook",
+        "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "type": 0,
+        "description": "Listen to a new GET, POST or PUT request.",
+        "is_instant": true,
+        "has_cron_trigger": false,
+        "activity_name": "",
+        "task_queue": "",
+        "timeout_seconds": 10,
+        "retry_policy": {
+          "InitialInterval": 10,
+          "MaximumAttempts": 2,
+          "BackoffCoefficient": 2
+        },
+        "wait_for_signal_seconds": 0,
+        "key_for_sleep": null,
+        "coming_soon": false,
+        "metadata": {},
+        "delegated_category": null
+      }
+    },
+    {
+      "id": "01a0bb0c-85d4-76a7-b68a-8483ec54998f",
+      "persistent_id": "01a0b8da-3ec3-7322-9d06-cbc1cb53c0cc",
+      "slug": "tsocm2i6wb8u",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b58d-7d6e-7511-b01b-334760374047",
+      "parent_id": "01a0bb0c-85d6-73dc-b081-e8cf58eae6b9",
+      "version_id": "01a0bb0c-85cb-721c-868e-973bbe7bcc7c",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "action",
+      "name": "POST call end",
+      "is_complete": true,
+      "node_output_id": "01a0bb0c-85d9-7351-a585-951e9cdcbf54",
+      "node_generated_schema_id": "01a0bb0c-85d9-7351-a585-951e9cdcbf54",
+      "sort_index": 0,
+      "timestamp": "2026-09-19T19:02:35.205Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {
+        "url": [
+          {
+            "type": "paragraph",
+            "children": [
+              {
+                "text": ""
+              },
+              {
+                "type": "variable",
+                "children": [
+                  {
+                    "text": ""
+                  }
+                ],
+                "group_id": "use_case_variables",
+                "variable_id": "VELA_URL"
+              },
+              {
+                "text": "/webhooks/happyrobot/call"
+              }
+            ]
+          }
+        ],
+        "params": [],
+        "headers": [
+          {
+            "key": "X-Vela-Token",
+            "value": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "text": ""
+                  },
+                  {
+                    "type": "variable",
+                    "children": [
+                      {
+                        "text": ""
+                      }
+                    ],
+                    "group_id": "use_case_variables",
+                    "variable_id": "VELA_TOKEN"
+                  },
+                  {
+                    "text": ""
+                  }
+                ]
+              }
+            ],
+            "enabled": true
+          }
+        ],
+        "authType": "none",
+        "ignore5XX": true,
+        "responseHeaders": [],
+        "contentType": "application/json",
+        "xssProtection": true,
+        "webhookSchemaVersion": 2,
+        "body": {
+          "schemaVersion": 2,
+          "contentType": "application/json",
+          "raw": "{\"type\": \"end\", \"session_id\": \"{{$var:01a0b8d9-d18f-70c2-a4cd-b3f661e5a091.session_id}}\", \"run_id\": \"{{$var:current.run_id}}\", \"trigger_run_id\": \"{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.run_id}}\", \"task_id\": \"{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.task_id}}\", \"to\": \"{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.to}}\", \"direction\": \"outbound\", \"status\": \"{{$var:01a0b8d9-d18f-70c2-a4cd-b3f661e5a091.status}}\", \"transcript\": \"{{$var:01a0b8d9-d18f-70c2-a4cd-b3f661e5a091.transcript}}\"}"
+        }
+      },
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": {
+        "id": "01a0bb0c-85d9-7351-a585-951e9cdcbf54",
+        "run_id": null,
+        "node_id": "01a0bb0c-85d4-76a7-b68a-8483ec54998f",
+        "node_persistent_id": "01a0b8da-3ec3-7322-9d06-cbc1cb53c0cc",
+        "event_id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+        "session_id": null,
+        "chat_session_id": null,
+        "name": null,
+        "data": {
+          "error": "{\"detail\":\"session_id\"}"
+        },
+        "is_multiple": false,
+        "error": null,
+        "llm_model": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "input": null,
+        "status": "succeeded",
+        "scope": "",
+        "data_deleted": false,
+        "started_at": null,
+        "timestamp": "2026-09-19T14:56:21.981Z",
+        "updated_at": "2026-09-19T14:56:21.981Z",
+        "flat_data": {
+          "error": "{\"detail\":\"session_id\"}"
+        }
+      },
+      "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+      "event_id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+      "trigger_interval": null,
+      "multi_event_behavior": "group",
+      "hidden_fields": [],
+      "is_response_node": false,
+      "integration": {
+        "id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "name": "Webhook",
+        "group": "built-in",
+        "icon": "/integrations/webhook.svg",
+        "description": "Connect your agents to external systems via REST APIs",
+        "docs_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "website_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "is_top": true,
+        "requires_credentials": false,
+        "agent_specific": false
+      },
+      "event": {
+        "id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+        "name": "POST",
+        "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "type": 1,
+        "description": "Execute  POST request to an endpoint.",
+        "is_instant": false,
+        "has_cron_trigger": false,
+        "activity_name": "WebhookPost",
+        "task_queue": "go-worker",
+        "timeout_seconds": 300,
+        "retry_policy": {
+          "InitialInterval": 10,
+          "MaximumAttempts": 2,
+          "BackoffCoefficient": 2
+        },
+        "wait_for_signal_seconds": 0,
+        "key_for_sleep": null,
+        "coming_soon": false,
+        "metadata": {},
+        "delegated_category": null
+      }
+    },
+    {
+      "id": "01a0bb0c-85d6-73dc-b081-e8cf58eae6b9",
+      "persistent_id": "01a0b8d9-d18f-70c2-a4cd-b3f661e5a091",
+      "slug": "u3ep8dib5ch5",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b58d-7d6e-7511-b01b-334760374047",
+      "parent_id": "01a0bb0c-85d3-7a89-be44-64b5a5af6345",
+      "version_id": "01a0bb0c-85cb-721c-868e-973bbe7bcc7c",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "action",
+      "name": "Coordinador 112",
+      "is_complete": true,
+      "node_output_id": "01a0bb0c-85d9-7de6-afe5-96ea237dc08c",
+      "node_generated_schema_id": "01a0bb0c-85d9-7de6-afe5-96ea237dc08c",
+      "sort_index": 0,
+      "timestamp": "2026-09-19T19:02:35.205Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {
+        "to": [
+          {
+            "type": "paragraph",
+            "children": [
+              {
+                "text": ""
+              },
+              {
+                "type": "variable",
+                "children": [
+                  {
+                    "text": ""
+                  }
+                ],
+                "group_id": "01a0b68a-18ca-7d39-99eb-94f4887811fb",
+                "variable_id": "data.to"
+              },
+              {
+                "text": ""
+              }
+            ]
+          }
+        ],
+        "from_number": {
+          "type": "static",
+          "static": {
+            "id": "+14845581911",
+            "name": "+14845581911"
+          }
+        },
+        "agent": {
+          "name": [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "Coordinador 112"
+                }
+              ]
+            }
+          ],
+          "languages": [
+            {
+              "type": "static",
+              "static": {
+                "id": "es",
+                "name": "Spanish"
+              }
+            }
+          ],
+          "voices": [
+            {
+              "type": "static",
+              "static": {
+                "id": "idlhh2ukeldm",
+                "name": "Daniel HR",
+                "settings": {
+                  "speed": 0.95
+                }
+              }
+            }
+          ]
+        },
+        "multi_lingual": false,
+        "record": true,
+        "recording_style": "ai_recording",
+        "recording_language": {
+          "type": "auto"
+        },
+        "background": {
+          "type": "static",
+          "static": {
+            "id": "https://storage.googleapis.com/happyrobot-public/backgrounds/call-center.8k.wav",
+            "name": "Call center",
+            "description": "https://storage.googleapis.com/happyrobot-public/backgrounds/call-center.8k.wav"
+          }
+        },
+        "voice_mail": "hangup",
+        "stay_silent": true,
+        "max_call_duration": 180,
+        "business_hours_setting_name": "default",
+        "out_of_business_hours_action": "sleep",
+        "transcription_context": [
+          {
+            "type": "paragraph",
+            "children": [
+              {
+                "text": "Llamada del centro de coordinación de emergencias a un vecino durante un incendio forestal. Se dicta una orden de evacuación con un pueblo, una ruta (pista norte o sur) y un plazo en minutos."
+              }
+            ]
+          }
+        ],
+        "keyterms": [
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "Pueblo A"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "Pueblo B"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "pista del norte"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "pista del sur"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "refugio"
+                }
+              ]
+            }
+          ],
+          [
+            {
+              "type": "paragraph",
+              "children": [
+                {
+                  "text": "hospital"
+                }
+              ]
+            }
+          ]
+        ],
+        "gracefully_handle_invalid_phone": true,
+        "agentSignalsConfig": {
+          "enabled": true,
+          "shouldRespondOnSignal": true,
+          "customTopics": []
+        }
+      },
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": {
+        "id": "01a0bb0c-85d9-7de6-afe5-96ea237dc08c",
+        "run_id": null,
+        "node_id": "01a0bb0c-85d6-73dc-b081-e8cf58eae6b9",
+        "node_persistent_id": "01a0b8d9-d18f-70c2-a4cd-b3f661e5a091",
+        "event_id": "0192e5dc-090a-7f57-87a0-76308ed6ef28",
+        "session_id": null,
+        "chat_session_id": null,
+        "name": null,
+        "data": {
+          "to": "+34600000000",
+          "now": {
+            "ts": 1789829781,
+            "day": 19,
+            "iso": "2026-09-19T09:56:21-05:00",
+            "year": 2026,
+            "month": 9,
+            "friendly": "Saturday, September 19, 2026 09:56:21 -0500"
+          },
+          "agent": {
+            "name": "Coordinador 112",
+            "voice": {
+              "id": "idlhh2ukeldm",
+              "name": "Daniel HR",
+              "language": "es-ES",
+              "cloned_language_accents": [
+                {
+                  "locale": "es-ES",
+                  "language": "es",
+                  "accent_key": "es-es",
+                  "accent_label": "Spanish (Spain)"
+                }
+              ]
+            },
+            "voices": [
+              {
+                "id": "idlhh2ukeldm",
+                "name": "Daniel HR",
+                "language": "es-ES",
+                "cloned_language_accents": [
+                  {
+                    "locale": "es-ES",
+                    "language": "es",
+                    "accent_key": "es-es",
+                    "accent_label": "Spanish (Spain)"
+                  }
+                ]
+              }
+            ],
+            "languages": [
+              "es"
+            ]
+          },
+          "error": "",
+          "number": "+14845581911",
+          "record": true,
+          "redact": null,
+          "status": "in-progress",
+          "duration": 0,
+          "is_retry": false,
+          "keyterms": "[\"Pueblo A\",\"Pueblo B\",\"pista del norte\",\"pista del sur\",\"refugio\",\"hospital\"]",
+          "numerals": true,
+          "sip_code": 0,
+          "room_name": "359d2ea3-8a94-40ad-ab8d-fcfc5a8030a7_test_1",
+          "sentiment": "",
+          "background": "https://storage.googleapis.com/happyrobot-public/backgrounds/call-center.8k.wav",
+          "contact_id": "",
+          "session_id": "c74dfab8-a6b8-4a6f-8166-9e70404e6c54",
+          "sip_status": "",
+          "transcript": "[]",
+          "voice_mail": "hangup",
+          "reason_code": "no_error",
+          "stay_silent": true,
+          "transcriber": "legacy",
+          "to_extension": "",
+          "tools_result": [],
+          "multi_lingual": false,
+          "retry_attempt": 0,
+          "voice_notices": [],
+          "call_end_event": "unknown",
+          "failure_reason": "",
+          "num_tool_calls": 0,
+          "num_user_turns": 0,
+          "p70_latency_ms": 0,
+          "p90_latency_ms": 0,
+          "num_total_turns": 0,
+          "recording_style": "ai_recording",
+          "keyterms_dropped": [],
+          "transcriber_tier": "",
+          "max_call_duration": 180,
+          "phone_tree_prompt": "",
+          "voice_mail_prompt": "",
+          "broker_app_load_id": "",
+          "call_end_initiator": "unknown",
+          "recording_language": "auto",
+          "verified_caller_id": "",
+          "enable_denoised_stt": false,
+          "is_external_account": false,
+          "num_assistant_turns": 0,
+          "disable_time_fillers": false,
+          "keyterms_drop_reason": "",
+          "navigate_phone_trees": false,
+          "caller_audio_received": false,
+          "contact_intel_blocked": false,
+          "fail_run_on_sip_error": false,
+          "messages_per_turn_avg": 0,
+          "number_classification": "valid",
+          "real_time_classifiers": null,
+          "transcription_context": "Llamada del centro de coordinación de emergencias a un vecino durante un incendio forestal. Se dicta una orden de evacuación con un pueblo, una ruta (pista norte o sur) y un plazo en minutos.",
+          "keyterms_dropped_count": 0,
+          "play_recording_message": false,
+          "num_user_filler_messages": 0,
+          "user_filler_message_ratio": 0,
+          "disable_stay_silent_filler": false,
+          "num_assistant_cut_messages": 0,
+          "user_messages_per_turn_avg": 0,
+          "assistant_cut_message_ratio": 0,
+          "max_duration_transfer_number": "",
+          "out_of_business_hours_blocked": false,
+          "disable_keypress_transcription": false,
+          "real_time_sentiment_classifier": false,
+          "assistant_messages_per_turn_avg": 0,
+          "contact_intelligence_collection_enabled": false
+        },
+        "is_multiple": false,
+        "error": null,
+        "llm_model": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "input": null,
+        "status": "succeeded",
+        "scope": "",
+        "data_deleted": false,
+        "started_at": null,
+        "timestamp": "2026-09-19T14:56:21.970Z",
+        "updated_at": "2026-09-19T14:56:21.970Z",
+        "flat_data": {
+          "to": "+34600000000",
+          "now.ts": 1789829781,
+          "now.day": 19,
+          "now.iso": "2026-09-19T09:56:21-05:00",
+          "now.year": 2026,
+          "now.month": 9,
+          "now.friendly": "Saturday, September 19, 2026 09:56:21 -0500",
+          "agent.name": "Coordinador 112",
+          "agent.voice.id": "idlhh2ukeldm",
+          "agent.voice.name": "Daniel HR",
+          "agent.voice.language": "es-ES",
+          "agent.voice.cloned_language_accents.0.locale": "es-ES",
+          "agent.voice.cloned_language_accents.0.language": "es",
+          "agent.voice.cloned_language_accents.0.accent_key": "es-es",
+          "agent.voice.cloned_language_accents.0.accent_label": "Spanish (Spain)",
+          "agent.voice.cloned_language_accents": "[{\"locale\":\"es-ES\",\"language\":\"es\",\"accent_key\":\"es-es\",\"accent_label\":\"Spanish (Spain)\"}]",
+          "agent.voices.0.id": "idlhh2ukeldm",
+          "agent.voices.0.name": "Daniel HR",
+          "agent.voices.0.language": "es-ES",
+          "agent.voices.0.cloned_language_accents.0.locale": "es-ES",
+          "agent.voices.0.cloned_language_accents.0.language": "es",
+          "agent.voices.0.cloned_language_accents.0.accent_key": "es-es",
+          "agent.voices.0.cloned_language_accents.0.accent_label": "Spanish (Spain)",
+          "agent.voices.0.cloned_language_accents": "[{\"locale\":\"es-ES\",\"language\":\"es\",\"accent_key\":\"es-es\",\"accent_label\":\"Spanish (Spain)\"}]",
+          "agent.voices": "[{\"id\":\"idlhh2ukeldm\",\"name\":\"Daniel HR\",\"language\":\"es-ES\",\"cloned_language_accents\":[{\"locale\":\"es-ES\",\"language\":\"es\",\"accent_key\":\"es-es\",\"accent_label\":\"Spanish (Spain)\"}]}]",
+          "agent.languages.0": "es",
+          "agent.languages": "[\"es\"]",
+          "error": "",
+          "number": "+14845581911",
+          "record": true,
+          "redact": null,
+          "status": "in-progress",
+          "duration": 0,
+          "is_retry": false,
+          "keyterms": "[\"Pueblo A\",\"Pueblo B\",\"pista del norte\",\"pista del sur\",\"refugio\",\"hospital\"]",
+          "numerals": true,
+          "sip_code": 0,
+          "room_name": "359d2ea3-8a94-40ad-ab8d-fcfc5a8030a7_test_1",
+          "sentiment": "",
+          "background": "https://storage.googleapis.com/happyrobot-public/backgrounds/call-center.8k.wav",
+          "contact_id": "",
+          "session_id": "c74dfab8-a6b8-4a6f-8166-9e70404e6c54",
+          "sip_status": "",
+          "transcript": "[]",
+          "voice_mail": "hangup",
+          "reason_code": "no_error",
+          "stay_silent": true,
+          "transcriber": "legacy",
+          "to_extension": "",
+          "tools_result": "[]",
+          "multi_lingual": false,
+          "retry_attempt": 0,
+          "voice_notices": "[]",
+          "call_end_event": "unknown",
+          "failure_reason": "",
+          "num_tool_calls": 0,
+          "num_user_turns": 0,
+          "p70_latency_ms": 0,
+          "p90_latency_ms": 0,
+          "num_total_turns": 0,
+          "recording_style": "ai_recording",
+          "keyterms_dropped": "[]",
+          "transcriber_tier": "",
+          "max_call_duration": 180,
+          "phone_tree_prompt": "",
+          "voice_mail_prompt": "",
+          "broker_app_load_id": "",
+          "call_end_initiator": "unknown",
+          "recording_language": "auto",
+          "verified_caller_id": "",
+          "enable_denoised_stt": false,
+          "is_external_account": false,
+          "num_assistant_turns": 0,
+          "disable_time_fillers": false,
+          "keyterms_drop_reason": "",
+          "navigate_phone_trees": false,
+          "caller_audio_received": false,
+          "contact_intel_blocked": false,
+          "fail_run_on_sip_error": false,
+          "messages_per_turn_avg": 0,
+          "number_classification": "valid",
+          "real_time_classifiers": null,
+          "transcription_context": "Llamada del centro de coordinación de emergencias a un vecino durante un incendio forestal. Se dicta una orden de evacuación con un pueblo, una ruta (pista norte o sur) y un plazo en minutos.",
+          "keyterms_dropped_count": 0,
+          "play_recording_message": false,
+          "num_user_filler_messages": 0,
+          "user_filler_message_ratio": 0,
+          "disable_stay_silent_filler": false,
+          "num_assistant_cut_messages": 0,
+          "user_messages_per_turn_avg": 0,
+          "assistant_cut_message_ratio": 0,
+          "max_duration_transfer_number": "",
+          "out_of_business_hours_blocked": false,
+          "disable_keypress_transcription": false,
+          "real_time_sentiment_classifier": false,
+          "assistant_messages_per_turn_avg": 0,
+          "contact_intelligence_collection_enabled": false
+        }
+      },
+      "integration_id": "0192e48a-81d8-71cb-93dc-efd8ad63d86b",
+      "event_id": "0192e5dc-090a-7f57-87a0-76308ed6ef28",
+      "trigger_interval": null,
+      "multi_event_behavior": "parallel",
+      "hidden_fields": [],
+      "is_response_node": false,
+      "integration": {
+        "id": "0192e48a-81d8-71cb-93dc-efd8ad63d86b",
+        "name": "AI Agent",
+        "group": "built-in",
+        "icon": "/integrations/agents.svg",
+        "description": "Create AI Agents",
+        "docs_url": "https://docs.happyrobot.ai/integrations/phone",
+        "website_url": "https://docs.happyrobot.ai/integrations/phone",
+        "is_top": true,
+        "requires_credentials": false,
+        "agent_specific": false
+      },
+      "event": {
+        "id": "0192e5dc-090a-7f57-87a0-76308ed6ef28",
+        "name": "Outbound Voice Agent",
+        "integration_id": "0192e48a-81d8-71cb-93dc-efd8ad63d86b",
+        "type": 1,
+        "description": "Create outbound call",
+        "is_instant": false,
+        "has_cron_trigger": false,
+        "activity_name": "OutboundVoiceAgent",
+        "task_queue": "go-worker",
+        "timeout_seconds": 20,
+        "retry_policy": {
+          "InitialInterval": 10,
+          "MaximumAttempts": 2,
+          "BackoffCoefficient": 2
+        },
+        "wait_for_signal_seconds": 3600,
+        "key_for_sleep": null,
+        "coming_soon": false,
+        "metadata": {},
+        "delegated_category": null
+      }
+    },
+    {
+      "id": "01a0bb0c-85d7-7acb-b9c8-91cbbd9c93ff",
+      "persistent_id": "01a0ba02-0653-7164-ad9d-d63c82ef5296",
+      "slug": "vv3ixj4k8nzn",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b58d-7d6e-7511-b01b-334760374047",
+      "parent_id": "01a0bb0c-85d8-7001-bfa3-c6d5d830eb3c",
+      "version_id": "01a0bb0c-85cb-721c-868e-973bbe7bcc7c",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "action",
+      "name": "POST village",
+      "is_complete": true,
+      "node_output_id": "01a0bb0c-85da-7056-b2f7-e285832b6dd1",
+      "node_generated_schema_id": "01a0bb0c-85da-7056-b2f7-e285832b6dd1",
+      "sort_index": 0,
+      "timestamp": "2026-09-19T19:02:35.205Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {
+        "url": [
+          {
+            "type": "paragraph",
+            "children": [
+              {
+                "text": ""
+              },
+              {
+                "type": "variable",
+                "children": [
+                  {
+                    "text": ""
+                  }
+                ],
+                "group_id": "use_case_variables",
+                "variable_id": "VELA_URL"
+              },
+              {
+                "text": "/webhooks/happyrobot/village"
+              }
+            ]
+          }
+        ],
+        "params": [],
+        "headers": [
+          {
+            "key": "X-Vela-Token",
+            "value": [
+              {
+                "type": "paragraph",
+                "children": [
+                  {
+                    "text": ""
+                  },
+                  {
+                    "type": "variable",
+                    "children": [
+                      {
+                        "text": ""
+                      }
+                    ],
+                    "group_id": "use_case_variables",
+                    "variable_id": "VELA_TOKEN"
+                  },
+                  {
+                    "text": ""
+                  }
+                ]
+              }
+            ],
+            "enabled": true
+          }
+        ],
+        "authType": "none",
+        "ignore5XX": true,
+        "responseHeaders": [],
+        "contentType": "application/json",
+        "xssProtection": true,
+        "webhookSchemaVersion": 2,
+        "body": {
+          "schemaVersion": 2,
+          "contentType": "application/json",
+          "raw": "{\"call_id\": \"{{$var:current.run_id}}\", \"poi_id\": \"{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.poi_id}}\", \"unit_id\": \"{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.unit_id}}\", \"role\": \"{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.role}}\", \"task_id\": \"{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.task_id}}\", \"must_go_next\": \"{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.must_go_next}}\", \"waiting_call_id\": \"{{$var:01a0b68a-18ca-7d39-99eb-94f4887811fb.data.waiting_call_id}}\", \"params\": {\"headcount\": \"{{$var:01a0ba01-bd3a-74df-971f-2226232243a1.headcount}}\", \"people_immobile\": \"{{$var:01a0ba01-bd3a-74df-971f-2226232243a1.people_immobile}}\", \"injuries\": \"{{$var:01a0ba01-bd3a-74df-971f-2226232243a1.injuries}}\", \"confirmed_order\": \"{{$var:01a0ba01-bd3a-74df-971f-2226232243a1.confirmed_order}}\", \"capacity_available\": \"{{$var:01a0ba01-bd3a-74df-971f-2226232243a1.capacity_available}}\", \"available_after_min\": \"{{$var:01a0ba01-bd3a-74df-971f-2226232243a1.available_after_min}}\", \"notes\": \"{{$var:01a0ba01-bd3a-74df-971f-2226232243a1.notes}}\"}}"
+        }
+      },
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": {
+        "id": "01a0bb0c-85da-7056-b2f7-e285832b6dd1",
+        "run_id": null,
+        "node_id": "01a0bb0c-85d7-7acb-b9c8-91cbbd9c93ff",
+        "node_persistent_id": "01a0ba02-0653-7164-ad9d-d63c82ef5296",
+        "event_id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+        "session_id": null,
+        "chat_session_id": null,
+        "name": null,
+        "data": {
+          "ok": true,
+          "message": "Entendido, queda anotado y se lo digo ahora mismo a quien está esperando. Gracias.",
+          "facts_published": 0,
+          "ambulance_dispatched": false
+        },
+        "is_multiple": false,
+        "error": null,
+        "llm_model": null,
+        "input_tokens": null,
+        "output_tokens": null,
+        "cached_input_tokens": null,
+        "input": null,
+        "status": "succeeded",
+        "scope": "",
+        "data_deleted": false,
+        "started_at": null,
+        "timestamp": "2026-09-19T14:56:40.488Z",
+        "updated_at": "2026-09-19T14:56:40.488Z",
+        "flat_data": {
+          "ok": true,
+          "message": "Entendido, queda anotado y se lo digo ahora mismo a quien está esperando. Gracias.",
+          "facts_published": 0,
+          "ambulance_dispatched": false
+        }
+      },
+      "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+      "event_id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+      "trigger_interval": null,
+      "multi_event_behavior": "group",
+      "hidden_fields": [
+        "ok"
+      ],
+      "is_response_node": false,
+      "integration": {
+        "id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "name": "Webhook",
+        "group": "built-in",
+        "icon": "/integrations/webhook.svg",
+        "description": "Connect your agents to external systems via REST APIs",
+        "docs_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "website_url": "https://docs.happyrobot.ai/integrations/webhook",
+        "is_top": true,
+        "requires_credentials": false,
+        "agent_specific": false
+      },
+      "event": {
+        "id": "01926f2b-2973-7ebf-ada1-e984251e27ec",
+        "name": "POST",
+        "integration_id": "01926a93-064a-7a00-81b2-8ab78d5907e0",
+        "type": 1,
+        "description": "Execute  POST request to an endpoint.",
+        "is_instant": false,
+        "has_cron_trigger": false,
+        "activity_name": "WebhookPost",
+        "task_queue": "go-worker",
+        "timeout_seconds": 300,
+        "retry_policy": {
+          "InitialInterval": 10,
+          "MaximumAttempts": 2,
+          "BackoffCoefficient": 2
+        },
+        "wait_for_signal_seconds": 0,
+        "key_for_sleep": null,
+        "coming_soon": false,
+        "metadata": {},
+        "delegated_category": null
+      }
+    },
+    {
+      "id": "01a0bb0c-85d8-7001-bfa3-c6d5d830eb3c",
+      "persistent_id": "01a0ba01-bd3a-74df-971f-2226232243a1",
+      "slug": "9zg8tvmccxmi",
+      "org_id": "01a0b58d-49f7-7778-95f5-531371c956d0",
+      "use_case_id": "01a0b58d-7d6e-7511-b01b-334760374047",
+      "parent_id": "01a0bb0c-85d6-73dc-b081-e8cf58eae6b9",
+      "version_id": "01a0bb0c-85cb-721c-868e-973bbe7bcc7c",
+      "component_version_id": null,
+      "component_implementation_id": null,
+      "component_source_persistent_id": null,
+      "type": "tool",
+      "name": "reportar_situacion",
+      "is_complete": true,
+      "node_output_id": null,
+      "node_generated_schema_id": null,
+      "sort_index": 0,
+      "timestamp": "2026-09-19T19:02:35.205Z",
+      "is_deleted": false,
+      "is_deactivated": false,
+      "configuration": {
+        "tool_call_result_ack": "ack"
+      },
+      "staging_configuration": {},
+      "development_configuration": {},
+      "retry_configuration": {},
+      "outbound_retry_configuration": {},
+      "failure_configuration": {},
+      "node_component_id": null,
+      "node_component_input_mapping": [],
+      "node_output": null,
+      "function": {
+        "description": [
+          {
+            "type": "p",
+            "children": [
+              {
+                "text": "Registra en el centro de coordinación lo que te dice el responsable del pueblo: cuánta gente hay, heridos, personas que no pueden moverse solas, si acepta la orden de evacuación, o si pueden acoger a gente que llegue. Úsala en cuanto tengas cualquiera de esos datos, aunque sea parcial. Devuelve la respuesta del centro, que ya dice si sale una ambulancia."
+              }
+            ]
+          }
+        ],
+        "message": {
+          "type": "ai",
+          "description": [
+            {
+              "type": "p",
+              "children": [
+                {
+                  "text": "Di que lo estás anotando en el centro, en una frase corta"
+                }
+              ]
+            }
+          ],
+          "example": ""
+        },
+        "parameters": [
+          {
+            "name": "headcount",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "cuántas personas hay en el pueblo; solo el número"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "people_immobile",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "cuántas personas no pueden moverse por su cuenta; solo el número"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "injuries",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "cuántos heridos hay; solo el número"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "confirmed_order",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "true si acepta la orden de evacuación, false si la rechaza"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "capacity_available",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "solo en la llamada al pueblo vecino: true si pueden acoger gente, false si no"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "notes",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "cualquier otra cosa relevante que diga, en una frase"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          },
+          {
+            "name": "available_after_min",
+            "description": [
+              {
+                "type": "p",
+                "children": [
+                  {
+                    "text": "solo si están ocupados: en cuántos minutos estarán libres; solo el número"
+                  }
+                ]
+              }
+            ],
+            "required": false
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from_node": "01a0bb0c-85d3-7a89-be44-64b5a5af6345",
+      "to_node": "01a0bb0c-85d6-73dc-b081-e8cf58eae6b9",
+      "created_at": "2026-09-19T19:02:35.205Z",
+      "updated_at": "2026-09-19T19:02:35.205Z",
+      "deleted_at": null
+    },
+    {
+      "from_node": "01a0bb0c-85d6-73dc-b081-e8cf58eae6b9",
+      "to_node": "01a0bb0c-85d4-76a7-b68a-8483ec54998f",
+      "created_at": "2026-09-19T19:02:35.205Z",
+      "updated_at": "2026-09-19T19:02:35.205Z",
+      "deleted_at": null
+    },
+    {
+      "from_node": "01a0bb0c-85d6-73dc-b081-e8cf58eae6b9",
+      "to_node": "01a0bb0c-85d7-7705-b6c7-e2cb1f8006d5",
+      "created_at": "2026-09-19T19:02:35.205Z",
+      "updated_at": "2026-09-19T19:02:35.205Z",
+      "deleted_at": null
+    },
+    {
+      "from_node": "01a0bb0c-85d6-73dc-b081-e8cf58eae6b9",
+      "to_node": "01a0bb0c-85d8-7001-bfa3-c6d5d830eb3c",
+      "created_at": "2026-09-19T19:02:35.205Z",
+      "updated_at": "2026-09-19T19:02:35.205Z",
+      "deleted_at": null
+    },
+    {
+      "from_node": "01a0bb0c-85d8-7001-bfa3-c6d5d830eb3c",
+      "to_node": "01a0bb0c-85d7-7acb-b9c8-91cbbd9c93ff",
+      "created_at": "2026-09-19T19:02:35.205Z",
+      "updated_at": "2026-09-19T19:02:35.205Z",
+      "deleted_at": null
+    }
+  ],
+  "workflowVersion": 3
+}

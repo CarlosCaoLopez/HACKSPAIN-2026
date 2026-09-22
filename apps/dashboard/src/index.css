@@ -58,6 +58,28 @@
   --color-vela-water: #0284c7;
   --color-vela-alert: #fbbf24;
 
+  /* ---- Mapa 2D de la Simulación (revividos de bcc4b5a) ---------------------------
+     Los borró SPEC-008 al cambiar el mapa esquemático por el de OpenStreetMap. La
+     vista Simulación 2D vuelve a dibujar SVG, así que vuelven. Siguen cumpliendo
+     REQ-200: cada uno con un trabajo, y ninguno es `vela-replan`.
+
+     Estos valores son los de REQ-230, pensados para pintar sobre una imagen de
+     satélite OSCURA. El mapa de la Simulación 2D se pinta en claro y los redefine
+     para sí mismo en `.vela-map-light`, más abajo. */
+  --color-vela-glow: #fb923c;
+  --color-vela-smoke: rgba(226, 232, 240, 0.55);
+  --color-vela-gust: rgba(255, 255, 255, 0.5);
+  --color-vela-marker-edge: #15181d;
+  --color-vela-ground: #2b3628;
+  --color-vela-road: #d1d5db;
+  --color-vela-road-shadow: rgba(10, 12, 10, 0.55);
+
+  /* Adónde va una unidad, y nada más. Token propio y no `vela-fire` porque el
+     destino de una tarea de extinción está pegado al fuego y un punto naranja sobre
+     celda naranja no se ve; y no `vela-replan`, que es del banner. Solo se pinta
+     como punto o aro pequeño, nunca como banda ni como texto de cabecera. */
+  --color-vela-target: #dc2626;
+
   --font-sans: 'DM Sans', system-ui, sans-serif;
   --font-mono: var(--font-sans);
 }
@@ -515,4 +537,184 @@ body {
    minimalista). Sin esto las teselas estándar de OpenStreetMap compiten con los iconos. */
 .leaflet-tile-pane {
   filter: grayscale(0.85) contrast(0.88) brightness(1.08);
+}
+
+
+/* ---- Fenómenos del mapa 2D (revividos de bcc4b5a, SPEC-006 REQ-219…223) ---------------
+   Todo es CSS sobre SVG: sin bucle `requestAnimationFrame` en React ni `setState` por
+   fotograma (REQ-227). Cada elemento lleva su desfase en `animation-delay` para que no
+   laten todos a la vez. */
+.vela-flame {
+  animation: vela-flicker 1.4s ease-in-out infinite;
+}
+@keyframes vela-flicker {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  45% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.6;
+  }
+}
+
+.vela-smoke {
+  /* Sin `fill-box` el `scale` se aplicaría desde el origen del SVG y el penacho saldría
+     disparado hacia la esquina en vez de crecer sobre su celda. */
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: vela-smoke 6s ease-out infinite;
+}
+@keyframes vela-smoke {
+  from {
+    opacity: 0.7;
+    transform: translate(0, 0) scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--dx), var(--dz)) scale(1.8);
+  }
+}
+
+.vela-gust {
+  animation: vela-gust 3.2s linear infinite;
+}
+@keyframes vela-gust {
+  from {
+    opacity: 0;
+    transform: translate(0, 0);
+  }
+  20%,
+  80% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translate(var(--dx), var(--dz));
+  }
+}
+
+.vela-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: vela-pulse 1.8s ease-out infinite;
+}
+@keyframes vela-pulse {
+  from {
+    opacity: 0.9;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+.vela-ripple {
+  animation: vela-ripple 4s ease-in-out infinite;
+}
+@keyframes vela-ripple {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+/* El viento gira con una transición corta (REQ-222). */
+.vela-wind {
+  transition: transform 600ms ease-out;
+}
+
+/* Movimiento de las unidades. React solo repinta una vez por tick de simulación; entre
+   dos ticks interpola el navegador.
+
+   La duración es una variable y no el segundo fijo que tenía en SPEC-006: aquí el tick
+   de pared cambia con el multiplicador de velocidad, y a ×4 (250 ms) una transición de
+   un segundo dejaría al camión permanentemente tres cuartos de segundo por detrás. */
+.vela-unit {
+  transition: transform var(--vela-tick, 1s) linear;
+}
+
+/* Plan nuevo: las flechas entran con un fundido en vez de morfear el `path` (la `d` no
+   es animable de forma fiable). Es el clímax visual y tiene que leerse desde el fondo
+   de la sala. */
+.vela-plan-enter {
+  animation: vela-plan-in 600ms ease-out;
+}
+@keyframes vela-plan-in {
+  from {
+    opacity: 0;
+    stroke-width: 3;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* El punto rojo del destino cuando su fila está señalada. */
+.vela-target-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: vela-pulse 1.6s ease-out infinite;
+}
+
+/* Una ruta ordenada que todavía NO se recorre: la dotación sigue al teléfono. */
+.vela-pending {
+  stroke-dasharray: 4 3;
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vela-unit,
+  .vela-flame,
+  .vela-smoke,
+  .vela-gust,
+  .vela-pulse,
+  .vela-ripple,
+  .vela-wind,
+  .vela-plan-enter,
+  .vela-target-pulse {
+    transition: none;
+    animation: none;
+  }
+}
+
+
+/* ---- El mapa de la Simulación 2D, en claro ------------------------------------------
+   El resto del producto es tema claro (SPEC-006) y este mapa era la única mancha oscura
+   de la pantalla: un rectángulo verde casi negro dentro de un panel blanco.
+
+   Se redefinen aquí y no en `@theme` a propósito. La rampa de peligro y los colores de
+   terreno son de REQ-230 y están calibrados para pintar sobre satélite oscuro, que es lo
+   que hace —o hará— la vista Mapa; cambiarlos en el tema afectaría a un consumidor que
+   hoy no los usa pero para el que se escribieron. Las variables CSS heredan, así que
+   basta con redeclararlas en el propio `<svg>`: la vista Mapa no se entera, y «este mapa
+   es el claro» queda dicho en un sitio y con nombre.
+
+   Los valores no son a ojo, son de medir contraste contra el terreno #e7ece1:
+   carretera 4,98:1 · texto 14,8:1 · celda quemada 4,33:1 · punto rojo 4,02:1 ·
+   flecha de asignación 4,30:1. El ámbar claro daba 1,33:1 —invisible—, así que dentro
+   del mapa `alert` pasa al ámbar oscuro que el sistema ya tiene para fondo claro. */
+.vela-map-light {
+  /* Verde muy claro: se lee como terreno y se distingue del blanco del panel. */
+  --color-vela-ground: #e7ece1;
+  /* La carretera pasa a ser lo oscuro y la orla lo claro: la misma pareja
+     (`ROAD_SHADOW` ancha debajo, `ROAD` estrecha encima) con la luz al revés. La orla
+     blanca es la que despega la carretera de las celdas que arden debajo. */
+  --color-vela-road: #5b6472;
+  --color-vela-road-shadow: rgba(255, 255, 255, 0.9);
+  /* Humo y rachas eran blancos sobre el fondo oscuro; aquí, grises. */
+  --color-vela-smoke: rgba(71, 85, 105, 0.5);
+  --color-vela-gust: rgba(30, 41, 59, 0.38);
+  /* El ámbar de aviso, en su versión para fondo claro (1,33:1 → 4,18:1). Solo dentro
+     del mapa: fuera lo sigue usando la leyenda del mapa real sobre fondo oscuro. */
+  --color-vela-alert: #b45309;
+  /* Naranja más profundo y menos transparente: 1,86:1 → 2,71:1. Es una superficie
+     grande y animada, no texto, así que con eso se lee de sobra. */
+  --color-vela-cell-burning: rgba(234, 88, 12, 0.88);
 }
