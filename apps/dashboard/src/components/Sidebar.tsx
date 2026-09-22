@@ -1,4 +1,4 @@
-// La sidebar (SPEC-008 REQ-270, REQ-271): marca, las dos vistas y, anclado abajo, el
+// La sidebar (SPEC-008 REQ-270, REQ-271): marca, las vistas y, anclado abajo, el
 // estado que antes vivía en la cabecera. Al estilo del menú de Factorial.
 //
 // Todo llega por props: los hooks del chorro siguen montados una sola vez en `App`
@@ -11,7 +11,7 @@ import type { WorldState } from '../types'
 import { mmss } from '../story/format'
 import { VIEW_TITLE, ViewIcon } from './ViewIcon'
 
-const VIEWS: readonly View[] = ['dashboards', 'mapa', 'minecraft']
+const VIEWS: readonly View[] = ['dashboards', 'mapa', 'simulacion', 'minecraft']
 const STORAGE_KEY = 'vela.sidebar.collapsed'
 
 /** El plegado se recuerda, pero el almacenamiento puede no existir (ventana privada,
@@ -43,11 +43,22 @@ function Badge({ children }: { children: string }) {
 }
 
 /** El estado del run en una palabra y un punto (REQ-336). Sin conexión va primero: si el
- *  socket ha caído, lo demás que diga la barra puede estar desfasado. */
-function runStatus(connected: boolean, finished: boolean): { text: string; dot: string } {
-  if (!connected) return { text: 'Sin conexión', dot: 'bg-vela-replan' }
-  if (finished) return { text: 'Run terminado', dot: 'bg-vela-dim' }
-  return { text: 'En directo', dot: 'bg-vela-good' }
+ *  socket ha caído, lo demás que diga la barra puede estar desfasado.
+ *
+ *  Salvo en Simulación 2D, que no habla con el gateway **a propósito**: ahí el rojo de
+ *  «Sin conexión» decía que algo se había roto cuando lo que pasa es que esa vista no
+ *  necesita nada. El estado es del run, y en esa vista no hay run. */
+function runStatus(
+  view: View,
+  connected: boolean,
+  finished: boolean,
+): { text: string; dot: string; ink: string } {
+  if (view === 'simulacion') {
+    return { text: 'Simulación local', dot: 'bg-vela-accent', ink: 'text-vela-ink' }
+  }
+  if (!connected) return { text: 'Sin conexión', dot: 'bg-vela-replan', ink: 'text-vela-replan' }
+  if (finished) return { text: 'Run terminado', dot: 'bg-vela-dim', ink: 'text-vela-ink' }
+  return { text: 'En directo', dot: 'bg-vela-good', ink: 'text-vela-ink' }
 }
 
 export function Sidebar({
@@ -72,7 +83,7 @@ export function Sidebar({
   onRuns: () => void
 }) {
   const [collapsed, setCollapsed] = useState(readCollapsed)
-  const status = runStatus(connected, finished)
+  const status = runStatus(view, connected, finished)
 
   const toggle = () => {
     setCollapsed((prev) => {
@@ -146,15 +157,17 @@ export function Sidebar({
           <span className={`h-2 w-2 shrink-0 rounded-full ${status.dot}`} aria-hidden />
           {!collapsed && (
             <>
-              <span className={connected ? 'text-vela-ink' : 'text-vela-replan'}>{status.text}</span>
-              {state && (
+              <span className={status.ink}>{status.text}</span>
+              {state && view !== 'simulacion' && (
                 <span className="ml-auto tabular-nums text-vela-dim">t {mmss(state.t_sim)}</span>
               )}
             </>
           )}
         </span>
-        {!collapsed && scenarioId && <span className="text-[13px] text-vela-dim">{scenarioId}</span>}
-        {!collapsed && (health?.calls === 'simuladas' || health?.minecraft === 'apagado') && (
+        {!collapsed && scenarioId && view !== 'simulacion' && (
+          <span className="text-[13px] text-vela-dim">{scenarioId}</span>
+        )}
+        {!collapsed && view !== 'simulacion' && (health?.calls === 'simuladas' || health?.minecraft === 'apagado') && (
           <span className="flex flex-wrap gap-1.5">
             {health?.calls === 'simuladas' && <Badge>Llamadas simuladas</Badge>}
             {health?.minecraft === 'apagado' && <Badge>Sin Minecraft</Badge>}

@@ -16,6 +16,7 @@ import { RunsPanel } from './panels/RunsPanel'
 import { DashboardsView } from './views/DashboardsView'
 import { MapView } from './views/MapView'
 import { MinecraftView } from './views/MinecraftView'
+import { Sim2DView } from './views/Sim2DView'
 import { Waiting } from './components/Waiting'
 
 export default function App() {
@@ -80,6 +81,11 @@ export default function App() {
             awaitingSnapshot={awaitingSnapshot}
             focusCallId={focusCallId}
           />
+        ) : view === 'simulacion' ? (
+          // Autocontenida a propósito: no recibe `state`, `plan`, `events` ni
+          // `worldView`. Es una simulación local, no el run — y por eso es la única
+          // vista que funciona con el gateway caído.
+          <Sim2DView />
         ) : view === 'minecraft' ? (
           <MinecraftView
             events={events}
